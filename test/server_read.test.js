@@ -147,6 +147,7 @@ async function startApp() {
   await new Promise((resolve) => server.once('listening', resolve));
   const port = server.address().port;
   return {
+    store,
     seeded,
     base: `http://127.0.0.1:${port}`,
     async close() {
@@ -265,4 +266,37 @@ test('server read: GET /api/worker/health degrades gracefully when worker module
   } finally {
     await close();
   }
+});
+
+test('GET /api/runs/:id/recon-a returns the latest Layer A recon run and its results', async () => {
+  // Regression: Layer A was unreachable from the dashboard because nothing surfaced the
+  // recon-run id (only /runs/:id/bridge existed, for layer B).
+  const t = await startApp();
+  try {
+    const now = nowIso();
+    await t.store.insert('recon_runs', {
+      id: 'recA_old', run_id: t.seeded.run.id, batch_id: null, layer: 'A', branch_code: 'PILOT01',
+      tolerance: '0.00', status: 'FAIL', summary_json: '{}', inputs_version: 'v1',
+      created_by: 'tester', created_at: '2026-09-14T10:00:00.000Z',
+    });
+    await t.store.insert('recon_runs', {
+      id: 'recA_new', run_id: t.seeded.run.id, batch_id: null, layer: 'A', branch_code: 'PILOT01',
+      tolerance: '0.00', status: 'PASS_WITH_APPROVED_EXCEPTIONS', summary_json: '{}', inputs_version: 'v1',
+      created_by: 'tester', created_at: '2026-09-14T11:00:00.000Z',
+    });
+    await t.store.insert('recon_results', {
+      recon_run_id: 'recA_new', control_key: 'ledger:LEDG-1004:period_debit', expected: '82564.00',
+      actual: '90564.00', difference: '8000.00', status: 'DIFF', detail_json: '{}',
+      uk: 'recA_new|ledger:LEDG-1004:period_debit', created_at: now,
+    });
+    const res = await fetch(`${t.base}/api/runs/${t.seeded.run.id}/recon-a`, {
+      headers: { Authorization: `Bearer ${TOKENS.pilot01}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.recon_run.id, 'recA_new', 'must return the NEWEST layer A run');
+    assert.equal(body.recon_run.layer, 'A');
+    assert.equal(body.results.length, 1);
+    assert.equal(body.results[0].control_key, 'ledger:LEDG-1004:period_debit');
+  } finally { await t.close(); }
 });

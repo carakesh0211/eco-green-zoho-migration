@@ -62,6 +62,25 @@ export function createReadRouter({ store, deps = {}, auth }) {
     })
   );
 
+  // Layer A results were only reachable by knowing the recon-run id, which nothing
+  // surfaced — the dashboard's Layer A card was unusable on a fresh page load. This
+  // mirrors /runs/:id/bridge for layer 'A'.
+  router.get(
+    '/runs/:id/recon-a',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const run = await store.get('extraction_runs', req.params.id);
+      if (!run) return res.status(404).json({ error: 'NOT_FOUND' });
+      if (!auth.branchAllowed(req.user, run.branch_code)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${run.branch_code}` });
+      }
+      const layerA = await store.find('recon_runs', { run_id: run.id, layer: 'A' }, { orderBy: 'created_at DESC' });
+      const latest = layerA[0] ?? null;
+      const results = latest ? await store.find('recon_results', { recon_run_id: latest.id }) : [];
+      res.json({ recon_run: latest, results });
+    })
+  );
+
   router.get(
     '/runs/:id/bridge',
     auth.authenticate(),

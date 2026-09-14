@@ -343,6 +343,22 @@ async function loadReconA() {
   }
 }
 
+/** Loads the newest Layer A recon run for a run id, so the card is reachable without
+ * already knowing a recA_... id. */
+async function loadLatestReconA() {
+  const container = document.getElementById('reconATable');
+  const runId = val('rerunReconRunId');
+  if (!runId) return;
+  try {
+    const { recon_run } = await api(`/api/runs/${encodeURIComponent(runId)}/recon-a`);
+    if (!recon_run) { showError(container, new Error('No Layer A reconciliation has been run for ' + runId)); return; }
+    document.getElementById('reconAId').value = recon_run.id;
+    await loadReconA();
+  } catch (err) {
+    showError(container, err);
+  }
+}
+
 async function rerunRecon() {
   const runId = val('rerunReconRunId');
   if (!runId) return;
@@ -711,6 +727,7 @@ const ACTIONS = {
   loadRunDetail,
   loadCutover,
   loadReconA,
+  loadLatestReconA,
   rerunRecon,
   loadBridge,
   loadExceptions,
