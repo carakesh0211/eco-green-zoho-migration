@@ -22,11 +22,18 @@
 //     either way (no OAuth credential in this pilot) — NOT NULL is the more
 //     conventional reading of "mandatory" and the one sqlite.js already allows.
 //   - ZCQL SELECT enforces the real 300-row cap and understands the minimal subset
-//     `SELECT <cols|*> FROM t [WHERE a = 'x' AND b IS NULL ...] [ORDER BY c ASC|DESC]
-//     [LIMIT n OFFSET m]` plus the exact `SELECT COUNT(ROWID) AS <alias> FROM t [WHERE ...]`
-//     shape the adapter's `count()` emits.
+//     `SELECT <cols|*> FROM t [WHERE a = 'x' AND b IS NULL ...]
+//     [ORDER BY c1 [ASC|DESC], c2 [ASC|DESC], ...] [LIMIT n OFFSET m]` (multi-term ORDER
+//     BY exists only so catalyst.js's chunked queries can append `, ROWID` as a
+//     determinism tie-break — see catalyst.js's buildSelectSql) plus the exact
+//     `SELECT COUNT(ROWID) AS <alias> FROM t [WHERE ...]` shape the adapter's `count()`
+//     emits.
+//   - ZCQL SELECT also enforces the real 30-selected-column cap (ZCQL_MAX_SELECT_COLUMNS,
+//     catalyst_types.js), including when `SELECT *` expands past it — this is the guard
+//     that would have caught the live "More than 30 select columns are not allowed" bug
+//     (docs/CATALYST_REFERENCES.md) before it ever reached the real Data Store.
 import { TABLES } from '../../../catalyst/iac/schema.catalyst.js';
-import { TEXT_MAX_LENGTH } from './catalyst_types.js';
+import { TEXT_MAX_LENGTH, ZCQL_MAX_SELECT_COLUMNS } from './catalyst_types.js';
 
 const ROWID_BASE = 4_200_000_000_000_000n; // 16 digits, well under Number.MAX_SAFE_INTEGER
 
@@ -179,8 +186,20 @@ function makeTableApi(def, physicalName, rowsMap, nextRowId) {
 // ---------------------------------------------------------------- minimal ZCQL subset
 
 const COUNT_RE = /^SELECT\s+COUNT\(\s*ROWID\s*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$/i;
+// ORDER BY clause is captured whole (group 4) and parsed by parseOrderBy below, since it
+// may carry more than one term (catalyst.js's chunked queries append `, ROWID`).
 const SELECT_RE =
-  /^SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(\w+)(?:\s+(ASC|DESC))?)?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?$/i;
+  /^SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?$/i;
+
+function parseOrderBy(orderByRaw) {
+  if (!orderByRaw) return [];
+  return orderByRaw.split(',').map((termRaw) => {
+    const term = termRaw.trim();
+    const m = term.match(/^(\w+)(?:\s+(ASC|DESC))?$/i);
+    if (!m) throw fakeError('ZCQL_SYNTAX', `Unsupported ZCQL ORDER BY term: ${term}`);
+    return { col: m[1], dir: /^desc$/i.test(m[2] || '') ? -1 : 1 };
+  });
+}
 
 function parseWhere(whereStr) {
   if (!whereStr) return [];
@@ -210,6 +229,13 @@ function matchesRow(row, conditions) {
 export function createCatalystFake() {
   const tablesState = new Map(); // physical table name -> Map<rowIdString, rawRow>
   let counter = 0n;
+  // TEST-ONLY HOOK: set via __setSelectInterceptor (returned below). Called with
+  // ({ tableName, sql }, projectedRows) after every SELECT's normal filter/sort/page/
+  // column-cap logic runs; a returned array replaces the rows sent back to the caller.
+  // Used only to test catalyst.js's ZCQL_CHUNK_MISMATCH handling by making two chunk
+  // queries for the same page disagree on which ROWIDs they returned (see
+  // test/store_catalyst.test.js) — application code never touches this.
+  let selectInterceptor = null;
   function nextRowId() {
     counter += 1n;
     return String(ROWID_BASE + counter);
@@ -236,7 +262,7 @@ export function createCatalystFake() {
 
     const m = trimmed.match(SELECT_RE);
     if (!m) throw fakeError('ZCQL_SYNTAX', `Unsupported ZCQL query shape: ${sql}`);
-    const [, colsRaw, tableName, whereRaw, orderCol, orderDir, limitRaw, offsetRaw] = m;
+    const [, colsRaw, tableName, whereRaw, orderByRaw, limitRaw, offsetRaw] = m;
     const def = tableDefByPhysicalName(tableName);
     const rowsMap = stateFor(tableName);
     const conditions = parseWhere(whereRaw);
@@ -244,14 +270,17 @@ export function createCatalystFake() {
 
     let list = [...rowsMap.values()].filter((r) => matchesRow(r, conditions));
 
-    if (orderCol) {
-      assertKnownColumn(def, tableName, orderCol);
-      const dir = /desc/i.test(orderDir || '') ? -1 : 1;
+    const orderTerms = parseOrderBy(orderByRaw);
+    for (const t of orderTerms) assertKnownColumn(def, tableName, t.col);
+    if (orderTerms.length) {
       list = [...list].sort((a, b) => {
-        const av = a[orderCol];
-        const bv = b[orderCol];
-        if (av === bv) return 0;
-        return (av > bv ? 1 : -1) * dir;
+        for (const t of orderTerms) {
+          const av = t.col === 'ROWID' ? a.ROWID : a[t.col];
+          const bv = t.col === 'ROWID' ? b.ROWID : b[t.col];
+          if (av === bv) continue;
+          return (av > bv ? 1 : -1) * t.dir;
+        }
+        return 0;
       });
     }
 
@@ -261,9 +290,16 @@ export function createCatalystFake() {
     if (page.length > 300) page = page.slice(0, 300); // real Catalyst ZCQL row cap
 
     const cols = colsRaw.trim() === '*' ? [...def.columns.map((c) => c.column_name), 'ROWID'] : colsRaw.split(',').map((s) => s.trim());
+    // Live Catalyst Data Store rejects a SELECT naming more than 30 columns — this is the
+    // guard that would have caught the real bug (see docs/CATALYST_REFERENCES.md,
+    // observed 2026-09-15). `code` is ASSUMED (same caveat as every other fakeError in
+    // this file); `message` is the exact live wording.
+    if (cols.length > ZCQL_MAX_SELECT_COLUMNS) {
+      throw fakeError('INVALID_QUERY', 'More than 30 select columns are not allowed');
+    }
     for (const c of cols) assertKnownColumn(def, tableName, c);
 
-    return page.map((row) => {
+    let mapped = page.map((row) => {
       const projected = {};
       for (const c of cols) {
         const v = c === 'ROWID' ? String(row.ROWID) : row[c];
@@ -271,6 +307,16 @@ export function createCatalystFake() {
       }
       return { [tableName]: projected };
     });
+
+    // TEST-ONLY HOOK (see __setSelectInterceptor below): lets a test simulate a live-
+    // Catalyst race between two chunked SELECTs of the same logical page. Never set
+    // outside tests.
+    if (selectInterceptor) {
+      const intercepted = selectInterceptor({ tableName, sql: trimmed }, mapped.map((r) => r[tableName]));
+      if (intercepted) mapped = intercepted.map((projected) => ({ [tableName]: projected }));
+    }
+
+    return mapped;
   }
 
   const app = {
@@ -316,5 +362,9 @@ export function createCatalystFake() {
     return true;
   }
 
-  return { app, assertWithinLimits };
+  function __setSelectInterceptor(fn) {
+    selectInterceptor = fn;
+  }
+
+  return { app, assertWithinLimits, __setSelectInterceptor };
 }

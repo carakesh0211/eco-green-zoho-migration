@@ -136,6 +136,17 @@ test('pipeline on catalyst_fake: full stage sequence produces the same outcomes 
     //      task calls out stay well under the 10,000-char text cap with headroom. ----
     assert.equal(store.catalystFake.assertWithinLimits(), true);
 
+    // ---- pre-deploy proof: `vouchers` has 43 columns (44 with ROWID), past the live
+    //      30-selected-column ZCQL cap (docs/CATALYST_REFERENCES.md, 2026-09-15) — every
+    //      find('vouchers', ...) call above (the pipeline reads vouchers heavily) had to
+    //      go through catalyst.js's column-chunking path. Asserting the counter is >0
+    //      here proves that path is actually exercised by this end-to-end run, not
+    //      silently bypassed (e.g. by a stray `columns` override or a test double). ----
+    assert.ok(
+      store.stats().chunkedQueries > 0,
+      'expected at least one column-chunked ZCQL query — the vouchers table has 43 columns, past the 30-column cap'
+    );
+
     const previewRows = await store.find('preview_payloads', {});
     assert.equal(previewRows.length, 31);
     for (const p of previewRows) {

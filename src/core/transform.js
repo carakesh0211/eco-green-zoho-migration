@@ -18,11 +18,21 @@ export class UnmappedEntityError extends Error {
 }
 
 export class InvalidRouteError extends Error {
-  constructor({ voucherType, module, reason }) {
-    super(`Invalid route ${voucherType} -> ${module}: ${reason}`);
+  /**
+   * Accepts either `{ voucherType, module, reason }` or a bare reason string.
+   * The string form exists because the ledger-shape guards below know the module and
+   * the reason but not the voucher type; passing a string to an object-destructuring
+   * constructor silently produced "Invalid route undefined -> undefined: undefined"
+   * and threw away the only useful part of the diagnostic.
+   */
+  constructor(arg) {
+    const { voucherType, module, reason } = typeof arg === 'string' ? { reason: arg } : (arg ?? {});
+    const route = voucherType || module ? `${voucherType ?? 'unknown type'} -> ${module ?? 'unknown module'}: ` : '';
+    super(`Invalid route ${route}${reason ?? 'no reason given'}`);
     this.code = 'INVALID_TARGET_TYPE';
     this.voucherType = voucherType;
     this.module = module;
+    this.reason = reason;
   }
 }
 
@@ -76,12 +86,12 @@ function selectContentLines(lines, contentSide, module) {
   const content = contentSide === 'debit' ? debitLines(lines) : creditLines(lines);
   const party = contentSide === 'debit' ? creditLines(lines) : debitLines(lines);
   if (content.length === 0 || party.length === 0) {
-    throw new InvalidRouteError(`${module}: voucher must have both a content side and a party side`);
+    throw new InvalidRouteError({ module, reason: 'voucher must have both a content side and a party side' });
   }
   const contentTotal = content.reduce((t, l) => t + parseMoney(contentSide === 'debit' ? l.debit : l.credit), 0n);
   const partyTotal = party.reduce((t, l) => t + parseMoney(contentSide === 'debit' ? l.credit : l.debit), 0n);
   if (contentTotal !== partyTotal) {
-    throw new InvalidRouteError(`${module}: content legs (${formatMoney(contentTotal)}) do not tie to party legs (${formatMoney(partyTotal)})`);
+    throw new InvalidRouteError({ module, reason: `content legs (${formatMoney(contentTotal)}) do not tie to party legs (${formatMoney(partyTotal)})` });
   }
   return content;
 }

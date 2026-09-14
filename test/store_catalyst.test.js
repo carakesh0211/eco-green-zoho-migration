@@ -5,7 +5,16 @@
 // atomic, transaction() is best-effort, claim()/releaseClaim() are NOT atomic).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openStore, UniqueViolationError, ColumnNotAllowedError, TableNotAllowedError, AppendOnlyViolationError, RawSqlNotReadOnlyError } from '../src/adapters/store/catalyst.js';
+import {
+  openStore,
+  UniqueViolationError,
+  ColumnNotAllowedError,
+  TableNotAllowedError,
+  AppendOnlyViolationError,
+  RawSqlNotReadOnlyError,
+  ZcqlChunkMismatchError,
+  ZCQL_MAX_SELECT_COLUMNS,
+} from '../src/adapters/store/catalyst.js';
 import { createCatalystFake } from '../src/adapters/store/catalyst_fake.js';
 import { coerceScalar, normaliseRow } from '../src/adapters/store/catalyst_types.js';
 import { createAudit } from '../src/core/audit.js';
@@ -75,6 +84,60 @@ function voucherRow(overrides = {}) {
     disposition: 'PENDING',
     migration_status: 'NOT_QUEUED',
     attempt_count: 0,
+    reconciliation_status: 'NOT_RECONCILED',
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  };
+}
+
+// vouchers has 43 declared columns (schema.catalyst.js) -> 44 with ROWID, past the live
+// ZCQL_MAX_SELECT_COLUMNS (30) cap that triggers catalyst.js's column-chunking path.
+// Populates every column (not just the mandatory ones) so a chunked find() round-trip
+// can be asserted complete, not just non-empty.
+function fullVoucherRow(overrides = {}) {
+  const now = nowIso();
+  return {
+    source_system: 'ECO_GREEN',
+    source_query_id: 'EG_ACCT_VOUCHERS',
+    source_query_version: 'v3',
+    extraction_run_id: 'run-A',
+    source_file_id: 1,
+    source_file_hash: 'a'.repeat(64),
+    source_table_or_entity: 'vouchers',
+    source_record_id: 'V-1',
+    source_document_no: 'DOC-1',
+    branch_code: 'PILOT01',
+    zoho_location_id: 'LOC-1',
+    financial_year: '2026-27',
+    period: '2026-04',
+    transaction_date: '2026-04-05',
+    source_transaction_type: 'PAYMENT',
+    source_transaction_hash: `voucherhash-${Math.random().toString(36).slice(2)}`,
+    debit_total: '100.00',
+    credit_total: '100.00',
+    line_count: 2,
+    payment_method: 'CASH',
+    tax_bucket: 'GST18',
+    party_code: 'P-1',
+    is_balanced: 1,
+    disposition: 'PENDING',
+    disposition_rule_version: 'v1',
+    disposition_reason: 'reason text',
+    disposition_evidence_json: '{}',
+    disposition_by: 'user:tester',
+    disposition_at: now,
+    mapping_version: 'map_v1',
+    transformation_version: 'tx_v1',
+    target_module: 'EXPENSE',
+    target_payload_hash: 'b'.repeat(64),
+    migration_batch_id: 'batch-1',
+    approval_id: 'appr-1',
+    zoho_record_id: 'zoho-1',
+    migration_status: 'NOT_QUEUED',
+    attempt_count: 0,
+    last_error_code: null,
+    last_error_message: null,
     reconciliation_status: 'NOT_RECONCILED',
     created_at: now,
     updated_at: now,
@@ -395,6 +458,99 @@ test('catalyst store: pagination past the 300-row ZCQL cap on audit_events speci
   const all = await store.find('audit_events', { correlation_id: 'corr-page' });
   assert.equal(all.length, total, 'find(audit_events) with no limit must page past the 300-row ZCQL cap');
   assert.equal(await store.count('audit_events', { correlation_id: 'corr-page' }), total);
+  await store.close();
+});
+
+test('catalyst_fake: executeZCQLQuery rejects a SELECT naming more than 30 columns (models the live ZCQL cap)', async () => {
+  const fake = createCatalystFake();
+  assert.equal(ZCQL_MAX_SELECT_COLUMNS, 30);
+  await assert.rejects(
+    () => fake.app.zcql().executeZCQLQuery('SELECT * FROM vouchers'), // 43 columns + ROWID = 44
+    (err) => {
+      assert.equal(err.code, 'INVALID_QUERY');
+      assert.equal(err.message, 'More than 30 select columns are not allowed');
+      return true;
+    }
+  );
+  // A query at/under the cap must still work (sanity: the guard isn't over-firing).
+  const ok = await fake.app.zcql().executeZCQLQuery('SELECT branch_code, status FROM branches');
+  assert.deepEqual(ok, []);
+});
+
+test('catalyst store: find(vouchers) chunks the 44-column SELECT (43 + ROWID) past the 30-column ZCQL cap and returns COMPLETE rows', async () => {
+  const store = await openFakeStore();
+  const row = fullVoucherRow();
+  const inserted = await store.insert('vouchers', row);
+
+  const found = await store.find('vouchers', { source_record_id: 'V-1' });
+  assert.equal(found.length, 1);
+  for (const [k, v] of Object.entries(row)) {
+    assert.equal(String(found[0][k]), String(v), `column '${k}' did not round-trip through the chunked SELECT`);
+  }
+  assert.equal(found[0].id, inserted.id);
+  assert.ok(store.stats().chunkedQueries > 0, 'expected the 44-column vouchers SELECT to trigger column chunking');
+
+  // get()-by-id path for a ROWID-keyed table must still use getRow() (no ZCQL cap at
+  // all, so no chunking is even possible there) — verify it also returns every column.
+  const before = store.stats().chunkedQueries;
+  const gotten = await store.get('vouchers', inserted.id);
+  for (const [k, v] of Object.entries(row)) {
+    assert.equal(String(gotten[k]), String(v), `get(): column '${k}' missing/wrong`);
+  }
+  assert.equal(store.stats().chunkedQueries, before, 'get() by ROWID must not go through ZCQL chunking at all');
+  await store.close();
+});
+
+test('catalyst store: column-chunking composes with 300-row ZCQL pagination (500 rows x 44 columns, all complete)', { timeout: 60_000 }, async () => {
+  const store = await openFakeStore();
+  const total = 500;
+  for (let i = 0; i < total; i++) {
+    await store.insert(
+      'vouchers',
+      fullVoucherRow({ source_record_id: `V-${i}`, source_transaction_hash: `hash-compose-${i}` })
+    );
+  }
+
+  const all = await store.find('vouchers', {});
+  assert.equal(all.length, total, 'find() must page past 300 rows AND chunk past 30 columns, together');
+  for (const r of all) {
+    assert.equal(r.source_system, 'ECO_GREEN');
+    assert.equal(r.disposition_reason, 'reason text');
+    assert.equal(r.target_payload_hash, 'b'.repeat(64));
+    assert.ok(r.id);
+  }
+  assert.equal(new Set(all.map((r) => r.id)).size, total, 'every row must be distinct (no duplicate/merged ROWIDs)');
+  assert.equal(await store.count('vouchers', {}), total);
+  assert.ok(store.stats().chunkedQueries >= 4, 'expect >=2 chunks per page across >=2 pages (300 + 200 rows)');
+  await store.close();
+});
+
+test('catalyst store: a chunk returning a divergent ROWID set throws ZCQL_CHUNK_MISMATCH rather than merging a corrupt row', async () => {
+  const fake = createCatalystFake();
+  const store = await openStore({ app: fake.app });
+  await store.insert('vouchers', fullVoucherRow());
+  await store.insert('vouchers', fullVoucherRow({ source_record_id: 'V-2', source_transaction_hash: 'hash-2' }));
+
+  let selectCallsForVouchers = 0;
+  fake.__setSelectInterceptor((ctx, rows) => {
+    if (ctx.tableName !== 'vouchers') return null;
+    selectCallsForVouchers += 1;
+    // Simulate a row disappearing between chunk 1 and chunk 2 of the SAME logical page
+    // (e.g. a concurrent delete against the live Data Store) so the two chunk queries
+    // disagree on which ROWIDs they returned.
+    if (selectCallsForVouchers === 2) return rows.slice(0, rows.length - 1);
+    return null;
+  });
+
+  await assert.rejects(
+    () => store.find('vouchers', {}),
+    (err) => {
+      assert.ok(err instanceof ZcqlChunkMismatchError);
+      assert.equal(err.code, 'ZCQL_CHUNK_MISMATCH');
+      assert.equal(err.table, 'vouchers');
+      return true;
+    }
+  );
   await store.close();
 });
 

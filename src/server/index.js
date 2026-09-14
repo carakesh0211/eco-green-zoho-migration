@@ -27,7 +27,7 @@ export class StartupConfigError extends Error {
 }
 
 export function resolveEnvironment(env = process.env) {
-  return env.X_ZOHO_CATALYST_ENVIRONMENT || env.CATALYST_ENVIRONMENT || 'local';
+  return env.X_ZOHO_CATALYST_ENVIRONMENT || env.APP_ENVIRONMENT || env.CATALYST_ENVIRONMENT || 'local';
 }
 
 export function resolvePort(env = process.env) {

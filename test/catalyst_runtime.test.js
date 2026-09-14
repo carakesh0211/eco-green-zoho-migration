@@ -162,3 +162,40 @@ test('catalyst_runtime: two concurrent requests get independently-scoped stores 
     process.env.STORE_ADAPTER = prevAdapter;
   }
 });
+
+test('resolves a CommonJS SDK exposed as the namespace default (zcatalyst-sdk-node ships export =)', async () => {
+  // Regression: the real SDK is CJS, so `await import()` gives { default: catalyst } and a
+  // loader returning the raw namespace made every request fail with
+  // "sdk.initialize is not a function" AFTER a successful deploy.
+  const calls = [];
+  const cjsShapedModule = { default: { initialize: (req, opts) => { calls.push(opts); return { marker: 'cjs-app' }; } } };
+  const runtime = createCatalystRuntime({ sdkLoader: async () => cjsShapedModule });
+  const prev = process.env.STORE_ADAPTER;
+  process.env.STORE_ADAPTER = 'catalyst';
+  try {
+    let seen = null;
+    await new Promise((resolve, reject) => {
+      runtime.middleware()({ headers: {} }, {}, (err) => {
+        if (err) return reject(err);
+        // currentApp() is async: resolve it INSIDE the AsyncLocalStorage context.
+        runtime.currentApp().then((app) => { seen = app; resolve(); }, reject);
+      });
+    });
+    assert.deepEqual(seen, { marker: 'cjs-app' });
+    assert.deepEqual(calls, [{ scope: 'admin' }]);
+  } finally {
+    process.env.STORE_ADAPTER = prev;
+  }
+});
+
+test('a module exposing neither initialize() nor default.initialize() fails loudly', async () => {
+  const runtime = createCatalystRuntime({ sdkLoader: async () => ({ nothing: true }) });
+  const prev = process.env.STORE_ADAPTER;
+  process.env.STORE_ADAPTER = 'catalyst';
+  try {
+    const err = await new Promise((resolve) => runtime.middleware()({ headers: {} }, {}, resolve));
+    assert.match(String(err?.message ?? err), /exposes no initialize/);
+  } finally {
+    process.env.STORE_ADAPTER = prev;
+  }
+});

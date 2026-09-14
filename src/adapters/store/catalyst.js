@@ -21,6 +21,11 @@
 //     parameter binding.
 //   - ZCQL caps SELECT at 300 rows -> `find()` loops LIMIT/OFFSET in pages of 300 when the
 //     caller didn't ask for a smaller limit.
+//   - ZCQL caps SELECT at 30 selected columns (see ZCQL_MAX_SELECT_COLUMNS below) ->
+//     a page's column list is split into <=30-column chunks (ROWID added to every
+//     chunk), one ZCQL query per chunk with the IDENTICAL WHERE/ORDER BY/LIMIT/OFFSET,
+//     then merged back into whole rows by ROWID. Composes with the 300-row pagination
+//     above: chunking happens PER PAGE, not across pages.
 //   - Unique-violation and not-found detection are best-effort message/code sniffing
 //     (see catalyst_types.js's `looksLikeUniqueViolation`/`looksLikeNotFound`) since this
 //     pilot has no live OAuth credential to observe the real Catalyst error payloads
@@ -45,6 +50,8 @@ import {
   RawSqlNotReadOnlyError,
   TableNotAllowedError,
   ColumnNotAllowedError,
+  ZCQL_MAX_SELECT_COLUMNS,
+  ZcqlChunkMismatchError,
 } from './catalyst_types.js';
 
 export class NotImplementedError extends Error {
@@ -71,6 +78,12 @@ export async function openStore({ app, transport } = {}) {
     );
   }
 
+  // Observability for the column-chunking path (see fetchPageRows): incremented once per
+  // extra ZCQL SELECT issued because a page's column list exceeded ZCQL_MAX_SELECT_COLUMNS.
+  // Exposed via store.stats() so a caller/test can prove the chunking path actually ran
+  // rather than being silently bypassed (see test/pipeline_catalyst_fake.test.js).
+  const stats = { chunkedQueries: 0 };
+
   function getTable(logicalTable) {
     return source.datastore().table(toPhysicalTable(logicalTable));
   }
@@ -85,7 +98,16 @@ export async function openStore({ app, transport } = {}) {
     return (result ?? []).map((r) => r[physical]);
   }
 
-  function buildSelectSql(logicalTable, where, { orderBy, limit, offset, columns } = {}) {
+  // `tieBreakRowid`: only set true for a chunked column-split query (see
+  // chunkColumnsForSelect/fetchPageRows below). Appending ROWID as the FINAL ORDER BY
+  // term guarantees every chunk of the same logical page comes back in the same order
+  // for the same LIMIT/OFFSET window, which the merge step depends on: without a stable,
+  // unique tie-break, two chunk queries issued moments apart could legitimately return
+  // the same row set in different relative orders (ZCQL makes no ordering guarantee
+  // beyond what ORDER BY specifies), and a naive positional zip would splice columns
+  // from two DIFFERENT logical rows together. Single-chunk queries never set this, so
+  // their SQL shape is byte-for-byte unchanged from before chunking existed.
+  function buildSelectSql(logicalTable, where, { orderBy, limit, offset, columns, tieBreakRowid = false } = {}) {
     const physical = toPhysicalTable(logicalTable);
     const def = tableDef(logicalTable);
     const colNames = columns ?? [...def.columns.map((c) => c.column_name), 'ROWID'];
@@ -101,27 +123,108 @@ export async function openStore({ app, transport } = {}) {
       sql += ` WHERE ${clauses.join(' AND ')}`;
     }
 
+    const orderTerms = [];
     if (orderBy) {
       const [col, dirRaw] = String(orderBy).trim().split(/\s+/);
       assertColumnsAllowed(logicalTable, [col]);
       const dir = /^desc$/i.test(dirRaw ?? '') ? 'DESC' : 'ASC';
-      sql += ` ORDER BY ${col} ${dir}`;
+      orderTerms.push(`${col} ${dir}`);
     }
+    if (tieBreakRowid) orderTerms.push('ROWID');
+    if (orderTerms.length) sql += ` ORDER BY ${orderTerms.join(', ')}`;
+
     if (Number.isInteger(limit)) sql += ` LIMIT ${limit}`;
     if (Number.isInteger(offset)) sql += ` OFFSET ${offset}`;
     return sql;
   }
 
-  /** ZCQL SELECT with automatic LIMIT/OFFSET pagination past the 300-row cap. */
-  async function selectAll(logicalTable, where, { orderBy, limit, offset } = {}) {
+  // Split a SELECT's column list into <=ZCQL_MAX_SELECT_COLUMNS chunks (see that
+  // constant's doc comment in catalyst_types.js for the live-observed error this works
+  // around). Below the cap this returns the ONE original list untouched — callers must
+  // get byte-for-byte the same SQL as before chunking existed. At/above the cap, the
+  // non-ROWID columns are split into groups of ZCQL_MAX_SELECT_COLUMNS - 1, with ROWID
+  // appended to EVERY chunk (never itself split off) so the split rows can be re-joined.
+  function chunkColumnsForSelect(colNames) {
+    const dataCols = colNames.filter((c) => c !== 'ROWID');
+    if (dataCols.length + 1 <= ZCQL_MAX_SELECT_COLUMNS) return [colNames];
+    const perChunk = ZCQL_MAX_SELECT_COLUMNS - 1;
+    const chunks = [];
+    for (let i = 0; i < dataCols.length; i += perChunk) {
+      chunks.push([...dataCols.slice(i, i + perChunk), 'ROWID']);
+    }
+    return chunks;
+  }
+
+  // Merge N chunks' worth of rows (same logical page, disjoint column sets, all carrying
+  // ROWID) back into whole row objects. Every ROWID must appear in EVERY chunk exactly
+  // once, or this throws ZcqlChunkMismatchError rather than returning a row assembled
+  // from columns that don't actually belong to the same underlying record — see that
+  // error class's doc comment for why a half-merged row is unacceptable here.
+  function mergeChunkedRows(logicalTable, perChunkRows, chunkCount) {
+    const merged = new Map(); // ROWID string -> { row, seenIn }
+    const order = [];
+    for (const row of perChunkRows[0]) {
+      const id = String(row.ROWID);
+      merged.set(id, { row: { ...row }, seenIn: 1 });
+      order.push(id);
+    }
+    for (let i = 1; i < perChunkRows.length; i++) {
+      for (const row of perChunkRows[i]) {
+        const id = String(row.ROWID);
+        const entry = merged.get(id);
+        if (!entry) {
+          throw new ZcqlChunkMismatchError(
+            logicalTable,
+            `chunk ${i} returned ROWID ${id}, which chunk 0 of the same page did not`
+          );
+        }
+        Object.assign(entry.row, row);
+        entry.seenIn += 1;
+      }
+    }
+    for (const [id, entry] of merged) {
+      if (entry.seenIn !== chunkCount) {
+        throw new ZcqlChunkMismatchError(
+          logicalTable,
+          `ROWID ${id} was returned by only ${entry.seenIn}/${chunkCount} column chunks of the same page`
+        );
+      }
+    }
+    return order.map((id) => merged.get(id).row);
+  }
+
+  // Fetch exactly one LIMIT/OFFSET page (<=300 rows, enforced by the caller in
+  // selectAll), chunking the column list first if needed. `chunks` is precomputed once
+  // per selectAll() call (the column list never changes across pages of the SAME find()
+  // call) and reused for every page, so chunking composes with pagination per-page
+  // rather than across pages: each page independently issues its own chunk queries with
+  // that page's LIMIT/OFFSET, never a chunk query spanning two pages.
+  async function fetchPageRows(logicalTable, where, { orderBy, limit, offset, chunks }) {
+    if (chunks.length === 1) {
+      const sql = buildSelectSql(logicalTable, where, { orderBy, limit, offset, columns: chunks[0] });
+      return zcqlRows(logicalTable, sql);
+    }
+    const perChunkRows = [];
+    for (const chunkCols of chunks) {
+      const sql = buildSelectSql(logicalTable, where, { orderBy, limit, offset, columns: chunkCols, tieBreakRowid: true });
+      perChunkRows.push(await zcqlRows(logicalTable, sql));
+      stats.chunkedQueries += 1;
+    }
+    return mergeChunkedRows(logicalTable, perChunkRows, chunks.length);
+  }
+
+  /** ZCQL SELECT with automatic LIMIT/OFFSET pagination past the 300-row cap, composed
+   *  with column chunking past the 30-column cap (see fetchPageRows). */
+  async function selectAll(logicalTable, where, { orderBy, limit, offset, columns } = {}) {
     const wantAll = limit === undefined;
     let currentOffset = offset ?? 0;
     const collected = [];
+    const baseColumns = columns ?? [...tableDef(logicalTable).columns.map((c) => c.column_name), 'ROWID'];
+    const chunks = chunkColumnsForSelect(baseColumns);
     for (;;) {
       const remaining = wantAll ? ZCQL_PAGE_SIZE : Math.min(ZCQL_PAGE_SIZE, limit - collected.length);
       if (!wantAll && remaining <= 0) break;
-      const sql = buildSelectSql(logicalTable, where, { orderBy, limit: remaining, offset: currentOffset });
-      const rows = await zcqlRows(logicalTable, sql);
+      const rows = await fetchPageRows(logicalTable, where, { orderBy, limit: remaining, offset: currentOffset, chunks });
       collected.push(...rows);
       currentOffset += rows.length;
       if (rows.length < remaining) break; // exhausted
@@ -305,6 +408,12 @@ export async function openStore({ app, transport } = {}) {
     async close() {
       // No persistent connection to close: every call goes through the injected app/transport.
     },
+
+    // See the `stats` const above: currently just `chunkedQueries`. Returns a snapshot
+    // (not the live object) so a caller can't mutate the adapter's internal counter.
+    stats() {
+      return { ...stats };
+    },
   };
 
   return store;
@@ -316,4 +425,6 @@ export {
   ColumnNotAllowedError,
   RawSqlNotReadOnlyError,
   AppendOnlyViolationError,
+  ZcqlChunkMismatchError,
+  ZCQL_MAX_SELECT_COLUMNS,
 };

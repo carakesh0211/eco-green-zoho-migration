@@ -20,6 +20,17 @@ import { TABLES as SCHEMA_TABLES } from '../../../catalyst/iac/schema.catalyst.j
 
 export const TEXT_MAX_LENGTH = 10000;
 
+// ZCQL caps a single SELECT at 30 selected columns. OBSERVED LIVE against the real
+// Catalyst Data Store (Development), 2026-09-15: the synthetic seed's CLASSIFY_TRANSFORM
+// stage ran `SELECT <all 43 columns> FROM vouchers` and the platform rejected it with:
+//   "More than 30 select columns are not allowed"
+// This is a live-observed limit, not one listed on the ZCQL syntax-exceptions page
+// consulted for docs/CATALYST_REFERENCES.md's 300-row-cap entry (2026-09-14) — see that
+// doc's Data Store limits table for the dated citation. Shared by catalyst.js (which
+// chunks a wide SELECT into multiple <=30-column queries and re-joins them by ROWID) and
+// catalyst_fake.js (which enforces the same cap so this can never silently regress).
+export const ZCQL_MAX_SELECT_COLUMNS = 30;
+
 // Logical (Store-interface / schema.sql) table name -> physical Catalyst table name.
 // Only `summaries` differs, per schema.catalyst.js's header comment (curated as
 // `source_summaries`). Every other table keeps its schema.sql name.
@@ -100,6 +111,25 @@ export class RawSqlNotReadOnlyError extends Error {
     super('store.raw() only accepts read-only SELECT statements');
     this.code = 'RAW_SQL_NOT_READONLY';
     this.sql = sql;
+  }
+}
+
+/**
+ * Thrown by catalyst.js's column-chunk merge (see ZCQL_MAX_SELECT_COLUMNS) when two
+ * chunk queries for the SAME logical page (identical WHERE/ORDER BY/LIMIT/OFFSET, only
+ * the selected columns differ) disagree on which ROWIDs they returned. This should only
+ * be possible if rows are inserted/deleted between the chunk queries (the adapter has no
+ * transaction/snapshot isolation to prevent that — see the module header's other
+ * BEST_EFFORT notes) or a chunk merge bug. Either way, silently merging whatever
+ * ROWIDs overlap would produce a row spliced from two DIFFERENT logical rows — a
+ * correctness risk against financial data — so this is thrown instead of ever returning
+ * a partially-merged row.
+ */
+export class ZcqlChunkMismatchError extends Error {
+  constructor(table, detail) {
+    super(`ZCQL column-chunk mismatch on ${table}: ${detail}`);
+    this.code = 'ZCQL_CHUNK_MISMATCH';
+    this.table = table;
   }
 }
 

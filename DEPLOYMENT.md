@@ -79,6 +79,38 @@ must never receive anything resembling real Eco Green data (`IMPLEMENTATION_PLAN
 
 `node scripts/run-pipeline.js --branch PILOT01 --run run-001 --dry-run --fresh --approve-known-diffs --through-mock-books` wipes local state under `./var` and produces a clean end-to-end proof; it ends with `VERIFICATION: PASSED — 31/31 …` (exit 0) or `VERIFICATION: FAILED` (exit 3). Without `--fresh`, a rerun over the same manifest reports `IDEMPOTENT RERUN … NOT end-to-end verification evidence`; if `--through-mock-books` is added to such a rerun and zero items are exercised over a non-empty approved population, the run fails (exit 3). Layer C itself records `c:population:exercised` and FAILs on zero items over a non-empty batch. `--fresh` refuses to delete anything outside `./var`.
 
+## 4c. Catalyst Development deployment (AppSail) — verified procedure
+
+Decision: one AppSail service (`docs/adr/0001-appsail-single-service.md`). Verified 2026-09-14:
+
+1. `catalyst.json` (gitignored, local): `{ "appsail": [{ "source": ".", "name": "EcoGreenMigrationConsole" }] }`.
+   `app-config.json` (committed, no env values): `{ "command": "npm start", "build_path": ".", "stack": "node24", "memory": 512 }`.
+2. Environment variables live ONLY in the gitignored `var/appsail-env.local.json` (array of `{key,value}`;
+   `USERS_CONFIG_JSON` carries sha256 token hashes, never plaintext). `node scripts/deploy-appsail.js`
+   merges them into a temporary `app-config.json`, runs
+   `catalyst deploy appsail --name EcoGreenMigrationConsole --build-path . --stack node24 --command "npm start" --non-interactive`,
+   and restores the tracked file even on failure. `--dry-run` prints the masked merged config.
+3. Deployed configuration: `STORE_ADAPTER=catalyst`, `INBOX_ADAPTER=bundled`, `ARCHIVE_ADAPTER=disabled`
+   (until Stratus is activated), `BOOKS_DRIVER=mock`, `POSTING_ENABLED=false`, `WORKER_MODE=disabled`,
+   `DEV_SEED_ENABLED=true`, `APP_ENVIRONMENT=Development`, `NODE_ENV=production`, `BUILD_SHA=<git sha>`.
+4. Seed the synthetic demo once: `POST /api/dev/seed` with an admin bearer token (Development only;
+   idempotent; every approval tagged `[SYNTHETIC DEMO]`); poll `GET /api/dev/seed/status`.
+
+Platform behaviours learned the hard way (all observed on CLI 1.27.2):
+- `.catalystignore` is read line-by-line as raw **minimatch** patterns (`{dot:true}`) applied to files AND
+  directories: comments are tolerated, but **negation (`!x`) is not** — `!README.md` excludes every file except
+  README.md and produces an empty archive (the service then fails with `ENOENT /catalyst/package.json`).
+  Directory lines need `dir/**`, not `dir/`. The CLI always excludes `catalyst.json`, `.catalystrc`,
+  `app-config.json`, `.catalystignore` and `catalyst-debug.log` itself.
+- The CLI uploads `node_modules` from the build path (no remote `npm install`); ship production deps only.
+- AppSail rejects environment variable names with the `CATALYST_` prefix (`environment_variables must not
+  contain reserved keywords`); the app therefore reads `APP_ENVIRONMENT` (and the runtime-provided
+  `X_ZOHO_CATALYST_ENVIRONMENT`).
+- The Catalyst MCP "application" env-variable tools address a different application ID space and reject
+  AppSail IDs; env variables for AppSail go through `app-config.json` at deploy time or the console.
+- The service listens on `X_ZOHO_CATALYST_LISTEN_PORT` (9000); requests time out at 30 s, so the seed job
+  is detached from its request.
+
 ## 5. Production posting enablement procedure
 
 Production posting is not authorized by any prompt, plan, or document in this

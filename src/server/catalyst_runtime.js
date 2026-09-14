@@ -37,8 +37,23 @@ const als = new AsyncLocalStorage();
 let sdkLoaderRef = () => import('zcatalyst-sdk-node');
 let sdkPromise = null;
 
+/**
+ * `zcatalyst-sdk-node` is CommonJS and published with `export = catalyst`, so a dynamic
+ * `import()` yields a namespace object whose callable namespace sits on `.default` —
+ * `mod.initialize` is undefined there. Test fakes, by contrast, are plain ESM objects that
+ * expose `initialize` directly. Normalise both shapes to the object that actually has
+ * `initialize()`, or fail loudly naming what was loaded.
+ */
+function resolveSdkNamespace(mod) {
+  if (mod && typeof mod.initialize === 'function') return mod;
+  if (mod && mod.default && typeof mod.default.initialize === 'function') return mod.default;
+  throw new CatalystRuntimeError(
+    `the loaded Catalyst SDK exposes no initialize(): keys=[${mod ? Object.keys(mod).join(',') : String(mod)}]`,
+  );
+}
+
 function loadSdk() {
-  if (!sdkPromise) sdkPromise = Promise.resolve().then(sdkLoaderRef);
+  if (!sdkPromise) sdkPromise = Promise.resolve().then(sdkLoaderRef).then(resolveSdkNamespace);
   return sdkPromise;
 }
 

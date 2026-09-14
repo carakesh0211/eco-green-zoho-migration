@@ -283,3 +283,23 @@ describe('contact modules never double-count the party leg (regression)', () => 
     );
   });
 });
+
+describe('InvalidRouteError carries a usable diagnostic (regression)', () => {
+  test('the ledger-shape guards report module and reason, not "undefined -> undefined"', () => {
+    const lines = [{ ledger_code: 'LEDG-EXP', debit: '100.00', credit: '0.00' }];
+    let thrown;
+    try { buildPayload({ module: 'bill', voucher: voucher({ tax_bucket: null }), lines, rules: BASE_RULES }); }
+    catch (err) { thrown = err; }
+    assert.ok(thrown instanceof InvalidRouteError);
+    assert.equal(thrown.code, 'INVALID_TARGET_TYPE');
+    assert.equal(thrown.module, 'bill');
+    assert.match(thrown.message, /content side and a party side/);
+    assert.doesNotMatch(thrown.message, /undefined/);
+  });
+
+  test('a bare string reason still yields a readable message', () => {
+    const e = new InvalidRouteError('something specific went wrong');
+    assert.match(e.message, /something specific went wrong/);
+    assert.doesNotMatch(e.message, /undefined/);
+  });
+});

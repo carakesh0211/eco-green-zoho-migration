@@ -9,7 +9,49 @@ import { newCorrelationId } from '../src/core/ids.js';
 import { openInbox as openBundledInbox } from '../src/adapters/inbox/bundled.js';
 import { openArchive as openLocalArchive } from '../src/adapters/archive/local.js';
 import { createBooksClient } from '../src/books/index.js';
-import { runSeedJob, buildDevSummary, DEMO_TAG, DEMO_OPERATOR, DEMO_APPROVER } from '../src/server/routes/dev.js';
+import { RUN_STATES } from '../src/core/states.js';
+import {
+  runSeedJob, buildDevSummary, stagesOwedFor, assessRunCompleteness,
+  DEMO_TAG, DEMO_OPERATOR, DEMO_APPROVER,
+} from '../src/server/routes/dev.js';
+
+const RUN001_ID = 'PILOT01-2026-04-run-001';
+const RUN002_DUP_ID = 'PILOT01-2026-04-run-002-dup';
+
+/** Simulates the real incident's crash point (mid CLASSIFY_TRANSFORM, right after
+ * LAYER_A/APPROVE_KNOWN_DIFFS left the run at SOURCE_RECONCILED) by hand. The Store
+ * has no delete operation (see src/adapters/store/catalyst.js's header note), so this
+ * cannot literally remove the preview_payloads/migration_batches rows a real crash
+ * would simply never have created — instead it resets exactly the fields the
+ * downstream stages actually key off (voucher disposition + payload/batch linkage),
+ * which is what makes those old rows invisible to a resumed pipeline pass. */
+async function resetRunToSourceReconciled(store, runId) {
+  await store.update('extraction_runs', runId, { status: 'SOURCE_RECONCILED', updated_at: new Date().toISOString() });
+  // Only reset vouchers CLASSIFY actually touched (stamped with a disposition_rule_
+  // version) — vouchers permanently BLOCKED at ingest (UNBALANCED_VOUCHER,
+  // ORPHAN_RELATIONSHIP; see ingest.js step 7) never get a disposition_rule_version
+  // and must stay untouched: classifyRun only ever looks at PENDING vouchers, so
+  // resetting an ingest-blocked one back to PENDING would make it reachable a second
+  // time, which real resumability never does either (ingest doesn't re-run here).
+  const vouchers = (await store.find('vouchers', { extraction_run_id: runId })).filter((v) => v.disposition_rule_version != null);
+  for (const v of vouchers) {
+    await store.update('vouchers', v.id, {
+      disposition: 'PENDING',
+      disposition_reason: null,
+      disposition_rule_version: null,
+      disposition_evidence_json: null,
+      disposition_by: null,
+      disposition_at: null,
+      target_module: null,
+      target_payload_hash: null,
+      mapping_version: null,
+      transformation_version: null,
+      migration_batch_id: null,
+      approval_id: null,
+      updated_at: new Date().toISOString(),
+    });
+  }
+}
 
 function sha(token) {
   return createHash('sha256').update(token, 'utf8').digest('hex');
@@ -96,6 +138,99 @@ test('buildDevSummary: reflects runs/dispositions/queue/exceptions after a seed'
   assert.ok(typeof summary.queueCounts === 'object');
   assert.ok(typeof summary.exceptionsByCategory === 'object');
   assert.equal(summary.posting.enabled, false);
+});
+
+test('stagesOwedFor: covers every RUN_STATES status, gated by src/core/states.js RUN_TRANSITIONS', () => {
+  for (const status of Object.values(RUN_STATES)) {
+    assert.ok(Array.isArray(stagesOwedFor(status)), `stagesOwedFor(${status}) must return an array`);
+  }
+
+  // Terminal / intentionally-never-auto-resumed statuses: nothing owed.
+  assert.deepEqual(stagesOwedFor(RUN_STATES.VALIDATION_FAILED), []);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.EXCEPTION), []);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.RECEIVED), []);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.CLAIMED), []);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.ARCHIVED), []);
+
+  // Resumable statuses: each owes exactly the stages downstream of where it stopped,
+  // and never re-owes a stage it has already legally passed through.
+  assert.deepEqual(stagesOwedFor(RUN_STATES.STAGED), ['SUMMARISE', 'LAYER_A', 'APPROVE_KNOWN_DIFFS', 'CLASSIFY', 'TRANSFORM', 'LAYER_B', 'BATCHES']);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.SUMMARISED), ['LAYER_A', 'APPROVE_KNOWN_DIFFS', 'CLASSIFY', 'TRANSFORM', 'LAYER_B', 'BATCHES']);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.SOURCE_RECON_FAILED), ['APPROVE_KNOWN_DIFFS', 'CLASSIFY', 'TRANSFORM', 'LAYER_B', 'BATCHES']);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.SOURCE_RECONCILED), ['CLASSIFY', 'TRANSFORM', 'LAYER_B', 'BATCHES']);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.CLASSIFIED), ['TRANSFORM', 'LAYER_B', 'BATCHES']);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.TRANSFORMED), ['LAYER_B', 'BATCHES']);
+  assert.deepEqual(stagesOwedFor(RUN_STATES.READY_FOR_APPROVAL), ['LAYER_B', 'BATCHES']);
+});
+
+test('runSeedJob: THE INCIDENT — a run crashed mid CLASSIFY_TRANSFORM (left at SOURCE_RECONCILED) is resumed, not falsely reported ALREADY_SEEDED', async (t) => {
+  const { store, audit, inbox, archive, client } = await makeCatalystCtxAndDeps(t);
+  const correlationId = newCorrelationId();
+
+  const first = await runSeedJob({ store, audit, correlationId }, { inbox, archive, client, jobId: 'job-1', progress: {} });
+  assert.equal(first.outcome, 'SEEDED');
+
+  const batchesBefore = await store.find('migration_batches', { run_id: RUN001_ID });
+  const summaryBefore = await buildDevSummary(store, { branchCode: 'PILOT01' });
+  const completenessBefore = await assessRunCompleteness(store, RUN001_ID);
+  assert.equal(completenessBefore.complete, true);
+
+  // Simulate the live incident: the run crashed part-way through CLASSIFY_TRANSFORM,
+  // right after LAYER_A/APPROVE_KNOWN_DIFFS left it at SOURCE_RECONCILED.
+  await resetRunToSourceReconciled(store, RUN001_ID);
+  const completenessMidCrash = await assessRunCompleteness(store, RUN001_ID);
+  assert.equal(completenessMidCrash.complete, false, `expected the reset run to read as incomplete: ${completenessMidCrash.reasons.join('; ')}`);
+
+  // Re-running the seed today would call ingestRun, get DUPLICATE_MANIFEST, and (with
+  // the old code) `continue` straight past it, reporting the WRONG 'ALREADY_SEEDED'.
+  const progress = {};
+  const second = await runSeedJob({ store, audit, correlationId }, { inbox, archive, client, jobId: 'job-2', progress });
+
+  assert.equal(second.outcome, 'RESUMED');
+  assert.ok(progress.stagesRun.includes('CLASSIFY'), `expected CLASSIFY in stagesRun: ${progress.stagesRun}`);
+  assert.ok(progress.stagesRun.includes('TRANSFORM'), `expected TRANSFORM in stagesRun: ${progress.stagesRun}`);
+  assert.ok(progress.stagesRun.includes('LAYER_B'), `expected LAYER_B in stagesRun: ${progress.stagesRun}`);
+  assert.ok(progress.stagesRun.includes('BATCHES'), `expected BATCHES in stagesRun: ${progress.stagesRun}`);
+  // It must never have thrown an illegal-transition error getting there (a throw would
+  // have made runSeedJob itself reject, failing the `await` above).
+
+  const run = await store.get('extraction_runs', RUN001_ID);
+  assert.notEqual(run.status, 'SOURCE_RECONCILED');
+
+  // Resume converges to the SAME end state as the clean seed: same disposition counts,
+  // same 31 posted, same batch count.
+  assert.deepEqual(second.counts, first.counts);
+  assert.ok(second.counts.posted > 0);
+
+  const batchesAfter = await store.find('migration_batches', { run_id: RUN001_ID });
+  assert.equal(batchesAfter.length, batchesBefore.length);
+
+  const summaryAfter = await buildDevSummary(store, { branchCode: 'PILOT01' });
+  assert.deepEqual(summaryAfter.dispositionBridge.byDisposition, summaryBefore.dispositionBridge.byDisposition);
+  assert.deepEqual(summaryAfter.queueCounts, summaryBefore.queueCounts);
+
+  const completenessAfter = await assessRunCompleteness(store, RUN001_ID);
+  assert.equal(completenessAfter.complete, true);
+});
+
+test('runSeedJob: a run left at VALIDATION_FAILED is never advanced and never causes a RESUMED outcome', async (t) => {
+  const { store, audit, inbox, archive, client } = await makeCatalystCtxAndDeps(t);
+  const correlationId = newCorrelationId();
+
+  await runSeedJob({ store, audit, correlationId }, { inbox, archive, client, jobId: 'job-1', progress: {} });
+
+  const before = await store.get('extraction_runs', RUN002_DUP_ID);
+  assert.equal(before.status, 'VALIDATION_FAILED');
+  assert.deepEqual(stagesOwedFor(before.status), []);
+
+  const progress = {};
+  const second = await runSeedJob({ store, audit, correlationId }, { inbox, archive, client, jobId: 'job-2', progress });
+
+  assert.notEqual(second.outcome, 'RESUMED');
+  assert.equal(progress.stagesRun.length, 0);
+
+  const after = await store.get('extraction_runs', RUN002_DUP_ID);
+  assert.equal(after.status, 'VALIDATION_FAILED');
 });
 
 // ---------------------------------------------------------------- HTTP route: environment/role gating
@@ -189,6 +324,10 @@ test('POST /api/dev/seed: admin in Development with the flag on gets 202 + jobId
     }
     assert.equal(status.outcome, 'SEEDED');
     assert.ok(status.counts.posted > 0);
+    assert.ok(Array.isArray(status.stagesRun));
+    assert.ok(status.completeness && typeof status.completeness.complete === 'boolean' && Array.isArray(status.completeness.reasons));
+    assert.equal(status.completeness.complete, true);
+    assert.equal(status.failedStage, null);
   } finally {
     await close();
   }

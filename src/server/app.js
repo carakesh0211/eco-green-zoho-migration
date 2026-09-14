@@ -54,7 +54,7 @@ export function createApp({
   deps = {},
   devDeps = {},
   runtime,
-  environment = process.env.X_ZOHO_CATALYST_ENVIRONMENT || process.env.CATALYST_ENVIRONMENT || 'local',
+  environment = process.env.X_ZOHO_CATALYST_ENVIRONMENT || process.env.APP_ENVIRONMENT || process.env.CATALYST_ENVIRONMENT || 'local',
   storeAdapter = process.env.STORE_ADAPTER ?? 'sqlite',
   archiveAdapter = process.env.ARCHIVE_ADAPTER ?? 'local',
   inboxAdapter = process.env.INBOX_ADAPTER ?? 'local',

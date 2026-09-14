@@ -153,3 +153,19 @@ without touching core logic:
 
 No Catalyst resource exists for this pilot yet (open decision D-1). The limits above are
 used as design constraints now so the eventual swap needs no rearchitecting.
+
+## Catalyst Data Store claiming is BEST_EFFORT (current limitation)
+
+`src/adapters/store/catalyst.js` cannot implement `claim()` as a single conditional
+`UPDATE … WHERE … RETURNING` because Catalyst Data Store exposes no conditional update; it is a
+read-then-write and the store reports `claimSemantics: 'BEST_EFFORT'`. Consequences enforced in code:
+
+- `src/books/guard.js#assertPostingAllowed(config, { store })` refuses posting with reason
+  `BEST_EFFORT_CLAIMS` whenever the store is not atomic — Catalyst-backed production posting is
+  structurally disabled until an atomic lease exists (Catalyst Job/Cron target with a lease row, or a
+  different store for the queue).
+- `src/worker/index.js` refuses to start on a Catalyst store unless `WORKER_MODE=singleton`, and a
+  singleton refuses to start while another `WORKER.START` audit event (different `WORKER_ID`, no
+  matching `WORKER.STOP`, within `WORKER_LEASE_MS`) exists — best-effort mutual exclusion, documented as
+  such. The deployed dashboard runs with `WORKER_MODE=disabled`.
+- `/api/health` exposes `claimSemantics` and lists `BEST_EFFORT_CLAIMS` in `postingBlockedBy`.
