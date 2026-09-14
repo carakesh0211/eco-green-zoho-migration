@@ -1,0 +1,2413 @@
+{
+  "name": "EcoGreenMigration",
+  "version": "1.0.0",
+  "parameters": {},
+  "components": {
+    "Datastore": [
+      {
+        "type": "table",
+        "name": "audit_events",
+        "properties": {
+          "table_name": "audit_events"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "extraction_runs",
+        "properties": {
+          "table_name": "extraction_runs"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "source_files",
+        "properties": {
+          "table_name": "source_files"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "source_txn_lines",
+        "properties": {
+          "table_name": "source_txn_lines"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "vouchers",
+        "properties": {
+          "table_name": "vouchers"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "source_summaries",
+        "properties": {
+          "table_name": "source_summaries"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "recon_runs",
+        "properties": {
+          "table_name": "recon_runs"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "recon_results",
+        "properties": {
+          "table_name": "recon_results"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "exceptions",
+        "properties": {
+          "table_name": "exceptions"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "column",
+        "name": "audit_events.actor",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "actor",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.actor_role",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "actor_role",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.action",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "action",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.entity_type",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "entity_type",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.entity_id",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "entity_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.before_json",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "before_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.after_json",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "after_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.reason",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "reason",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.authorization_decision",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "authorization_decision",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 16
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.correlation_id",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "correlation_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.branch_code",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.period",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "period",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 7
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.batch_id",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "batch_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "audit_events.created_at",
+        "properties": {
+          "table_name": "audit_events",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "audit_events"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.id",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.branch_code",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.query_id",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "query_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.query_version",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "query_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.from_date",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "from_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.to_date",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "to_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.manifest_json",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "manifest_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.manifest_sha256",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "manifest_sha256",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.inbox_ref",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "inbox_ref",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.archive_uri",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "archive_uri",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.status",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.claimed_by",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "claimed_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.claimed_at",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "claimed_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.claim_expires_at",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "claim_expires_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.error_code",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "error_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.error_message",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "error_message",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.created_at",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "extraction_runs.updated_at",
+        "properties": {
+          "table_name": "extraction_runs",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "extraction_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.run_id",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.file_name",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "file_name",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.file_role",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "file_role",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.sha256",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "sha256",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.size_bytes",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "size_bytes",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.encoding",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "encoding",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.delimiter",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "delimiter",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 8
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.declared_row_count",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "declared_row_count",
+          "data_type": "int",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.actual_row_count",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "actual_row_count",
+          "data_type": "int",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.declared_debit_total",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "declared_debit_total",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.declared_credit_total",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "declared_credit_total",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.actual_debit_total",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "actual_debit_total",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.actual_credit_total",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "actual_credit_total",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.archive_uri",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "archive_uri",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.status",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.validation_json",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "validation_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.created_at",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_files.updated_at",
+        "properties": {
+          "table_name": "source_files",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_files"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.run_id",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.file_id",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "file_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.row_number",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "row_number",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.branch_code",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.voucher_id",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "voucher_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.voucher_no",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "voucher_no",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.voucher_type",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "voucher_type",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.voucher_date",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "voucher_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.line_no",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "line_no",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.ledger_code",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "ledger_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.ledger_name",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "ledger_name",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.debit",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "debit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.credit",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "credit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.party_code",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "party_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.party_name",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "party_name",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.payment_method",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "payment_method",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.tax_bucket",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "tax_bucket",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.narration",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "narration",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.reference_no",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "reference_no",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.source_created_at",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "source_created_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.source_modified_at",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "source_modified_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.row_hash",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "row_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.uk",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_txn_lines.created_at",
+        "properties": {
+          "table_name": "source_txn_lines",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_txn_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_system",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_system",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_query_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_query_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_query_version",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_query_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.extraction_run_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "extraction_run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_file_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_file_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_file_hash",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_file_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_table_or_entity",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_table_or_entity",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_record_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_record_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_document_no",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_document_no",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.branch_code",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.zoho_location_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "zoho_location_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.financial_year",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "financial_year",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 16
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.period",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "period",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 7
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.transaction_date",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "transaction_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_transaction_type",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_transaction_type",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.source_transaction_hash",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "source_transaction_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.debit_total",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "debit_total",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.credit_total",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "credit_total",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.line_count",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "line_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.payment_method",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "payment_method",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.tax_bucket",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "tax_bucket",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.party_code",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "party_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.is_balanced",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "is_balanced",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.disposition",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "disposition",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.disposition_rule_version",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "disposition_rule_version",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.disposition_reason",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "disposition_reason",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.disposition_evidence_json",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "disposition_evidence_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.disposition_by",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "disposition_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.disposition_at",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "disposition_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.mapping_version",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "mapping_version",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.transformation_version",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "transformation_version",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.target_module",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "target_module",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.target_payload_hash",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "target_payload_hash",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.migration_batch_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "migration_batch_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.approval_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "approval_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.zoho_record_id",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "zoho_record_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.migration_status",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "migration_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.attempt_count",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "attempt_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.last_error_code",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "last_error_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.last_error_message",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "last_error_message",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.reconciliation_status",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "reconciliation_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.created_at",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "vouchers.updated_at",
+        "properties": {
+          "table_name": "vouchers",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "vouchers"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.run_id",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.branch_code",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.from_date",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "from_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.to_date",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "to_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.ledger_code",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "ledger_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.voucher_type",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "voucher_type",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.debit",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "debit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.credit",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "credit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.txn_count",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "txn_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.line_count",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "line_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.summary_version",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "summary_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.uk",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "source_summaries.created_at",
+        "properties": {
+          "table_name": "source_summaries",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "source_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.id",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.run_id",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.batch_id",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "batch_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.layer",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "layer",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.branch_code",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.tolerance",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "tolerance",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.status",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.summary_json",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "summary_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.inputs_version",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "inputs_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.created_by",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "created_by",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_runs.created_at",
+        "properties": {
+          "table_name": "recon_runs",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "recon_runs"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.recon_run_id",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "recon_run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.control_key",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "control_key",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.expected",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "expected",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.actual",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "actual",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.difference",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "difference",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.status",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.detail_json",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "detail_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.uk",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "recon_results.created_at",
+        "properties": {
+          "table_name": "recon_results",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "recon_results"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.category",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "category",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.severity",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "severity",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 8
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.branch_code",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.period",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "period",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 7
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.run_id",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.file_id",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "file_id",
+          "data_type": "bigint",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.voucher_id",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "voucher_id",
+          "data_type": "bigint",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.batch_id",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "batch_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.financial_impact",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "financial_impact",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.owner",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "owner",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.status",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.root_cause",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "root_cause",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.disposition",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "disposition",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.evidence_json",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "evidence_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.message",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "message",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.dedupe_key",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "dedupe_key",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.created_at",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "exceptions.updated_at",
+        "properties": {
+          "table_name": "exceptions",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "exceptions"
+        ]
+      }
+    ]
+  }
+}
