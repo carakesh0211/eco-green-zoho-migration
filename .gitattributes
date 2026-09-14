@@ -1,0 +1,8 @@
+# Pin LF everywhere so hashes and byte-identical fixtures survive Windows checkouts.
+* text=auto eol=lf
+
+# Fixture files are hashed (sha256 in manifest.json): never let git touch their bytes.
+fixtures/** -text
+
+*.png binary
+*.pdf binary

@@ -1,0 +1,752 @@
+[
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "PURCHASE",
+    "target_value": "bill",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "PAYMENT",
+    "target_value": "vendor_payment",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "RECEIPT",
+    "target_value": "customer_payment",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "EXPENSE",
+    "target_value": "expense",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "CREDIT_NOTE",
+    "target_value": "credit_note",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "DEBIT_NOTE",
+    "target_value": "vendor_credit",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "CONTRA",
+    "target_value": "bank_transfer",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "MODULE_ROUTE",
+    "source_key": "JOURNAL",
+    "target_value": "journal",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1001",
+    "target_value": "ZB-ACC-1001",
+    "target_meta": {
+      "account_name": "Cash",
+      "account_type": "cash"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1002",
+    "target_value": "ZB-ACC-1002",
+    "target_meta": {
+      "account_name": "Bank - Current Account",
+      "account_type": "cash"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1003",
+    "target_value": "ZB-ACC-1003",
+    "target_meta": {
+      "account_name": "Sales Revenue - B2C",
+      "account_type": "income"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1004",
+    "target_value": "ZB-ACC-1004",
+    "target_meta": {
+      "account_name": "Purchases",
+      "account_type": "other"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1005",
+    "target_value": "ZB-ACC-1005",
+    "target_meta": {
+      "account_name": "Accounts Payable - Trade",
+      "account_type": "accounts_payable"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1006",
+    "target_value": "ZB-ACC-1006",
+    "target_meta": {
+      "account_name": "Accounts Receivable - Trade",
+      "account_type": "accounts_receivable"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1007",
+    "target_value": "ZB-ACC-1007",
+    "target_meta": {
+      "account_name": "Office Expenses",
+      "account_type": "expense"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1008",
+    "target_value": "ZB-ACC-1008",
+    "target_meta": {
+      "account_name": "Utilities Expenses",
+      "account_type": "expense"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1009",
+    "target_value": "ZB-ACC-1009",
+    "target_meta": {
+      "account_name": "Inventory - Stock",
+      "account_type": "stock"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1010",
+    "target_value": "ZB-ACC-1010",
+    "target_meta": {
+      "account_name": "GST Payable",
+      "account_type": "accounts_payable"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1011",
+    "target_value": "ZB-ACC-1011",
+    "target_meta": {
+      "account_name": "Sales Returns",
+      "account_type": "income"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1012",
+    "target_value": "ZB-ACC-1012",
+    "target_meta": {
+      "account_name": "Purchase Returns",
+      "account_type": "other"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1013",
+    "target_value": "ZB-ACC-1013",
+    "target_meta": {
+      "account_name": "Journal Suspense",
+      "account_type": "other"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "LEDGER_ACCOUNT",
+    "source_key": "LEDG-1014",
+    "target_value": "ZB-ACC-1014",
+    "target_meta": {
+      "account_name": "Owner's Capital / Retained Earnings",
+      "account_type": "equity"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-001",
+    "target_value": "ZB-CONTACT-001",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 001",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-002",
+    "target_value": "ZB-CONTACT-002",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 002",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-003",
+    "target_value": "ZB-CONTACT-003",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 003",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-004",
+    "target_value": "ZB-CONTACT-004",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 004",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-005",
+    "target_value": "ZB-CONTACT-005",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 005",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-006",
+    "target_value": "ZB-CONTACT-006",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 006",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-007",
+    "target_value": "ZB-CONTACT-007",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 007",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-008",
+    "target_value": "ZB-CONTACT-008",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 008",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-009",
+    "target_value": "ZB-CONTACT-009",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 009",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "V-PARTY-010",
+    "target_value": "ZB-CONTACT-010",
+    "target_meta": {
+      "contact_name": "Synthetic Vendor 010",
+      "contact_type": "vendor"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-001",
+    "target_value": "ZB-CONTACT-C001",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 001",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-002",
+    "target_value": "ZB-CONTACT-C002",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 002",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-003",
+    "target_value": "ZB-CONTACT-C003",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 003",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-004",
+    "target_value": "ZB-CONTACT-C004",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 004",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-005",
+    "target_value": "ZB-CONTACT-C005",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 005",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-006",
+    "target_value": "ZB-CONTACT-C006",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 006",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-007",
+    "target_value": "ZB-CONTACT-C007",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 007",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-008",
+    "target_value": "ZB-CONTACT-C008",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 008",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-009",
+    "target_value": "ZB-CONTACT-C009",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 009",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PARTY",
+    "source_key": "C-PARTY-010",
+    "target_value": "ZB-CONTACT-C010",
+    "target_meta": {
+      "contact_name": "Synthetic Customer 010",
+      "contact_type": "customer"
+    },
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "BANK",
+    "target_value": "ZB-PAYMENT-MODE-BANK",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "CARD",
+    "target_value": "ZB-PAYMENT-MODE-CARD",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "CASH",
+    "target_value": "ZB-PAYMENT-MODE-CASH",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "CREDIT",
+    "target_value": "ZB-PAYMENT-MODE-CREDIT",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "OTHER",
+    "target_value": "ZB-PAYMENT-MODE-OTHER",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "UPI",
+    "target_value": "ZB-PAYMENT-MODE-UPI",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "PAYMENT_MODE",
+    "source_key": "WALLET",
+    "target_value": "ZB-PAYMENT-MODE-WALLET",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "TAX",
+    "source_key": "EXEMPT",
+    "target_value": "ZB-TAX-EXEMPT",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "TAX",
+    "source_key": "GST12",
+    "target_value": "ZB-TAX-GST12",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "TAX",
+    "source_key": "GST18",
+    "target_value": "ZB-TAX-GST18",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "TAX",
+    "source_key": "GST5",
+    "target_value": "ZB-TAX-GST5",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  },
+  {
+    "rule_type": "TAX",
+    "source_key": "NA",
+    "target_value": "ZB-TAX-NA",
+    "target_meta": {},
+    "mapping_version": "map_v1",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead",
+    "notes": ""
+  }
+]

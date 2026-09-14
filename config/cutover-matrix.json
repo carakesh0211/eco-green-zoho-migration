@@ -1,0 +1,28 @@
+[
+  {
+    "branch_code": "PILOT01",
+    "zoho_location_id": "LOC-PILOT01",
+    "migration_from_date": "2026-04-01",
+    "live_system_start_date": "2026-06-01",
+    "historical_migration_end_date": "2026-05-31",
+    "transaction_class": "*",
+    "payment_method": "*",
+    "smart_pharma_coverage_status": "NOT_COVERED",
+    "cutover_rule_version": "cut_v1",
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead"
+  },
+  {
+    "branch_code": "PILOT01",
+    "zoho_location_id": "LOC-PILOT01",
+    "migration_from_date": "2026-04-01",
+    "live_system_start_date": "2026-06-01",
+    "historical_migration_end_date": "2026-05-31",
+    "transaction_class": "SALES_B2C",
+    "payment_method": "*",
+    "smart_pharma_coverage_status": "COVERED",
+    "cutover_rule_version": "cut_v1",
+    "approval_status": "APPROVED",
+    "approved_by": "finance.lead"
+  }
+]

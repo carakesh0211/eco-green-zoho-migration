@@ -1,0 +1,47 @@
+[
+  {
+    "id": "dev-viewer",
+    "role": "viewer",
+    "principal_type": "human",
+    "branches": [
+      "PILOT01"
+    ],
+    "token_sha256": "2141a79e4a1e001247203f90325ffc6a4a47aa3200fce91bfe7a50883ba1bf52"
+  },
+  {
+    "id": "dev-operator",
+    "role": "operator",
+    "principal_type": "human",
+    "branches": [
+      "PILOT01"
+    ],
+    "token_sha256": "6a230cc8a97a169000f0cb6b585deef23a834d6d8b29285284afb88bf0811d66"
+  },
+  {
+    "id": "dev-approver",
+    "role": "approver",
+    "principal_type": "human",
+    "branches": [
+      "PILOT01"
+    ],
+    "token_sha256": "a68209cbe3f5a9abf3f067f2d75669d206b595bd2c908c282d1d9fc714128ff8"
+  },
+  {
+    "id": "dev-admin",
+    "role": "admin",
+    "principal_type": "human",
+    "branches": [
+      "*"
+    ],
+    "token_sha256": "f37837a0953cdad0b2908f982c310813daec9cf4f1950c7b82a22e8d277b0aad"
+  },
+  {
+    "id": "bot:hermes",
+    "role": "operator",
+    "principal_type": "bot",
+    "branches": [
+      "PILOT01"
+    ],
+    "token_sha256": "1522cb584914013c25335aa687391e631dd98085b8f9c3d5c0382554554a8a48"
+  }
+]

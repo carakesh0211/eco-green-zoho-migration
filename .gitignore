@@ -1,0 +1,34 @@
+# secrets / env
+.env
+.env.*
+!.env.example
+*.enc-key
+*.jwt-secret
+config/users.local.json
+config/*.local.json
+
+# runtime data (never commit real extracts, archives, DBs, tokens)
+data/
+var/
+*.db
+*.db-*
+*.sqlite
+inbox/
+archive/
+logs/
+*.log
+
+# catalyst local state
+.catalystrc
+catalyst.json
+catalyst-debug.log
+
+# node
+node_modules/
+npm-debug.log*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

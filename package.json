@@ -1,0 +1,26 @@
+{
+  "name": "eco-green-zb-migration",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Eco Green -> Zoho Books historical accounting migration & three-way reconciliation pilot (Catalyst/Hermes control hub). Production posting disabled by default.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/server/index.js",
+    "worker": "node src/worker/index.js",
+    "dev": "node --watch src/server/index.js",
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "fixtures:seed": "node scripts/seed-fixtures.js",
+    "pipeline:dry-run": "node scripts/run-pipeline.js --branch PILOT01 --run run-001 --dry-run",
+    "check:secrets": "node scripts/check-secrets.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0"
+  },
+  "devDependencies": {}
+}

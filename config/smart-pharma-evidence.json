@@ -1,0 +1,46 @@
+[
+  {
+    "branch_code": "PILOT01",
+    "business_date": "2026-04-10",
+    "transaction_class": "SALES_B2C",
+    "payment_method": "UPI",
+    "tax_bucket": "GST18",
+    "amount": "4500.00",
+    "sp_batch_ref": "SPB-2026-04-01",
+    "books_record_id": "mockbooks_0001",
+    "books_module": "invoice"
+  },
+  {
+    "branch_code": "PILOT01",
+    "business_date": "2026-04-18",
+    "transaction_class": "SALES_B2C",
+    "payment_method": "CARD",
+    "tax_bucket": "GST12",
+    "amount": "6200.50",
+    "sp_batch_ref": "SPB-2026-04-02",
+    "books_record_id": "mockbooks_0002",
+    "books_module": "invoice"
+  },
+  {
+    "branch_code": "PILOT01",
+    "business_date": "2026-05-12",
+    "transaction_class": "SALES_B2C",
+    "payment_method": "CASH",
+    "tax_bucket": "GST5",
+    "amount": "3100.00",
+    "sp_batch_ref": "SPB-2026-04-03",
+    "books_record_id": "mockbooks_0003",
+    "books_module": "invoice"
+  },
+  {
+    "branch_code": "PILOT01",
+    "business_date": "2026-05-22",
+    "transaction_class": "SALES_B2C",
+    "payment_method": "CARD",
+    "tax_bucket": "GST18",
+    "amount": "5000.00",
+    "sp_batch_ref": "SPB-2026-05-99",
+    "books_record_id": "mockbooks_0099",
+    "books_module": "invoice"
+  }
+]

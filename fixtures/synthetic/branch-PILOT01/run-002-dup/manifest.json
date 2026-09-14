@@ -1,0 +1,37 @@
+{
+  "contract_version": "1.0",
+  "extraction_run_id": "PILOT01-2026-04-run-002-dup",
+  "source_system": "ECO_GREEN",
+  "query_id": "EG_ACCT_VOUCHERS",
+  "query_name": "Accounting vouchers with lines",
+  "query_version": "v3",
+  "sql_hash": "sha256:ef483e18dd045a30f373c7a356b73aee6f462b73e804502c6adde19b7cf6d934",
+  "branch_code": "PILOT01",
+  "from_date": "2026-04-01",
+  "to_date": "2026-06-05",
+  "currency": "INR",
+  "extracted_at": "2026-09-13T19:30:00+05:30",
+  "source_operator_or_job": "eg-extract-cron",
+  "files": [
+    {
+      "file_name": "transactions.csv",
+      "file_role": "TRANSACTIONS",
+      "sha256": "432617ba11462ceec0c0e5b909101178457cfb5ec27c4d07de66a88f55622abe",
+      "row_count": 81,
+      "debit_total": "416960.00",
+      "credit_total": "414260.00",
+      "encoding": "utf-8",
+      "delimiter": ","
+    },
+    {
+      "file_name": "trial_balance.csv",
+      "file_role": "TRIAL_BALANCE",
+      "sha256": "fc6166acc10c1ae9fecc7a1e31479d5fbdb5fcf55d7785d6c32169125e2a6aba",
+      "row_count": 15,
+      "debit_total": "744560.00",
+      "credit_total": "744560.00",
+      "encoding": "utf-8",
+      "delimiter": ","
+    }
+  ]
+}

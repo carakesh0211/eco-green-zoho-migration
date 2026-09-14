@@ -1,0 +1,116 @@
+// Explicit state machines. Every transition goes through `assertTransition` so an
+// illegal jump throws instead of silently corrupting workflow state.
+
+export const RUN_STATES = Object.freeze({
+  RECEIVED: 'RECEIVED',
+  CLAIMED: 'CLAIMED',
+  VALIDATION_FAILED: 'VALIDATION_FAILED',
+  ARCHIVED: 'ARCHIVED',
+  STAGED: 'STAGED',
+  SUMMARISED: 'SUMMARISED',
+  SOURCE_RECONCILED: 'SOURCE_RECONCILED',
+  SOURCE_RECON_FAILED: 'SOURCE_RECON_FAILED',
+  CLASSIFIED: 'CLASSIFIED',          // cutover + overlap dispositions applied
+  TRANSFORMED: 'TRANSFORMED',        // preview payloads generated
+  READY_FOR_APPROVAL: 'READY_FOR_APPROVAL',
+  EXCEPTION: 'EXCEPTION',
+});
+
+export const RUN_TRANSITIONS = Object.freeze({
+  RECEIVED: ['CLAIMED'],
+  CLAIMED: ['VALIDATION_FAILED', 'ARCHIVED', 'EXCEPTION', 'RECEIVED' /* claim expired */],
+  VALIDATION_FAILED: ['RECEIVED' /* resubmitted */],
+  ARCHIVED: ['STAGED', 'EXCEPTION'],
+  STAGED: ['SUMMARISED', 'EXCEPTION'],
+  SUMMARISED: ['SOURCE_RECONCILED', 'SOURCE_RECON_FAILED'],
+  SOURCE_RECON_FAILED: ['SUMMARISED' /* rerun after fix/approved exception */, 'EXCEPTION'],
+  SOURCE_RECONCILED: ['CLASSIFIED', 'EXCEPTION'],
+  CLASSIFIED: ['TRANSFORMED', 'EXCEPTION', 'SOURCE_RECONCILED' /* rule change -> reclassify */],
+  TRANSFORMED: ['READY_FOR_APPROVAL', 'CLASSIFIED', 'EXCEPTION'],
+  READY_FOR_APPROVAL: ['TRANSFORMED', 'CLASSIFIED'],
+  EXCEPTION: ['RECEIVED', 'STAGED', 'SUMMARISED', 'CLASSIFIED'],
+});
+
+export const BATCH_STATES = Object.freeze({
+  DRAFT: 'DRAFT',
+  READY_FOR_APPROVAL: 'READY_FOR_APPROVAL',
+  APPROVED: 'APPROVED',
+  APPROVAL_INVALIDATED: 'APPROVAL_INVALIDATED',
+  QUEUED: 'QUEUED',
+  MIGRATING: 'MIGRATING',
+  PAUSED: 'PAUSED',
+  PARTIALLY_MIGRATED: 'PARTIALLY_MIGRATED',
+  MIGRATED: 'MIGRATED',
+  POST_RECONCILIATION: 'POST_RECONCILIATION',
+  RECONCILIATION_FAILED: 'RECONCILIATION_FAILED',
+  SIGNED_OFF: 'SIGNED_OFF',
+  REJECTED: 'REJECTED',
+});
+
+export const BATCH_TRANSITIONS = Object.freeze({
+  DRAFT: ['READY_FOR_APPROVAL', 'REJECTED'],
+  READY_FOR_APPROVAL: ['APPROVED', 'REJECTED', 'DRAFT'],
+  APPROVED: ['QUEUED', 'APPROVAL_INVALIDATED', 'REJECTED'],
+  APPROVAL_INVALIDATED: ['DRAFT'],
+  QUEUED: ['MIGRATING', 'PAUSED', 'APPROVAL_INVALIDATED'],
+  MIGRATING: ['PAUSED', 'PARTIALLY_MIGRATED', 'MIGRATED'],
+  PAUSED: ['QUEUED', 'MIGRATING'],
+  PARTIALLY_MIGRATED: ['MIGRATING', 'PAUSED', 'POST_RECONCILIATION'],
+  MIGRATED: ['POST_RECONCILIATION'],
+  POST_RECONCILIATION: ['SIGNED_OFF', 'RECONCILIATION_FAILED'],
+  RECONCILIATION_FAILED: ['POST_RECONCILIATION', 'PARTIALLY_MIGRATED'],
+  SIGNED_OFF: [],
+  REJECTED: ['DRAFT'],
+});
+
+export const QUEUE_STATES = Object.freeze({
+  QUEUED: 'QUEUED',
+  CLAIMED: 'CLAIMED',
+  POSTED: 'POSTED',
+  FAILED_RETRYABLE: 'FAILED_RETRYABLE',
+  FAILED_FINAL: 'FAILED_FINAL',
+  UNKNOWN_OUTCOME: 'UNKNOWN_OUTCOME',
+  DEAD_LETTER: 'DEAD_LETTER',
+  PAUSED: 'PAUSED',
+});
+
+export const QUEUE_TRANSITIONS = Object.freeze({
+  QUEUED: ['CLAIMED', 'PAUSED'],
+  CLAIMED: ['POSTED', 'FAILED_RETRYABLE', 'FAILED_FINAL', 'UNKNOWN_OUTCOME', 'QUEUED' /* claim expired */],
+  FAILED_RETRYABLE: ['QUEUED', 'DEAD_LETTER', 'PAUSED'],
+  UNKNOWN_OUTCOME: ['POSTED' /* found by lookup */, 'QUEUED' /* lookup proved absent */, 'DEAD_LETTER'],
+  PAUSED: ['QUEUED'],
+  POSTED: [],
+  FAILED_FINAL: [],
+  DEAD_LETTER: ['QUEUED' /* manual, audited */],
+});
+
+export const DISPOSITIONS = Object.freeze({
+  PENDING: 'PENDING',
+  MIGRATE: 'MIGRATE',
+  SMART_PHARMA_EXCLUDED: 'SMART_PHARMA_EXCLUDED',
+  OTHER_EXCLUDED: 'OTHER_EXCLUDED',
+  BLOCKED: 'BLOCKED',
+});
+
+export const OVERLAP_CLASSES = Object.freeze({
+  MIGRATE: 'MIGRATE',
+  SMART_PHARMA_ALREADY_POSTED: 'SMART_PHARMA_ALREADY_POSTED',
+  PARTIAL_OR_AMBIGUOUS_OVERLAP: 'PARTIAL_OR_AMBIGUOUS_OVERLAP',
+  NOT_APPLICABLE: 'NOT_APPLICABLE',
+});
+
+export class IllegalTransitionError extends Error {
+  constructor(kind, from, to) {
+    super(`Illegal ${kind} transition ${from} -> ${to}`);
+    this.code = 'ILLEGAL_TRANSITION';
+    this.kind = kind; this.from = from; this.to = to;
+  }
+}
+
+export function assertTransition(table, kind, from, to) {
+  const allowed = table[from];
+  if (!allowed) throw new IllegalTransitionError(kind, from, to);
+  if (!allowed.includes(to)) throw new IllegalTransitionError(kind, from, to);
+  return true;
+}
