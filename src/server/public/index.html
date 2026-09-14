@@ -17,10 +17,27 @@
     </div>
   </header>
 
-  <div id="postingBanner" class="banner banner-danger">PRODUCTION POSTING DISABLED &mdash; driver: loading&hellip;</div>
+  <div id="postingBanner" class="banner banner-danger">POSTING DISABLED &mdash; loading&hellip;</div>
+  <div id="archiveDisabledNotice" class="banner banner-danger" hidden>Archive disabled (Development, Stratus not activated) &mdash; files are NOT being stored anywhere.</div>
   <div id="authNotice" class="notice" hidden>Sign in with a bearer token to load data. Every number below links to the API call that produced it.</div>
 
   <main id="app">
+
+    <section class="card" id="sec-overview">
+      <h2>Overview <span id="syntheticBadge" class="badge badge-warn" hidden>SYNTHETIC DEMO DATA</span></h2>
+      <div class="controls">
+        <label>Branch <input id="overviewBranch" placeholder="PILOT01" /></label>
+        <button data-action="loadOverview">Refresh overview</button>
+        <button id="devSeedBtn" data-action="runDevSeed" hidden>Run synthetic demo seed (Development only)</button>
+        <span id="devSeedStatus" class="muted"></span>
+      </div>
+      <div id="overviewRuns" class="tablewrap"></div>
+      <div id="overviewBridge" class="tablewrap"></div>
+      <div id="overviewLayers" class="tablewrap"></div>
+      <div id="overviewBatches" class="tablewrap"></div>
+      <div id="overviewQueue" class="tablewrap"></div>
+      <div id="overviewExceptions" class="tablewrap"></div>
+    </section>
 
     <section class="card" id="sec-files">
       <h2>1. Files &amp; validation</h2>

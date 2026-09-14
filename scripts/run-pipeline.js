@@ -20,22 +20,43 @@ import { openArchive } from '../src/adapters/archive/index.js';
 import { createAudit } from '../src/core/audit.js';
 import { newCorrelationId } from '../src/core/ids.js';
 import { createBooksClient } from '../src/books/index.js';
-import { ingestRun } from '../src/core/ingest.js';
-import { summariseRun } from '../src/core/summarise.js';
-import { reconcileLayerA } from '../src/core/recon_a.js';
-import { classifyRun } from '../src/core/overlap.js';
-import { transformRun } from '../src/core/transform.js';
-import { computeBridge, reconcileLayerB } from '../src/core/bridge.js';
-import { resolve as resolveException } from '../src/core/exceptions.js';
-import { createBatch, approveBatch, enqueueBatch } from '../src/core/batch.js';
-import { runQueueSlice, resolveUnknownOutcomes } from '../src/worker/executor.js';
-import { reconcileLayerC } from '../src/core/recon_c.js';
-import { takeSnapshot, balanceBridge } from '../src/core/balance_bridge.js';
-import { assertTransition, RUN_TRANSITIONS } from '../src/core/states.js';
-import { nowIso } from '../src/core/ids.js';
 import { rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { seedFixtures } from './seed-fixtures.js';
+import {
+  isPassLike,
+  runIngestStage,
+  runLayerAStage,
+  approveKnownDiffsStage,
+  runClassifyTransformBridgeStage,
+  runMockBooksStage,
+} from './lib/pipeline-stages.js';
+
+/**
+ * Injectable store opener (CONTRACTS.md §S adapter dispatch, extended here only to add
+ * a `catalyst-fake` option): defaults to sqlite exactly as before (`STORE_ADAPTER` env
+ * var otherwise unset/'sqlite' behaves identically to the previous inline
+ * `openStore({ adapter: 'sqlite', path: sqlitePath })` call). Set `STORE_ADAPTER=
+ * catalyst-fake` (or pass `{ adapter: 'catalyst-fake' }`) to run this same pipeline
+ * in-process against the offline Catalyst-shaped fake instead — exactly what
+ * test/pipeline_catalyst_fake.test.js and (per the dashboard pipeline goal) a deployed
+ * seed endpoint do by calling the stage functions above directly rather than spawning
+ * this CLI script. The returned store carries a non-enumerable `catalystFake` property
+ * in that mode so a caller can call `store.catalystFake.assertWithinLimits()`.
+ */
+export async function openStoreForPipeline({ sqlitePath, adapter } = {}) {
+  const chosen = adapter ?? process.env.STORE_ADAPTER ?? 'sqlite';
+  if (chosen === 'catalyst-fake') {
+    const { createCatalystFake } = await import('../src/adapters/store/catalyst_fake.js');
+    const { openStore: openCatalystStore } = await import('../src/adapters/store/catalyst.js');
+    const fake = createCatalystFake();
+    const store = await openCatalystStore({ app: fake.app });
+    Object.defineProperty(store, 'catalystFake', { value: fake, enumerable: false });
+    return store;
+  }
+  return openStore({ adapter: 'sqlite', path: sqlitePath });
+}
 
 function parseArgs(argv) {
   const args = { dryRun: false };
@@ -64,10 +85,6 @@ function line(...parts) {
   console.log(parts.join(''));
 }
 
-function isPassLike(status) {
-  return status === 'PASS' || status === 'PASS_WITH_APPROVED_EXCEPTIONS';
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.branch || !args.run) {
@@ -94,7 +111,7 @@ async function main() {
   } else {
     line('MODE: INCREMENTAL (existing local state reused; a rerun over the same manifest is an idempotency check, NOT end-to-end evidence)');
   }
-  const store = await openStore({ adapter: 'sqlite', path: sqlitePath });
+  const store = await openStoreForPipeline({ sqlitePath });
   const audit = createAudit(store);
   const workerId = 'run-pipeline';
   const ctx = { store, audit, correlationId: newCorrelationId(), actor: workerId, actorRole: 'operator' };
@@ -107,37 +124,34 @@ async function main() {
     const seeded = await seedFixtures(ctx, { client });
 
     const inboxRef = `${args.branch}/${args.run}`;
-    const manifestBuf = await inbox.readFile(inboxRef, 'manifest.json');
-    const manifest = JSON.parse(manifestBuf.toString('utf8'));
-    const runId = manifest.extraction_run_id;
 
     line(`=== run-pipeline: ${inboxRef} (${args.dryRun ? 'dry-run' : 'dry-run (implied)'}) ===`);
     line(`Seeded ${seeded.copiedRuns.length} inbox run(s), ${seeded.cutoverRows.length} cutover rows, ${seeded.mappingRows.length} mapping rules, ${seeded.spEvidence.length} SP evidence rows.`);
     line('');
 
-    const ingestResult = await ingestRun(ctx, { inbox, archive, inboxRef, workerId });
-    line(`Ingest outcome: ${ingestResult.outcome}`);
-    if (ingestResult.outcome === 'DUPLICATE_MANIFEST') {
+    const ingest = await runIngestStage(ctx, { inbox, archive, inboxRef, workerId });
+    const runId = ingest.runId;
+    line(`Ingest outcome: ${ingest.outcome}`);
+    if (ingest.outcome === 'DUPLICATE_MANIFEST') {
       line('IDEMPOTENT RERUN: this manifest was already registered; no new work was created. This output is NOT end-to-end verification evidence (use --fresh for that).');
     }
-    if (ingestResult.outcome === 'CLAIM_LOST') {
+    if (ingest.outcome === 'CLAIM_LOST') {
       line('Another process currently holds the claim on this run — nothing more to report.');
       line('');
       line('POSTING: DISABLED (mock driver, dry-run)');
       return;
     }
 
-    const files = await store.find('source_files', { run_id: runId });
     line('Files:');
-    for (const f of files) {
+    for (const f of ingest.files) {
       line(`  ${f.file_name.padEnd(20)} [${f.file_role.padEnd(13)}] status=${f.status.padEnd(17)} rows=${f.actual_row_count ?? '-'} debit=${f.actual_debit_total ?? '-'} credit=${f.actual_credit_total ?? '-'}`);
     }
     line('');
 
-    let run = await store.get('extraction_runs', runId);
+    let run = ingest.run;
     if (!run) {
       line(`No extraction_runs row for ${runId} (manifest/validation failed before a row could be created).`);
-      if (ingestResult.errors) for (const e of ingestResult.errors) line(`  - [${e.code}] ${e.path ?? ''} ${e.message ?? ''}`);
+      if (ingest.errors) for (const e of ingest.errors) line(`  - [${e.code}] ${e.path ?? ''} ${e.message ?? ''}`);
       line('');
       line('POSTING: DISABLED (mock driver, dry-run)');
       return;
@@ -146,26 +160,14 @@ async function main() {
     line(`Run status: ${run.status}`);
     line('');
 
-    let reconAStatus = null;
-    let reconARunId = null;
-    if (run.status === 'STAGED') {
-      await summariseRun(ctx, { runId });
-      const reconOutcome = await reconcileLayerA(ctx, { runId });
-      reconAStatus = reconOutcome.status;
-      reconARunId = reconOutcome.reconRunId;
-      run = await store.get('extraction_runs', runId);
-    } else {
-      const existing = await store.find('recon_runs', { run_id: runId, layer: 'A' });
-      const latest = existing.length ? existing[existing.length - 1] : null;
-      reconAStatus = latest?.status ?? null;
-      reconARunId = latest?.id ?? null;
-    }
+    let layerA = await runLayerAStage(ctx, { runId, run });
+    run = layerA.run;
+    let reconAStatus = layerA.reconAStatus;
+    let reconARunId = layerA.reconARunId;
 
     if (reconARunId) {
-      const reconResults = await store.find('recon_results', { recon_run_id: reconARunId });
-      const failing = reconResults.filter((r) => r.status !== 'MATCH');
-      line(`Layer A: ${reconAStatus} (${reconResults.length} controls, ${failing.length} failing)`);
-      for (const f of failing) {
+      line(`Layer A: ${reconAStatus} (${layerA.controls.length} controls, ${layerA.failing.length} failing)`);
+      for (const f of layerA.failing) {
         line(`  ${f.status.padEnd(16)} ${f.control_key.padEnd(32)} expected=${f.expected} actual=${f.actual} diff=${f.difference}`);
       }
     } else {
@@ -174,42 +176,25 @@ async function main() {
     line('');
 
     if (!isPassLike(reconAStatus) && reconARunId && args.approveKnownDiffs) {
-      const approverCtx = { ...ctx, actor: 'finance.lead', actorRole: 'approver' };
-      const open = (await store.find('exceptions', { run_id: runId, category: 'RECONCILIATION_DIFFERENCE' }))
-        .filter((e) => e.status === 'OPEN' || e.status === 'ASSIGNED');
-      for (const e of open) {
-        await resolveException(approverCtx, {
-          id: e.id, status: 'APPROVED_EXCEPTION', actor: 'finance.lead',
-          rootCause: 'Known synthetic defect documented in fixtures EXPECTED.md',
-          disposition: 'Approved as a pilot demonstration exception; would require finance sign-off on real data',
-        });
-      }
-      run = await store.get('extraction_runs', runId);
-      assertTransition(RUN_TRANSITIONS, 'run', run.status, 'SUMMARISED');
-      await store.update('extraction_runs', runId, { status: 'SUMMARISED', updated_at: nowIso() });
-      const rerun = await reconcileLayerA(ctx, { runId });
-      reconAStatus = rerun.status; reconARunId = rerun.reconRunId;
-      run = await store.get('extraction_runs', runId);
-      line(`Layer A (re-run after approving ${open.length} known differences as finance.lead): ${reconAStatus}`);
+      const approved = await approveKnownDiffsStage(ctx, { runId, reconAStatus, reconARunId });
+      reconAStatus = approved.reconAStatus;
+      reconARunId = approved.reconARunId;
+      run = approved.run;
+      line(`Layer A (re-run after approving ${approved.approvedCount} known differences as finance.lead): ${reconAStatus}`);
       line('');
     }
 
-    let dispositionCounts = null;
-    let previewByModule = {};
-    let layerB = null;
-    if (isPassLike(reconAStatus)) {
-      await classifyRun(ctx, { runId, spEvidence: seeded.spEvidence, ruleVersion: 'cut_v1' });
-      await transformRun(ctx, { runId });
+    const ctb = await runClassifyTransformBridgeStage(ctx, { runId, reconAStatus, spEvidence: seeded.spEvidence, ruleVersion: 'cut_v1' });
+    if (!ctb.skipped) {
       line('Classification/Transform: complete');
-      layerB = await reconcileLayerB(ctx, { runId });
-      line(`Layer B (CSV -> approved population bridge): ${layerB.status}`);
+      line(`Layer B (CSV -> approved population bridge): ${ctb.layerB.status}`);
     } else {
       line('Classification/Transform: SKIPPED (Layer A did not PASS — see states.js RUN_TRANSITIONS; the guard is intentional and not bypassed here)');
     }
     line('');
 
-    const vouchers = await store.find('vouchers', { extraction_run_id: runId });
-    dispositionCounts = computeBridge(vouchers);
+    const vouchers = ctb.vouchers;
+    const dispositionCounts = ctb.dispositionCounts;
     line('Disposition bridge:');
     line(`  ${'disposition'.padEnd(24)}${'count'.padEnd(8)}${'debit'.padEnd(14)}credit`);
     for (const [d, g] of Object.entries(dispositionCounts.byDisposition)) {
@@ -218,64 +203,37 @@ async function main() {
     line(`  ${'TOTAL'.padEnd(24)}${String(dispositionCounts.total.count).padEnd(8)}${dispositionCounts.total.debit.padEnd(14)}${dispositionCounts.total.credit}`);
     line('');
 
-    const previewRows = await store.find('preview_payloads', {});
-    for (const p of previewRows) {
-      const voucher = await store.get('vouchers', p.voucher_id);
-      if (voucher?.extraction_run_id !== runId) continue;
-      previewByModule[p.target_module] = (previewByModule[p.target_module] ?? 0) + 1;
-    }
-    const moduleEntries = Object.entries(previewByModule);
+    const moduleEntries = Object.entries(ctb.previewByModule);
     line(moduleEntries.length ? 'Preview payloads by module:' : 'Preview payloads by module: (none)');
     for (const [module, count] of moduleEntries) line(`  ${module.padEnd(20)}${count}`);
     line('');
 
-    let exercised = 0;
-    let postedTotal = 0;
-    const verificationFailures = [];
-    if (args.throughMockBooks && layerB && isPassLike(layerB.status)) {
-      line('Mock Books delivery (driver=mock; live posting is structurally disabled):');
-      const operatorCtx = { ...ctx, actor: 'operator.local', actorRole: 'operator' };
-      const approverCtx = { ...ctx, actor: 'finance.lead', actorRole: 'approver' };
-      const periods = [...new Set(vouchers.filter((v) => v.disposition === 'MIGRATE' && v.target_payload_hash).map((v) => v.period))].sort();
-      for (const period of periods) {
-        const batch = await createBatch(operatorCtx, { runId, branchCode: args.branch, period, createdBy: 'operator.local' });
-        line(`  batch ${batch.id} period=${period} status=${batch.status} vouchers=${batch.voucher_count} debit=${batch.debit_total} credit=${batch.credit_total}`);
-        if (batch.status !== 'READY_FOR_APPROVAL') continue;
-        await approveBatch(approverCtx, { batchId: batch.id, approver: 'finance.lead', approverRole: 'approver', reason: 'pilot dry-run against mock Books' });
-        const enq = await enqueueBatch(operatorCtx, { batchId: batch.id });
-        await takeSnapshot(operatorCtx, { client, branchCode: args.branch, kind: 'BASELINE', batchId: batch.id });
-        const slice = await runQueueSlice(operatorCtx, { client, batchId: batch.id, workerId: 'run-pipeline', maxItems: 500, timeBudgetMs: 60_000 });
-        const unk = await resolveUnknownOutcomes(operatorCtx, { client, batchId: batch.id });
-        await takeSnapshot(operatorCtx, { client, branchCode: args.branch, kind: 'POST_RUN', batchId: batch.id });
-        const c = await reconcileLayerC(operatorCtx, { client, batchId: batch.id });
-        const bb = await balanceBridge(operatorCtx, { batchId: batch.id });
-        const q = await store.find('queue_items', { batch_id: batch.id });
-        const byStatus = {};
-        for (const it of q) byStatus[it.status] = (byStatus[it.status] ?? 0) + 1;
-        line(`    approved by finance.lead (SoD: creator operator.local), enqueued=${enq.enqueued}, processed=${slice.processed}, posted=${slice.posted}, unknown-resolved=${unk.resolvedPosted}`);
-        line(`    queue: ${Object.entries(byStatus).map(([k, v]) => `${k}=${v}`).join(' ')}`);
-        line(`    Layer C (approved population vs migration-tagged mock records): ${c.status} (${c.itemCount} items)`);
-        line(`    Balance bridge: ${bb.status}`);
-        exercised += slice.processed;
-        postedTotal += slice.posted;
-        if (c.status !== 'PASS' || bb.status !== 'PASS') verificationFailures.push(`batch ${batch.id}: layerC=${c.status} bridge=${bb.status}`);
-      }
-      line('');
-    }
-
-    // Verification verdict (Codex P2): a --through-mock-books run over a non-empty
-    // approved population must have actually exercised items; zero items is not proof.
+    const layerB = ctb.layerB;
+    let mb = null;
     if (args.throughMockBooks) {
-      const approvedPopulation = vouchers.filter((v) => v.disposition === 'MIGRATE' && v.target_payload_hash).length;
-      if (approvedPopulation > 0 && exercised === 0) {
-        verificationFailures.push(`approved population ${approvedPopulation} but 0 queue items were exercised (state already migrated or nothing enqueued)`);
+      mb = await runMockBooksStage(ctx, { client, branchCode: args.branch, runId, layerB, vouchers });
+      if (mb.ran) {
+        line('Mock Books delivery (driver=mock; live posting is structurally disabled):');
+        for (const entry of mb.batches) {
+          const { batch, period } = entry;
+          line(`  batch ${batch.id} period=${period} status=${batch.status} vouchers=${batch.voucher_count} debit=${batch.debit_total} credit=${batch.credit_total}`);
+          if (batch.status !== 'READY_FOR_APPROVAL') continue;
+          line(`    approved by finance.lead (SoD: creator operator.local), enqueued=${entry.enqueued}, processed=${entry.slice.processed}, posted=${entry.slice.posted}, unknown-resolved=${entry.unknownResolved}`);
+          line(`    queue: ${Object.entries(entry.byStatus).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+          line(`    Layer C (approved population vs migration-tagged mock records): ${entry.layerC.status} (${entry.layerC.itemCount} items)`);
+          line(`    Balance bridge: ${entry.bridge.status}`);
+        }
+        line('');
       }
-      if (verificationFailures.length) {
+
+      // Verification verdict (Codex P2): a --through-mock-books run over a non-empty
+      // approved population must have actually exercised items; zero items is not proof.
+      if (mb.verificationStatus === 'FAILED') {
         line('VERIFICATION: FAILED');
-        for (const f of verificationFailures) line(`  - ${f}`);
+        for (const f of mb.verificationFailures) line(`  - ${f}`);
         process.exitCode = 3;
-      } else if (approvedPopulation > 0) {
-        line(`VERIFICATION: PASSED — ${postedTotal}/${approvedPopulation} approved vouchers posted to the mock driver and reconciled (Layer C + balance bridge)`);
+      } else if (mb.verificationStatus === 'PASSED') {
+        line(`VERIFICATION: PASSED — ${mb.postedTotal}/${mb.approvedPopulation} approved vouchers posted to the mock driver and reconciled (Layer C + balance bridge)`);
       } else {
         line('VERIFICATION: NOT APPLICABLE — approved migration population is empty');
       }
@@ -296,8 +254,24 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('run-pipeline crashed:', err);
-  process.exitCode = 1;
-});
+// Guarded so `openStoreForPipeline` (and the stage functions it composes with) can be
+// imported by test/pipeline_catalyst_fake.test.js — or a future deployed seed endpoint —
+// without main() firing on import (it used to run unconditionally; nothing previously
+// imported this file, so this is a no-op for the CLI path: `node scripts/run-pipeline.js`
+// is still the main module and still runs exactly as before).
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('run-pipeline crashed:', err);
+    process.exitCode = 1;
+  });
+}

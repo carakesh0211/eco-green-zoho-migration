@@ -48,6 +48,17 @@ export const LOGICAL_TABLES = Object.freeze([
   'recon_runs',
   'recon_results',
   'exceptions',
+  'branches',
+  'cutover_matrix',
+  'mapping_rules',
+  'trial_balance_lines',
+  'overlap_candidates',
+  'preview_payloads',
+  'migration_batches',
+  'approvals',
+  'queue_items',
+  'api_attempts',
+  'books_snapshots',
 ]);
 
 export class TableNotAllowedError extends Error {
@@ -156,22 +167,39 @@ export function coerceScalar(dataType, value) {
 /**
  * Turn a raw Catalyst row (the insertRow/getRow/updateRow shape, or one table's slice of
  * a ZCQL row) into the plain-object shape the Store contract promises: declared columns
- * exactly as in schema.sql, plus `id` — never ROWID/CREATORID/CREATEDTIME/MODIFIEDTIME.
+ * exactly as in schema.sql, plus the table's key column — never ROWID/CREATORID/
+ * CREATEDTIME/MODIFIEDTIME.
+ *
+ * Three logicalKey styles (see schema.catalyst.js's TYPE MAPPING header):
+ *   - 'ROWID': the table has no explicit key column; synthesise `id` from ROWID (mirrors
+ *     sqlite.js's literal `id INTEGER PRIMARY KEY AUTOINCREMENT` column).
+ *   - 'id': the table declares an explicit `varchar` column literally named `id`
+ *     (extraction_runs, recon_runs, migration_batches, approvals).
+ *   - any other column name (currently only 'branch_code', for `branches`): the table
+ *     declares an explicit `varchar` column under that name, which is its own sqlite PK.
+ * The last two styles both fall through the same "explicit key column" branch below —
+ * only the column name differs.
  */
 export function normaliseRow(logicalTable, raw) {
   if (!raw) return null;
   const def = tableDef(logicalTable);
+  const key = def.logicalKey;
   const out = {};
   for (const c of def.columns) {
-    if (c.column_name === 'id') continue; // handled below via the table's logicalKey
+    if (key !== 'ROWID' && c.column_name === key) continue; // handled specially below
     if (Object.prototype.hasOwnProperty.call(raw, c.column_name)) {
       out[c.column_name] = coerceScalar(c.data_type, raw[c.column_name]);
     }
   }
-  if (def.logicalKey === 'id') {
-    out.id = raw.id !== undefined ? raw.id : raw.ROWID !== undefined ? String(raw.ROWID) : undefined;
-  } else {
+  if (key === 'ROWID') {
     out.id = raw.ROWID !== undefined ? String(raw.ROWID) : raw.id;
+  } else {
+    const keyCol = def.columns.find((c) => c.column_name === key);
+    if (raw[key] !== undefined) {
+      out[key] = coerceScalar(keyCol?.data_type, raw[key]);
+    } else if (key === 'id' && raw.ROWID !== undefined) {
+      out.id = String(raw.ROWID); // defensive fallback only; explicit id-keyed tables always carry their own id
+    }
   }
   return out;
 }

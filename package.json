@@ -20,7 +20,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "helmet": "^8.1.0"
-  },
-  "devDependencies": {}
+    "helmet": "^8.1.0",
+    "zcatalyst-sdk-node": "^3.4.0"
+  }
 }

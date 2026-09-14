@@ -11,8 +11,9 @@ import { dirname, join } from 'node:path';
 import { createAuth } from './auth.js';
 import { createReadRouter } from './routes/read.js';
 import { createMutateRouter } from './routes/mutate.js';
+import { createDevRouter } from './routes/dev.js';
 import { createAgentRouter, minimalResponseMiddleware } from './routes/agent.js';
-import { isPostingEnabled } from '../books/guard.js';
+import { isPostingEnabled, postingBlockedReasons } from '../books/guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -34,8 +35,31 @@ try {
  * @param {object} [opts.deps] - { recon_a, cutover, mapping, batch, worker, recon_c, books }
  *   Concurrently-developed core modules, injected so tests can stub them and so a
  *   partial build (some modules not yet landed) degrades to 501 instead of crashing.
+ * @param {object} [opts.devDeps] - { inbox, archive, client } for POST /api/dev/seed
+ *   (Development-only synthetic seed job, src/server/routes/dev.js).
+ * @param {object} [opts.runtime] - src/server/catalyst_runtime.js's createCatalystRuntime()
+ *   result; when given, its middleware() is mounted so every request runs inside the
+ *   request's Catalyst app context (a no-op unless a Catalyst-backed adapter is configured).
+ * @param {string} [opts.environment] - 'Development'|'Production'|'local'|... (defaults to
+ *   env X_ZOHO_CATALYST_ENVIRONMENT / CATALYST_ENVIRONMENT / 'local').
+ * @param {string} [opts.storeAdapter] - defaults to env STORE_ADAPTER / 'sqlite'.
+ * @param {string} [opts.archiveAdapter] - defaults to env ARCHIVE_ADAPTER / 'local'.
+ * @param {string} [opts.inboxAdapter] - defaults to env INBOX_ADAPTER / 'local'.
+ * @param {boolean} [opts.devSeedEnabled] - defaults to env DEV_SEED_ENABLED === 'true'.
  */
-export function createApp({ store, audit, users = [], deps = {} }) {
+export function createApp({
+  store,
+  audit,
+  users = [],
+  deps = {},
+  devDeps = {},
+  runtime,
+  environment = process.env.X_ZOHO_CATALYST_ENVIRONMENT || process.env.CATALYST_ENVIRONMENT || 'local',
+  storeAdapter = process.env.STORE_ADAPTER ?? 'sqlite',
+  archiveAdapter = process.env.ARCHIVE_ADAPTER ?? 'local',
+  inboxAdapter = process.env.INBOX_ADAPTER ?? 'local',
+  devSeedEnabled = process.env.DEV_SEED_ENABLED === 'true',
+}) {
   const app = express();
   const auth = createAuth({ users, audit });
 
@@ -70,25 +94,42 @@ export function createApp({ store, audit, users = [], deps = {} }) {
 
   app.use(express.json({ limit: '1mb' }));
 
+  // No-op unless a Catalyst-backed adapter is configured (see catalyst_runtime.js):
+  // initializes this request's Catalyst app and makes it available to every downstream
+  // handler (including the request-scoped store/archive) via AsyncLocalStorage.
+  if (runtime) app.use(runtime.middleware());
+
+  const archiveStatus = archiveAdapter === 'disabled' ? 'DISABLED_DEVELOPMENT' : 'ENABLED';
+  const claimSemantics = store?.claimSemantics === 'BEST_EFFORT' ? 'BEST_EFFORT' : 'ATOMIC';
+  const workerMode = process.env.WORKER_MODE === 'singleton' ? 'singleton' : 'disabled';
+
   // Public, unauthenticated: drives the console's permanent red banner and lets an
-  // operator confirm production posting is disabled before doing anything else.
+  // operator confirm production posting is disabled before doing anything else. Never
+  // includes any id (project/org/branch) — see task note "Unauthenticated, no IDs".
   app.get('/api/health', (req, res) => {
     let driver = 'mock';
     let postingEnabled = false;
     try {
-      if (deps.books) {
-        driver = deps.books.driver ?? driver;
-        postingEnabled = isPostingEnabled(deps.books.config);
-      }
+      driver = deps.books?.driver ?? driver;
+      postingEnabled = isPostingEnabled(deps.books?.config);
     } catch {
       postingEnabled = false;
     }
+    const postingBlockedBy = postingBlockedReasons(deps.books?.config, { store });
     res.json({
       ok: true,
+      environment,
+      storeAdapter,
+      claimSemantics,
+      archiveAdapter,
+      archiveStatus,
       driver,
       postingEnabled,
-      storeAdapter: process.env.STORE_ADAPTER ?? 'sqlite',
+      postingBlockedBy,
+      workerMode,
+      inboxAdapter,
       version: cachedVersion,
+      buildSha: process.env.BUILD_SHA ?? null,
     });
   });
 
@@ -100,6 +141,7 @@ export function createApp({ store, audit, users = [], deps = {} }) {
   app.use('/api', createAgentRouter({ auth }));
   app.use('/api', createReadRouter({ store, deps, auth }));
   app.use('/api', createMutateRouter({ store, audit, deps, auth }));
+  app.use('/api', createDevRouter({ store, audit, auth, deps: devDeps, environment, devSeedEnabled, runtime }));
 
   app.use(express.static(PUBLIC_DIR));
 

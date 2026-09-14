@@ -77,6 +77,94 @@
         "dependsOn": []
       },
       {
+        "type": "table",
+        "name": "branches",
+        "properties": {
+          "table_name": "branches"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "cutover_matrix",
+        "properties": {
+          "table_name": "cutover_matrix"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "mapping_rules",
+        "properties": {
+          "table_name": "mapping_rules"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "trial_balance_lines",
+        "properties": {
+          "table_name": "trial_balance_lines"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "overlap_candidates",
+        "properties": {
+          "table_name": "overlap_candidates"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "preview_payloads",
+        "properties": {
+          "table_name": "preview_payloads"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "migration_batches",
+        "properties": {
+          "table_name": "migration_batches"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "approvals",
+        "properties": {
+          "table_name": "approvals"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "queue_items",
+        "properties": {
+          "table_name": "queue_items"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "api_attempts",
+        "properties": {
+          "table_name": "api_attempts"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "books_snapshots",
+        "properties": {
+          "table_name": "books_snapshots"
+        },
+        "dependsOn": []
+      },
+      {
         "type": "column",
         "name": "audit_events.actor",
         "properties": {
@@ -2331,9 +2419,8 @@
         "properties": {
           "table_name": "exceptions",
           "column_name": "disposition",
-          "data_type": "varchar",
-          "is_mandatory": false,
-          "max_length": 32
+          "data_type": "text",
+          "is_mandatory": false
         },
         "dependsOn": [
           "exceptions"
@@ -2406,6 +2493,1870 @@
         },
         "dependsOn": [
           "exceptions"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branches.branch_code",
+        "properties": {
+          "table_name": "branches",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "branches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branches.branch_name",
+        "properties": {
+          "table_name": "branches",
+          "column_name": "branch_name",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "branches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branches.zoho_location_id",
+        "properties": {
+          "table_name": "branches",
+          "column_name": "zoho_location_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branches.status",
+        "properties": {
+          "table_name": "branches",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branches.created_at",
+        "properties": {
+          "table_name": "branches",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branches.updated_at",
+        "properties": {
+          "table_name": "branches",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.branch_code",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.zoho_location_id",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "zoho_location_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.migration_from_date",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "migration_from_date",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.live_system_start_date",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "live_system_start_date",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.historical_migration_end_date",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "historical_migration_end_date",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.transaction_class",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "transaction_class",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.payment_method",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "payment_method",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.smart_pharma_coverage_status",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "smart_pharma_coverage_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.cutover_rule_version",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "cutover_rule_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.approval_status",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "approval_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.approved_by",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "approved_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.approved_at",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "approved_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.evidence_ref",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "evidence_ref",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.uk",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.created_at",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "cutover_matrix.updated_at",
+        "properties": {
+          "table_name": "cutover_matrix",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "cutover_matrix"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.rule_type",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "rule_type",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.source_key",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "source_key",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.target_value",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "target_value",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.target_meta",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "target_meta",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.mapping_version",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "mapping_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.effective_from",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "effective_from",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.effective_to",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "effective_to",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.status",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.approved_by",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "approved_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.approved_at",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "approved_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.notes",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "notes",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.uk",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.created_at",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "mapping_rules.updated_at",
+        "properties": {
+          "table_name": "mapping_rules",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "mapping_rules"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.run_id",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.file_id",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "file_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.branch_code",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.ledger_code",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "ledger_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.ledger_name",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "ledger_name",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.opening_debit",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "opening_debit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.opening_credit",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "opening_credit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.period_debit",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "period_debit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.period_credit",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "period_credit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.closing_debit",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "closing_debit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.closing_credit",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "closing_credit",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.txn_count",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "txn_count",
+          "data_type": "int",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.uk",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "trial_balance_lines.created_at",
+        "properties": {
+          "table_name": "trial_balance_lines",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "trial_balance_lines"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.voucher_id",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "voucher_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.population_key",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "population_key",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.classification",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "classification",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.match_strength",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "match_strength",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.evidence_json",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "evidence_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.rule_version",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "rule_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.reviewer",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "reviewer",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.reviewed_at",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "reviewed_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.uk",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "overlap_candidates.created_at",
+        "properties": {
+          "table_name": "overlap_candidates",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "overlap_candidates"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.voucher_id",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "voucher_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.target_module",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "target_module",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.payload_json",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "payload_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.payload_hash",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "payload_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.human_summary",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "human_summary",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.mapping_version",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "mapping_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.transformation_version",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "transformation_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.warnings_json",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "warnings_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.uk",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "preview_payloads.created_at",
+        "properties": {
+          "table_name": "preview_payloads",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "preview_payloads"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.id",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.branch_code",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.period",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "period",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 7
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.run_id",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "run_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.scope_hash",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "scope_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.mapping_version",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "mapping_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.transformation_version",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "transformation_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.cutover_rule_version",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "cutover_rule_version",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.voucher_count",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "voucher_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.debit_total",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "debit_total",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.credit_total",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "credit_total",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.totals_json",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "totals_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.status",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.approval_id",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "approval_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.created_by",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "created_by",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.created_at",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "migration_batches.updated_at",
+        "properties": {
+          "table_name": "migration_batches",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "migration_batches"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.id",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.batch_id",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "batch_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.scope_hash",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "scope_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.decision",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "decision",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.approver",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "approver",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.approver_role",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "approver_role",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.reason",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "reason",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.invalidated_at",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "invalidated_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.invalidation_reason",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "invalidation_reason",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "approvals.created_at",
+        "properties": {
+          "table_name": "approvals",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "approvals"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.batch_id",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "batch_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.voucher_id",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "voucher_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.idempotency_key",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "idempotency_key",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.status",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.claimed_by",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "claimed_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.claimed_at",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "claimed_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.claim_expires_at",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "claim_expires_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.run_after",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "run_after",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.attempts",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "attempts",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.last_error_code",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "last_error_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.created_at",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "queue_items.updated_at",
+        "properties": {
+          "table_name": "queue_items",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "queue_items"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.queue_item_id",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "queue_item_id",
+          "data_type": "bigint",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.attempt_no",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "attempt_no",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.target_module",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "target_module",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.request_hash",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "request_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.response_class",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "response_class",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.http_status",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "http_status",
+          "data_type": "int",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.zoho_record_id",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "zoho_record_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.error_code",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "error_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.error_message",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "error_message",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.retry_after_ms",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "retry_after_ms",
+          "data_type": "int",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.started_at",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "started_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.finished_at",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "finished_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.uk",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "api_attempts.created_at",
+        "properties": {
+          "table_name": "api_attempts",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "api_attempts"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.branch_code",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.zoho_location_id",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "zoho_location_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.organization_id",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "organization_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.kind",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "kind",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.batch_id",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "batch_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.driver",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "driver",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.taken_at",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "taken_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.balances_json",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "balances_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.records_json",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "records_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.snapshot_hash",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "snapshot_hash",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_snapshots.created_at",
+        "properties": {
+          "table_name": "books_snapshots",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_snapshots"
         ]
       }
     ]

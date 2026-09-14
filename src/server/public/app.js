@@ -114,14 +114,25 @@ function val(id) {
 
 // ---------------------------------------------------------------- auth / health
 
+let lastHealth = null;
+
 async function refreshHealth() {
   const banner = document.getElementById('postingBanner');
+  const archiveNotice = document.getElementById('archiveDisabledNotice');
+  const syntheticBadge = document.getElementById('syntheticBadge');
+  const devSeedBtn = document.getElementById('devSeedBtn');
   try {
     const health = await api('/api/health');
-    banner.textContent = `PRODUCTION POSTING DISABLED — driver: ${health.driver}${health.postingEnabled ? ' (POSTING IS ENABLED!)' : ''}`;
-    banner.className = health.postingEnabled ? 'banner banner-danger' : 'banner banner-danger';
+    lastHealth = health;
+    banner.textContent =
+      `POSTING DISABLED — driver=${health.driver} — store=${health.storeAdapter} (${health.claimSemantics}) — ` +
+      `archive=${health.archiveStatus} — env=${health.environment}` +
+      (health.postingEnabled ? ' (POSTING IS ENABLED!)' : '');
+    archiveNotice.hidden = health.archiveStatus !== 'DISABLED_DEVELOPMENT';
+    syntheticBadge.hidden = health.environment === 'Production';
+    devSeedBtn.hidden = health.environment !== 'Development';
   } catch (err) {
-    banner.textContent = `PRODUCTION POSTING DISABLED — driver: unknown (health check failed: ${err.message})`;
+    banner.textContent = `POSTING DISABLED — health check failed: ${err.message}`;
   }
 }
 
@@ -138,11 +149,84 @@ document.getElementById('loginBtn').addEventListener('click', () => {
   setToken(t);
   document.getElementById('tokenInput').value = '';
   updateAuthUi();
+  loadOverview();
 });
 document.getElementById('logoutBtn').addEventListener('click', () => {
   setToken('');
   updateAuthUi();
 });
+
+// ---------------------------------------------------------------- Overview (dev/summary)
+
+async function loadOverview() {
+  const branch = val('overviewBranch');
+  const q = branch ? `?branch=${encodeURIComponent(branch)}` : '';
+  try {
+    const summary = await api(`/api/dev/summary${q}`);
+
+    renderTable(document.getElementById('overviewRuns'), summary.runs, [
+      { key: 'id', label: 'Run id' },
+      { key: 'branchCode', label: 'Branch' },
+      { key: 'status', label: 'Status', status: true },
+    ], { empty: 'No runs yet.' });
+
+    const bridgeRows = Object.entries(summary.dispositionBridge?.byDisposition ?? {}).map(([disposition, g]) => ({
+      disposition, count: g.count, debit: g.debit, credit: g.credit,
+    }));
+    renderTable(document.getElementById('overviewBridge'), bridgeRows, [
+      { key: 'disposition', label: 'Disposition', status: true },
+      { key: 'count', label: 'Count' },
+      { key: 'debit', label: 'Debit' },
+      { key: 'credit', label: 'Credit' },
+    ], { empty: 'No dispositions yet.' });
+
+    const layerRows = Object.entries(summary.layerStatus ?? {}).map(([layer, status]) => ({ layer, status }));
+    renderTable(document.getElementById('overviewLayers'), layerRows, [
+      { key: 'layer', label: 'Layer' },
+      { key: 'status', label: 'Status', status: true },
+    ]);
+
+    const batchRows = Object.entries(summary.batches?.byStatus ?? {}).map(([status, count]) => ({ status, count }));
+    renderTable(document.getElementById('overviewBatches'), batchRows, [
+      { key: 'status', label: 'Batch status', status: true },
+      { key: 'count', label: 'Count' },
+    ], { empty: 'No batches yet.' });
+
+    const queueRows = Object.entries(summary.queueCounts ?? {}).map(([status, count]) => ({ status, count }));
+    renderTable(document.getElementById('overviewQueue'), queueRows, [
+      { key: 'status', label: 'Queue status', status: true },
+      { key: 'count', label: 'Count' },
+    ], { empty: 'No queue items yet.' });
+
+    const excRows = Object.entries(summary.exceptionsByCategory ?? {}).map(([category, count]) => ({ category, count }));
+    renderTable(document.getElementById('overviewExceptions'), excRows, [
+      { key: 'category', label: 'Exception category' },
+      { key: 'count', label: 'Count' },
+    ], { empty: 'No exceptions.' });
+  } catch (err) {
+    showError(document.getElementById('overviewRuns'), err);
+  }
+}
+
+async function runDevSeed() {
+  const statusEl = document.getElementById('devSeedStatus');
+  statusEl.textContent = 'starting…';
+  try {
+    const { jobId } = await api('/api/dev/seed', { method: 'POST', body: {} });
+    statusEl.textContent = `job ${jobId}: running…`;
+    for (let i = 0; i < 200; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const status = await api(`/api/dev/seed/status?jobId=${encodeURIComponent(jobId)}`);
+      statusEl.textContent = `job ${jobId}: ${status.stage}${status.outcome ? ` — ${status.outcome}` : ''}`;
+      if (status.outcome) {
+        loadOverview();
+        return;
+      }
+    }
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+  }
+}
 
 // ---------------------------------------------------------------- 1. Files & validation
 
@@ -621,6 +705,8 @@ async function loadWorkerHealth() {
 // ---------------------------------------------------------------- wiring
 
 const ACTIONS = {
+  loadOverview,
+  runDevSeed,
   loadRuns,
   loadRunDetail,
   loadCutover,
@@ -644,3 +730,4 @@ document.querySelectorAll('[data-action]').forEach((btn) => {
 
 updateAuthUi();
 refreshHealth();
+if (getToken()) loadOverview();

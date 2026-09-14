@@ -9,6 +9,10 @@ export async function openInbox({ adapter = process.env.INBOX_ADAPTER ?? 'local'
       const mod = await import('./workdrive.js');
       return mod.openInbox(opts);
     }
+    case 'bundled': {
+      const mod = await import('./bundled.js');
+      return mod.openInbox(opts);
+    }
     default: {
       const err = new Error(`Unknown inbox adapter: ${adapter}`);
       err.code = 'UNKNOWN_ADAPTER';

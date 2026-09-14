@@ -1,0 +1,6 @@
+{
+  "command": "npm start",
+  "build_path": ".",
+  "stack": "node24",
+  "memory": 512
+}

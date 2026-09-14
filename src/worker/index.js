@@ -12,7 +12,7 @@ import { classifyRun } from '../core/overlap.js';
 import { transformRun } from '../core/transform.js';
 import { reconcileLayerB } from '../core/bridge.js';
 import { runQueueSlice, resolveUnknownOutcomes } from './executor.js';
-import { nowIso } from '../core/ids.js';
+import { nowIso, newCorrelationId } from '../core/ids.js';
 import { log } from '../core/log.js';
 
 const ACTIVE_BATCH_STATUSES = ['QUEUED', 'MIGRATING', 'PARTIALLY_MIGRATED'];
@@ -174,25 +174,137 @@ export async function runOnce(ctx, deps) {
   return snapshot;
 }
 
+/** DEFAULT_LEASE_MS: best-effort mutual exclusion window (CONTRACTS.md task note). Kept
+ * as a plain function (not a module-level constant) so tests that flip
+ * WORKER_LEASE_MS between calls are never seeing a value captured at import time. */
+function leaseMs() {
+  return Number(process.env.WORKER_LEASE_MS) || 600_000;
+}
+
+/**
+ * Scans recent WORKER.START audit events for a lease still held by a DIFFERENT worker id
+ * (a WORKER.START within `leaseMs()` with no later WORKER.STOP from that same actor).
+ * Documented as BEST-EFFORT mutual exclusion (CONTRACTS.md §W task note): this is an
+ * audit-trail heuristic, not a distributed lock — it protects against the common case
+ * (a second `npm run worker` started by mistake against the same Catalyst store) but
+ * cannot prevent a determined concurrent start the way store.claim() prevents a queue
+ * item from being processed twice.
+ */
+export async function findConflictingSingletonLease(store, { workerId, now = Date.now() } = {}) {
+  const starts = await store.find('audit_events', { action: 'WORKER.START' }, { orderBy: 'created_at DESC', limit: 50 });
+  const lease = leaseMs();
+  for (const startEvent of starts) {
+    if (startEvent.actor === workerId) continue;
+    const startedAtMs = Date.parse(startEvent.created_at);
+    if (Number.isNaN(startedAtMs) || now - startedAtMs >= lease) continue; // lease expired
+    const stops = await store.find('audit_events', { action: 'WORKER.STOP', actor: startEvent.actor }, { orderBy: 'created_at DESC', limit: 10 });
+    const stoppedAfterStart = stops.some((stopEvent) => {
+      const stoppedAtMs = Date.parse(stopEvent.created_at);
+      return !Number.isNaN(stoppedAtMs) && stoppedAtMs >= startedAtMs;
+    });
+    if (!stoppedAfterStart) {
+      return { workerId: startEvent.actor, startedAt: startEvent.created_at };
+    }
+  }
+  return null;
+}
+
+export class WorkerStartupRefusedError extends Error {
+  constructor(reason, details = {}) {
+    super(reason);
+    this.code = 'WORKER_STARTUP_REFUSED';
+    Object.assign(this, details);
+  }
+}
+
+/**
+ * Runs the fail-closed startup checks and, if they pass, acquires the singleton lease by
+ * writing the WORKER.START audit event. Throws WorkerStartupRefusedError (never touches
+ * `process` itself) so tests can call it directly against a fake store instead of running
+ * the whole `main()` poll loop.
+ *   - A Catalyst-backed store (`claimSemantics === 'BEST_EFFORT'`) refuses to start at all
+ *     unless `workerMode === 'singleton'` (CONTRACTS.md task note: claim()/releaseClaim()
+ *     are non-atomic there, so more than one worker instance risks double-claiming the
+ *     same queue item).
+ *   - In singleton mode, also refuses if another worker id's WORKER.START is still within
+ *     its lease window with no matching WORKER.STOP (best-effort mutual exclusion; see
+ *     findConflictingSingletonLease's header for what this can and cannot guarantee).
+ */
+export async function assertWorkerCanStart({ store, audit, workerId, workerMode }) {
+  const isCatalystStore = store.claimSemantics === 'BEST_EFFORT';
+  if (isCatalystStore && workerMode !== 'singleton') {
+    throw new WorkerStartupRefusedError(
+      'WORKER_MODE must be "singleton" to run the worker loop against a best-effort-claim (Catalyst) store',
+      { workerMode }
+    );
+  }
+
+  if (workerMode === 'singleton') {
+    const conflict = await findConflictingSingletonLease(store, { workerId });
+    if (conflict) {
+      throw new WorkerStartupRefusedError(
+        'another WORKER.START is within its lease window with no matching WORKER.STOP (best-effort mutual exclusion)',
+        { conflict }
+      );
+    }
+    await audit.emit({
+      actor: workerId,
+      action: 'WORKER.START',
+      entityType: 'worker',
+      entityId: workerId,
+      reason: `singleton lease acquired (WORKER_LEASE_MS=${leaseMs()}, best-effort mutual exclusion)`,
+      correlationId: newCorrelationId(),
+    });
+  }
+
+  return { ok: true };
+}
+
 export async function main() {
   const workerId = process.env.WORKER_ID ?? 'worker-local-1';
   const pollIntervalMs = Number(process.env.WORKER_POLL_INTERVAL_MS) || 5000;
+  // Deployed config defaults to 'disabled': this MVP's dashboard does not run the worker
+  // loop at all (the Development seed endpoint drives the pipeline stages in-process
+  // instead) — see .env.example and src/server/routes/dev.js.
+  const workerMode = process.env.WORKER_MODE ?? 'disabled';
 
   const { openStore } = await import('../adapters/store/index.js');
   const { openInbox } = await import('../adapters/inbox/index.js');
   const { openArchive } = await import('../adapters/archive/index.js');
   const { createAudit } = await import('../core/audit.js');
   const { createBooksClient, loadBooksConfig } = await import('../books/index.js');
-  const { newCorrelationId } = await import('../core/ids.js');
 
   const store = await openStore({});
   const audit = createAudit(store);
+
+  try {
+    await assertWorkerCanStart({ store, audit, workerId, workerMode });
+  } catch (err) {
+    if (err instanceof WorkerStartupRefusedError) {
+      log('error', 'worker.refused_to_start', { reason: err.message, ...err });
+      process.exitCode = 2;
+      await store.close();
+      return;
+    }
+    throw err;
+  }
+
+  if (workerMode === 'singleton') {
+    const emitStop = () => {
+      audit
+        .emit({ actor: workerId, action: 'WORKER.STOP', entityType: 'worker', entityId: workerId, reason: 'graceful shutdown', correlationId: newCorrelationId() })
+        .catch((err) => log('error', 'worker.stop_audit_failed', { error: err.message }));
+    };
+    process.once('SIGTERM', emitStop);
+    process.once('SIGINT', emitStop);
+  }
+
   const inbox = await openInbox({});
   const archive = await openArchive({});
   const booksConfig = loadBooksConfig();
   const client = createBooksClient({ driver: booksConfig.driver, config: booksConfig, store, audit });
 
-  log('info', 'worker.main starting', { workerId, pollIntervalMs, driver: booksConfig.driver });
+  log('info', 'worker.main starting', { workerId, pollIntervalMs, workerMode, driver: booksConfig.driver });
 
   for (;;) {
     const ctx = { store, audit, correlationId: newCorrelationId(), actor: workerId, actorRole: 'operator' };

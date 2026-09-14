@@ -12,6 +12,15 @@
 //   - Unique-column and mandatory-column enforcement use schema.catalyst.js's
 //     `is_unique`/`is_mandatory` flags, raising the ASSUMED Catalyst error shapes
 //     documented in catalyst_types.js (`looksLikeUniqueViolation`/`looksLikeNotFound`).
+//     `is_mandatory` is enforced as NOT NULL only (undefined/null rejected; an empty
+//     string is a legitimate mandatory value) — corrected here after running the full
+//     dashboard pipeline against this fake surfaced that src/core/recon_a.js's
+//     `missingControl()` legitimately inserts `difference: ''` on recon_results
+//     (a MANDATORY, already-LIVE column) for MISSING_EXPECTED/MISSING_ACTUAL controls;
+//     rejecting empty string would make Layer A's "missing" control path
+//     unrunnable against Catalyst. Not independently verified against live Catalyst
+//     either way (no OAuth credential in this pilot) — NOT NULL is the more
+//     conventional reading of "mandatory" and the one sqlite.js already allows.
 //   - ZCQL SELECT enforces the real 300-row cap and understands the minimal subset
 //     `SELECT <cols|*> FROM t [WHERE a = 'x' AND b IS NULL ...] [ORDER BY c ASC|DESC]
 //     [LIMIT n OFFSET m]` plus the exact `SELECT COUNT(ROWID) AS <alias> FROM t [WHERE ...]`
@@ -53,7 +62,7 @@ function checkMandatory(def, tableName, row) {
   for (const c of def.columns) {
     if (!c.is_mandatory) continue;
     const v = row[c.column_name];
-    if (v === undefined || v === null || v === '') {
+    if (v === undefined || v === null) {
       throw fakeError('INVALID_INPUT', `Value cannot be empty for the mandatory column: ${c.column_name}`);
     }
   }
@@ -65,6 +74,23 @@ function checkTextLength(def, tableName, row) {
     const v = row[c.column_name];
     if (typeof v === 'string' && v.length > TEXT_MAX_LENGTH) {
       throw fakeError('INVALID_INPUT', `Value too long for text column '${c.column_name}' (max ${TEXT_MAX_LENGTH})`);
+    }
+  }
+}
+
+// Real Catalyst rejects a varchar value longer than its declared max_length. The
+// adapter/fake previously only enforced this for `text` columns (see checkTextLength);
+// this closes that gap so an oversized varchar is caught here, offline, rather than only
+// discovered against the live Data Store.
+function checkVarcharLength(def, tableName, row) {
+  for (const c of def.columns) {
+    if (c.data_type !== 'varchar') continue;
+    const v = row[c.column_name];
+    if (typeof v === 'string' && v.length > c.max_length) {
+      throw fakeError(
+        'INVALID_INPUT',
+        `Value too long for the column '${c.column_name}' from a maximum of ${c.max_length} characters.`
+      );
     }
   }
 }
@@ -91,6 +117,7 @@ function makeTableApi(def, physicalName, rowsMap, nextRowId) {
     for (const key of Object.keys(row)) assertKnownColumn(def, physicalName, key);
     checkMandatory(def, physicalName, row);
     checkTextLength(def, physicalName, row);
+    checkVarcharLength(def, physicalName, row);
     checkUnique(def, physicalName, rowsMap, row, null);
     const rowId = nextRowId();
     const now = formatCatalystTime(new Date());
@@ -132,6 +159,7 @@ function makeTableApi(def, physicalName, rowsMap, nextRowId) {
       const merged = { ...existing, ...patch };
       checkMandatory(def, physicalName, merged);
       checkTextLength(def, physicalName, merged);
+      checkVarcharLength(def, physicalName, merged);
       checkUnique(def, physicalName, rowsMap, merged, key);
       merged.MODIFIEDTIME = formatCatalystTime(new Date());
       rowsMap.set(key, merged);
@@ -260,5 +288,33 @@ export function createCatalystFake() {
     },
   };
 
-  return { app };
+  // Pre-deploy proof helper (test/pipeline_catalyst_fake.test.js): re-checks every row
+  // currently held by the fake against schema.catalyst.js's declared varchar
+  // max_length/text cap, independent of (and in addition to) the insert/update-time
+  // enforcement above. Throws one Error listing every violation found (table, column,
+  // actual length, limit) rather than the first — so a real deployment gets the full
+  // picture of what the live Data Store would reject, not just one row at a time.
+  function assertWithinLimits() {
+    const violations = [];
+    for (const [physicalName, rowsMap] of tablesState) {
+      const def = tableDefByPhysicalName(physicalName);
+      for (const row of rowsMap.values()) {
+        for (const c of def.columns) {
+          const v = row[c.column_name];
+          if (typeof v !== 'string') continue;
+          if (c.data_type === 'varchar' && v.length > c.max_length) {
+            violations.push(`${physicalName}.${c.column_name}: length ${v.length} > max_length ${c.max_length} (ROWID ${row.ROWID})`);
+          } else if (c.data_type === 'text' && v.length > TEXT_MAX_LENGTH) {
+            violations.push(`${physicalName}.${c.column_name}: length ${v.length} > text cap ${TEXT_MAX_LENGTH} (ROWID ${row.ROWID})`);
+          }
+        }
+      }
+    }
+    if (violations.length) {
+      throw new Error(`catalyst_fake.assertWithinLimits: ${violations.length} column(s) exceed live Data Store limits:\n${violations.join('\n')}`);
+    }
+    return true;
+  }
+
+  return { app, assertWithinLimits };
 }

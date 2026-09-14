@@ -48,8 +48,16 @@ export function isPostingEnabled(config) {
   return true;
 }
 
-/** Throws PostingDisabledError naming exactly which condition failed. Use before any write. */
-export function assertPostingAllowed(config) {
+/**
+ * Throws PostingDisabledError naming exactly which condition failed. Use before any write.
+ * `opts.store` is optional (existing callers pass none); when given and the store reports
+ * `claimSemantics === 'BEST_EFFORT'` (the Catalyst Data Store adapter's documented
+ * non-atomic claim()/releaseClaim() — see src/adapters/store/catalyst.js), posting is
+ * refused with reason `BEST_EFFORT_CLAIMS`: a queue item could be claimed by two racing
+ * workers, and posting a financial record twice is not an acceptable failure mode even
+ * once every other posting condition is otherwise satisfied.
+ */
+export function assertPostingAllowed(config, { store } = {}) {
   if (!config || config.driver !== 'live') {
     throw new PostingDisabledError('driver is not "live"');
   }
@@ -65,6 +73,28 @@ export function assertPostingAllowed(config) {
   if (!isOrgAllowlisted(config)) {
     throw new PostingDisabledError(`organizationId "${config.organizationId}" is not in orgAllowlist`);
   }
+  if (store?.claimSemantics === 'BEST_EFFORT') {
+    throw new PostingDisabledError(
+      'BEST_EFFORT_CLAIMS: store.claim()/releaseClaim() are not atomic on this adapter (see ' +
+        'src/adapters/store/catalyst.js) — two racing workers could both win the same claim and ' +
+        'post the same voucher twice, so live posting is refused regardless of every other condition'
+    );
+  }
+}
+
+/**
+ * Enumerates every reason posting is currently blocked, as short SCREAMING_SNAKE codes
+ * (never throws) — used by GET /api/health so an operator can see the whole picture in
+ * one call instead of tripping conditions one at a time via assertPostingAllowed.
+ */
+export function postingBlockedReasons(config, { store } = {}) {
+  const reasons = [];
+  if (!config || config.driver !== 'live') reasons.push('DRIVER_NOT_LIVE');
+  if (config?.postingEnabled !== true) reasons.push('POSTING_ENABLED_FALSE');
+  if (!hasAuthorizationRef(config)) reasons.push('NO_AUTHORIZATION_REF');
+  if (!isOrgAllowlisted(config)) reasons.push('ORG_NOT_ALLOWLISTED');
+  if (store?.claimSemantics === 'BEST_EFFORT') reasons.push('BEST_EFFORT_CLAIMS');
+  return reasons;
 }
 
 /**

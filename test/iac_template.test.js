@@ -7,7 +7,7 @@ import path from 'node:path';
 import { TABLES, columnsFor } from '../catalyst/iac/schema.catalyst.js';
 import { buildTemplate, buildColumnBody, TEMPLATE_PATH } from '../scripts/generate-iac-template.js';
 
-const EXPECTED_TABLES = [
+const LIVE_TABLES = [
   'audit_events',
   'extraction_runs',
   'source_files',
@@ -19,9 +19,25 @@ const EXPECTED_TABLES = [
   'exceptions',
 ];
 
+const ADDED_TABLES = [
+  'branches',
+  'cutover_matrix',
+  'mapping_rules',
+  'trial_balance_lines',
+  'overlap_candidates',
+  'preview_payloads',
+  'migration_batches',
+  'approvals',
+  'queue_items',
+  'api_attempts',
+  'books_snapshots',
+];
+
+const EXPECTED_TABLES = [...LIVE_TABLES, ...ADDED_TABLES];
+
 const RESERVED = new Set(['date', 'key', 'result', 'priority']);
 
-test('schema.catalyst: exactly the 9 curated tables', () => {
+test('schema.catalyst: exactly the 20 schema.sql tables (9 live + 11 added for the full pipeline)', () => {
   assert.deepEqual(TABLES.map((t) => t.name).sort(), [...EXPECTED_TABLES].sort());
 });
 
@@ -46,19 +62,51 @@ test('schema.catalyst: audit_events columns match the live-created spec exactly'
   assert.deepEqual(cols, expected);
 });
 
-test('schema.catalyst: extraction_runs and recon_runs are id-keyed with a unique varchar id column; every other table is ROWID-keyed', () => {
+test('schema.catalyst: id-keyed tables have a unique varchar id column; branches is keyed on branch_code; every other table is ROWID-keyed', () => {
+  const ID_KEYED = new Set(['extraction_runs', 'recon_runs', 'migration_batches', 'approvals']);
   for (const t of TABLES) {
-    if (t.name === 'extraction_runs' || t.name === 'recon_runs') {
+    if (ID_KEYED.has(t.name)) {
       assert.equal(t.logicalKey, 'id');
       const idCol = t.columns.find((c) => c.column_name === 'id');
       assert.ok(idCol, `${t.name} must declare an explicit id column`);
       assert.equal(idCol.data_type, 'varchar');
       assert.equal(idCol.is_unique, true);
       assert.equal(idCol.is_mandatory, true);
+    } else if (t.name === 'branches') {
+      assert.equal(t.logicalKey, 'branch_code');
+      const keyCol = t.columns.find((c) => c.column_name === 'branch_code');
+      assert.ok(keyCol, 'branches must declare an explicit branch_code column');
+      assert.equal(keyCol.data_type, 'varchar');
+      assert.equal(keyCol.is_unique, true);
+      assert.equal(keyCol.is_mandatory, true);
+      assert.ok(!t.columns.some((c) => c.column_name === 'id'), 'branches must not declare an id column');
     } else {
       assert.equal(t.logicalKey, 'ROWID');
       assert.ok(!t.columns.some((c) => c.column_name === 'id'), `${t.name} must not declare an id column (ROWID is the key)`);
     }
+  }
+});
+
+test('schema.catalyst: the 9 live tables keep exactly their original column definitions', () => {
+  for (const name of LIVE_TABLES) {
+    const t = TABLES.find((x) => x.name === name);
+    assert.ok(t, `${name} must still exist`);
+  }
+  // audit_events' exact column list is separately pinned above; here we pin table count
+  // for every other live table so an accidental column add/remove/retype is caught.
+  const expectedColumnCounts = {
+    extraction_runs: 18,
+    source_files: 18,
+    source_txn_lines: 24,
+    vouchers: 43,
+    source_summaries: 13,
+    recon_runs: 11,
+    recon_results: 9,
+    exceptions: 18,
+  };
+  for (const [name, count] of Object.entries(expectedColumnCounts)) {
+    const t = TABLES.find((x) => x.name === name);
+    assert.equal(t.columns.length, count, `${name} column count changed (expected ${count}, got ${t.columns.length}) — the 9 live tables must never change`);
   }
 });
 

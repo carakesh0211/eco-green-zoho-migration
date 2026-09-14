@@ -130,9 +130,13 @@ export async function openStore({ app, transport } = {}) {
     return wantAll ? collected : collected.slice(0, limit);
   }
 
+  // Generalised over all three logicalKey styles (see catalyst_types.js's normaliseRow
+  // doc comment): 'ROWID' -> `id` already IS the ROWID value; anything else (an explicit
+  // key column, e.g. 'id' or 'branch_code') -> look its ROWID up by that column.
   async function resolveRowId(logicalTable, id) {
-    if (logicalKeyOf(logicalTable) !== 'id') return String(id);
-    const rows = await zcqlRows(logicalTable, buildSelectSql(logicalTable, { id }, { columns: ['ROWID'], limit: 1 }));
+    const key = logicalKeyOf(logicalTable);
+    if (key === 'ROWID') return String(id);
+    const rows = await zcqlRows(logicalTable, buildSelectSql(logicalTable, { [key]: id }, { columns: ['ROWID'], limit: 1 }));
     return rows.length ? String(rows[0].ROWID) : null;
   }
 
@@ -190,8 +194,9 @@ export async function openStore({ app, transport } = {}) {
 
     async get(table, id) {
       assertTableAllowed(table);
-      if (logicalKeyOf(table) === 'id') {
-        return store.findOne(table, { id });
+      const key = logicalKeyOf(table);
+      if (key !== 'ROWID') {
+        return store.findOne(table, { [key]: id });
       }
       try {
         const raw = await getTable(table).getRow(id);

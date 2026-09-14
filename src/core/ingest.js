@@ -559,6 +559,13 @@ export async function ingestRun(ctx, { inbox, archive, inboxRef, workerId }) {
       migration_batch_id: null,
       approval_id: null,
       zoho_record_id: null,
+      // NOT_QUEUED/0/NOT_RECONCILED mirror schema.sql's DEFAULTs for these three columns
+      // (sqlite fills them in implicitly on INSERT). The Catalyst Data Store schema has no
+      // DEFAULT mechanism (docs/CATALYST_REFERENCES.md) and marks all three is_mandatory,
+      // so they must be set explicitly here to insert a voucher row against either adapter.
+      migration_status: 'NOT_QUEUED',
+      attempt_count: 0,
+      reconciliation_status: 'NOT_RECONCILED',
       last_error_code: null,
       last_error_message: null,
       created_at: nowFn(effCtx),

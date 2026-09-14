@@ -1,24 +1,31 @@
-// Curated Catalyst Data Store schema for the pilot vertical slice.
+// Curated Catalyst Data Store schema for the full pilot dashboard pipeline.
 // See CONTRACTS.md §S/§R, docs/CATALYST_REFERENCES.md, and src/adapters/store/schema.sql
 // (the sqlite source of truth this file is a curated, hand-derived translation of).
 //
-// Scope: only the 9 tables this pilot's adapters touch —
+// Scope: all 20 tables in src/adapters/store/schema.sql —
 //   audit_events, extraction_runs, source_files, vouchers, source_txn_lines,
 //   source_summaries (physical name for sqlite's `summaries` table), recon_runs,
-//   recon_results, exceptions.
-// Every other schema.sql table (branches, cutover_matrix, mapping_rules,
-// trial_balance_lines, overlap_candidates, preview_payloads, migration_batches,
-// approvals, queue_items, api_attempts, books_snapshots) is out of scope for the
-// Catalyst adapter in this pilot and is intentionally absent here.
+//   recon_results, exceptions (the original 9, LIVE in Catalyst Development — column
+//   definitions for these 9 must never change, see the note on each below), plus
+//   branches, cutover_matrix, mapping_rules, trial_balance_lines, overlap_candidates,
+//   preview_payloads, migration_batches, approvals, queue_items, api_attempts,
+//   books_snapshots (the 11 added to complete the dashboard pipeline).
 //
 // TYPE MAPPING (sqlite -> Catalyst), decided and applied uniformly below:
-//   - Physical primary key is Catalyst ROWID for EVERY table. A sqlite INTEGER
-//     AUTOINCREMENT `id` therefore is NOT a column here (it is ROWID at the
-//     Catalyst layer; the adapter's logicalKey for these tables is 'ROWID').
-//   - Tables whose sqlite PK is TEXT (extraction_runs.id, recon_runs.id) keep
-//     that value in an explicit `varchar` column literally named `id`, with
-//     is_unique: true. The adapter resolves get(table, id) by that column for
-//     these tables (logicalKey 'id' below) instead of by ROWID.
+//   - Physical primary key is Catalyst ROWID for EVERY table whose sqlite PK is an
+//     INTEGER PRIMARY KEY AUTOINCREMENT `id` column. That sqlite `id` column
+//     therefore is NOT a column here (it is ROWID at the Catalyst layer; the
+//     adapter's logicalKey for these tables is 'ROWID').
+//   - Tables whose sqlite PK is TEXT and literally named `id` (extraction_runs.id,
+//     recon_runs.id, migration_batches.id, approvals.id) keep that value in an
+//     explicit `varchar` column literally named `id`, with is_unique: true. The
+//     adapter resolves get(table, id) by that column for these tables (logicalKey
+//     'id' below) instead of by ROWID.
+//   - `branches` is the one table whose sqlite PK is TEXT but is NOT named `id`
+//     (`branch_code`). It keeps that value in an explicit `varchar(32)` column
+//     literally named `branch_code`, with is_unique: true (logicalKey 'branch_code'
+//     below) — the adapter resolves get('branches', code) by that column, exactly
+//     like the 'id' case above but for a differently-named key column.
 //   - A column that is a foreign-key reference to another table's integer
 //     (ROWID-backed) sqlite id -> `bigint` (e.g. vouchers.source_file_id,
 //     source_txn_lines.file_id, exceptions.file_id/voucher_id).
@@ -95,6 +102,10 @@ const W = {
   DELIM: 8,
 };
 
+// The 9 tables below (audit_events .. exceptions) are LIVE in the Catalyst
+// Development project and already carry pipeline data. A test
+// (test/iac_template.test.js) asserts their exact column definitions —
+// never rename, retype, resize or reorder any column on these 9 tables.
 export const TABLES = [
   {
     name: 'audit_events',
@@ -297,6 +308,16 @@ export const TABLES = [
     ],
   },
   {
+    // NOTE (found running the full dashboard pipeline against this schema):
+    // `disposition` here is varchar->text, one field wider than the original curated
+    // varchar(32). schema.sql's exceptions.disposition is unrestricted TEXT (unlike
+    // vouchers.disposition, a short enum, this column takes an approver's free-text
+    // sentence — see src/core/exceptions.js#resolve()'s `disposition` param and
+    // scripts/lib/pipeline-stages.js#approveKnownDiffsStage's actual call). The original
+    // varchar(32) was a curation mistake (the header's own "short codes/enums" bucket
+    // never actually applied to this column) that made Layer-A-diff approval unrunnable
+    // against Catalyst. This one column on this one live table must be corrected live
+    // (see the run report) — every other column of the 9 live tables is unchanged.
     name: 'exceptions',
     logicalKey: 'ROWID',
     columns: [
@@ -312,12 +333,231 @@ export const TABLES = [
       varchar('owner', W.ID),
       varchar('status', W.CODE, { is_mandatory: true }),
       text('root_cause'),
-      varchar('disposition', W.CODE),
+      text('disposition'),
       text('evidence_json'),
       text('message', { is_mandatory: true }),
       varchar('dedupe_key', W.UK, { is_mandatory: true, is_unique: true }),
       varchar('created_at', W.TS, { is_mandatory: true }),
       varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+
+  // ---------------------------------------------------------- added for the full
+  // dashboard pipeline (see module header "Scope"). Same TYPE MAPPING rules as above.
+
+  {
+    // Only table whose sqlite PK is TEXT and NOT named `id` (branch_code). See the
+    // module header's TYPE MAPPING note on `branches`. get('branches', code) resolves
+    // by this column, same mechanism as the 'id'-keyed tables below.
+    name: 'branches',
+    logicalKey: 'branch_code',
+    columns: [
+      varchar('branch_code', W.CODE, { is_mandatory: true, is_unique: true }),
+      varchar('branch_name', W.NAME, { is_mandatory: true }),
+      varchar('zoho_location_id', W.ID),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'cutover_matrix',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('branch_code', W.CODE, { is_mandatory: true }),
+      varchar('zoho_location_id', W.ID),
+      varchar('migration_from_date', W.TS, { is_mandatory: true }),
+      varchar('live_system_start_date', W.TS),
+      varchar('historical_migration_end_date', W.TS),
+      varchar('transaction_class', W.CODE, { is_mandatory: true }),
+      varchar('payment_method', W.CODE, { is_mandatory: true }),
+      varchar('smart_pharma_coverage_status', W.CODE, { is_mandatory: true }),
+      varchar('cutover_rule_version', W.CODE, { is_mandatory: true }),
+      varchar('approval_status', W.CODE, { is_mandatory: true }),
+      varchar('approved_by', W.ID),
+      varchar('approved_at', W.TS),
+      varchar('evidence_ref', W.NAME),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'mapping_rules',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('rule_type', W.CODE, { is_mandatory: true }),
+      varchar('source_key', W.ID, { is_mandatory: true }),
+      varchar('target_value', W.NAME, { is_mandatory: true }),
+      text('target_meta'),
+      varchar('mapping_version', W.CODE, { is_mandatory: true }),
+      varchar('effective_from', W.TS, { is_mandatory: true }),
+      varchar('effective_to', W.TS),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      varchar('approved_by', W.ID),
+      varchar('approved_at', W.TS),
+      text('notes'),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'trial_balance_lines',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('run_id', W.ID, { is_mandatory: true }),
+      bigint('file_id', { is_mandatory: true }),
+      varchar('branch_code', W.CODE, { is_mandatory: true }),
+      varchar('ledger_code', W.CODE, { is_mandatory: true }),
+      varchar('ledger_name', W.NAME),
+      varchar('opening_debit', W.MONEY, { is_mandatory: true }),
+      varchar('opening_credit', W.MONEY, { is_mandatory: true }),
+      varchar('period_debit', W.MONEY, { is_mandatory: true }),
+      varchar('period_credit', W.MONEY, { is_mandatory: true }),
+      varchar('closing_debit', W.MONEY, { is_mandatory: true }),
+      varchar('closing_credit', W.MONEY, { is_mandatory: true }),
+      int('txn_count'),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'overlap_candidates',
+    logicalKey: 'ROWID',
+    columns: [
+      bigint('voucher_id', { is_mandatory: true }),
+      varchar('population_key', W.UK, { is_mandatory: true }),
+      varchar('classification', W.CODE, { is_mandatory: true }),
+      varchar('match_strength', W.CODE, { is_mandatory: true }),
+      text('evidence_json', { is_mandatory: true }),
+      varchar('rule_version', W.CODE, { is_mandatory: true }),
+      varchar('reviewer', W.ID),
+      varchar('reviewed_at', W.TS),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    // payload_json/warnings_json are `text` (Catalyst's automatic 10,000-char cap, see
+    // TEXT_MAX_LENGTH in catalyst_types.js). This pilot's synthetic fixture payloads are
+    // asserted (test/pipeline_catalyst_fake.test.js) to stay under 8,000 chars, leaving
+    // headroom; overflow-to-Stratus for a genuinely oversized payload is NOT implemented
+    // here (see schema.catalyst.js's TYPE MAPPING header and catalyst_fake.js).
+    name: 'preview_payloads',
+    logicalKey: 'ROWID',
+    columns: [
+      bigint('voucher_id', { is_mandatory: true }),
+      varchar('target_module', W.CODE, { is_mandatory: true }),
+      text('payload_json', { is_mandatory: true }),
+      varchar('payload_hash', W.SHA256, { is_mandatory: true }),
+      varchar('human_summary', W.NAME, { is_mandatory: true }),
+      varchar('mapping_version', W.CODE, { is_mandatory: true }),
+      varchar('transformation_version', W.CODE, { is_mandatory: true }),
+      text('warnings_json'),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'migration_batches',
+    logicalKey: 'id',
+    columns: [
+      varchar('id', W.ID, { is_mandatory: true, is_unique: true }),
+      varchar('branch_code', W.CODE, { is_mandatory: true }),
+      varchar('period', W.PERIOD, { is_mandatory: true }),
+      varchar('run_id', W.ID, { is_mandatory: true }),
+      varchar('scope_hash', W.SHA256, { is_mandatory: true }),
+      varchar('mapping_version', W.CODE, { is_mandatory: true }),
+      varchar('transformation_version', W.CODE, { is_mandatory: true }),
+      varchar('cutover_rule_version', W.CODE, { is_mandatory: true }),
+      int('voucher_count', { is_mandatory: true }),
+      varchar('debit_total', W.MONEY, { is_mandatory: true }),
+      varchar('credit_total', W.MONEY, { is_mandatory: true }),
+      text('totals_json', { is_mandatory: true }),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      varchar('approval_id', W.ID),
+      varchar('created_by', W.ID, { is_mandatory: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'approvals',
+    logicalKey: 'id',
+    columns: [
+      varchar('id', W.ID, { is_mandatory: true, is_unique: true }),
+      varchar('batch_id', W.ID, { is_mandatory: true }),
+      varchar('scope_hash', W.SHA256, { is_mandatory: true }),
+      varchar('decision', W.CODE, { is_mandatory: true }),
+      varchar('approver', W.ID, { is_mandatory: true }),
+      varchar('approver_role', W.CODE, { is_mandatory: true }),
+      text('reason'),
+      varchar('invalidated_at', W.TS),
+      text('invalidation_reason'),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'queue_items',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('batch_id', W.ID, { is_mandatory: true }),
+      bigint('voucher_id', { is_mandatory: true }),
+      varchar('idempotency_key', W.SHA256, { is_mandatory: true, is_unique: true }),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      varchar('claimed_by', W.ID),
+      varchar('claimed_at', W.TS),
+      varchar('claim_expires_at', W.TS),
+      varchar('run_after', W.TS),
+      int('attempts', { is_mandatory: true }),
+      varchar('last_error_code', W.SHA256),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'api_attempts',
+    logicalKey: 'ROWID',
+    columns: [
+      bigint('queue_item_id', { is_mandatory: true }),
+      int('attempt_no', { is_mandatory: true }),
+      varchar('target_module', W.CODE, { is_mandatory: true }),
+      varchar('request_hash', W.SHA256, { is_mandatory: true }),
+      varchar('response_class', W.CODE, { is_mandatory: true }),
+      int('http_status'),
+      varchar('zoho_record_id', W.ID),
+      varchar('error_code', W.SHA256),
+      text('error_message'),
+      int('retry_after_ms'),
+      varchar('started_at', W.TS, { is_mandatory: true }),
+      varchar('finished_at', W.TS),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    // balances_json/records_json are `text` (10,000-char Catalyst cap). This pilot's
+    // synthetic Books balance snapshots are small and asserted (test/pipeline_catalyst_
+    // fake.test.js) to stay under 8,000 chars. Documented fallback for a real deployment
+    // if a snapshot ever exceeds the cap: store a truncated marker
+    // (`{"_truncated":true}`) rather than failing the insert — NOT implemented in
+    // src/core/balance_bridge.js (out of scope for this pilot; application-level, not an
+    // adapter concern), and not expected to trigger against these fixtures.
+    name: 'books_snapshots',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('branch_code', W.CODE, { is_mandatory: true }),
+      varchar('zoho_location_id', W.ID),
+      varchar('organization_id', W.ID, { is_mandatory: true }),
+      varchar('kind', W.CODE, { is_mandatory: true }),
+      varchar('batch_id', W.ID),
+      varchar('driver', W.CODE, { is_mandatory: true }),
+      varchar('taken_at', W.TS, { is_mandatory: true }),
+      text('balances_json', { is_mandatory: true }),
+      text('records_json'),
+      varchar('snapshot_hash', W.SHA256, { is_mandatory: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
     ],
   },
 ];

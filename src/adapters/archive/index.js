@@ -9,6 +9,10 @@ export async function openArchive({ adapter = process.env.ARCHIVE_ADAPTER ?? 'lo
       const mod = await import('./stratus.js');
       return mod.openArchive(opts);
     }
+    case 'disabled': {
+      const mod = await import('./disabled.js');
+      return mod.openArchive(opts);
+    }
     default: {
       const err = new Error(`Unknown archive adapter: ${adapter}`);
       err.code = 'UNKNOWN_ADAPTER';

@@ -11,6 +11,7 @@ export {
   assertPostingAllowed,
   assertOrgAllowed,
   loadBooksConfig,
+  postingBlockedReasons,
   PostingDisabledError,
 } from './guard.js';
 export { classifyResponse, parseRetryAfterMs } from './classify.js';

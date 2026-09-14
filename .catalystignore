@@ -1,0 +1,21 @@
+# Excluded from the AppSail deployment artifact (app-config.json build_path ".").
+# fixtures/ is intentionally NOT excluded: the bundled read-only inbox adapter
+# (src/adapters/inbox/bundled.js) reads fixtures/synthetic/* at runtime for the
+# Development-only synthetic seed endpoint.
+
+test/
+var/
+docs/
+node_modules/.cache/
+
+# Markdown docs, except README.md (kept for the deployed artifact/support reference).
+*.md
+!README.md
+
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+.catalystrc
+catalyst-debug.log

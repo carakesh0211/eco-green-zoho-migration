@@ -42,7 +42,13 @@ function intControl(control_key, expectedNum, actualNum, detail) {
 }
 
 function missingControl(control_key, status, expected, actual, detail) {
-  return { control_key, expected, actual, difference: '', status, detail: detail ?? {} };
+  // '0.00' (not '') so `recon_results.difference` — a mandatory column on the Catalyst
+  // Data Store schema (catalyst/iac/schema.catalyst.js; Catalyst rejects an empty string
+  // for a mandatory column) — is always a valid, non-empty money string. A "missing"
+  // control has no numeric diff to report anyway, so '0.00' preserves every downstream
+  // reader's behaviour: `parseMoney('0.00')` is 0n, the same value `''`'s old falsy
+  // short-circuit (`control.difference ? ... : 0n`) produced.
+  return { control_key, expected, actual, difference: '0.00', status, detail: detail ?? {} };
 }
 
 /**

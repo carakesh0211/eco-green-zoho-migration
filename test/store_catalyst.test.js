@@ -301,6 +301,103 @@ test('catalyst store: update() works on a normal (non-append-only) table', async
   await store.close();
 });
 
+test('catalyst store: branches is keyed on branch_code (not id/ROWID) — get/update/find all resolve by it', async () => {
+  const store = await openFakeStore();
+  const now = nowIso();
+  const inserted = await store.insert('branches', {
+    branch_code: 'PILOT01', branch_name: 'Pilot branch PILOT01', zoho_location_id: null,
+    status: 'ACTIVE', created_at: now, updated_at: now,
+  });
+  assert.equal(inserted.branch_code, 'PILOT01');
+  assert.equal(inserted.id, undefined, 'branches must not carry a synthetic id field (sqlite has none either)');
+
+  const fetched = await store.get('branches', 'PILOT01');
+  assert.equal(fetched.branch_code, 'PILOT01');
+  assert.equal(fetched.branch_name, 'Pilot branch PILOT01');
+
+  const updated = await store.update('branches', 'PILOT01', { zoho_location_id: 'LOC-PILOT01', updated_at: nowIso() });
+  assert.equal(updated.zoho_location_id, 'LOC-PILOT01');
+
+  const found = await store.findOne('branches', { branch_code: 'PILOT01' });
+  assert.equal(found.zoho_location_id, 'LOC-PILOT01');
+
+  assert.equal(await store.get('branches', 'NOPE'), null);
+  await store.close();
+});
+
+test('catalyst store: the 11 added tables (cutover_matrix, mapping_rules, migration_batches, approvals, queue_items, api_attempts, books_snapshots, ...) support insert/get/update via the generic ROWID/id key styles', async () => {
+  const store = await openFakeStore();
+  const now = nowIso();
+
+  const batch = await store.insert('migration_batches', {
+    id: 'batch-1', branch_code: 'PILOT01', period: '2026-04', run_id: 'run-A', scope_hash: 'x'.repeat(64),
+    mapping_version: 'map_v1', transformation_version: 'tx_v1', cutover_rule_version: 'cut_v1',
+    voucher_count: 1, debit_total: '100.00', credit_total: '100.00', totals_json: '{}', status: 'DRAFT',
+    approval_id: null, created_by: 'operator.local', created_at: now, updated_at: now,
+  });
+  assert.equal(batch.id, 'batch-1');
+  const fetchedBatch = await store.get('migration_batches', 'batch-1');
+  assert.equal(fetchedBatch.status, 'DRAFT');
+  const updatedBatch = await store.update('migration_batches', 'batch-1', { status: 'APPROVED', updated_at: nowIso() });
+  assert.equal(updatedBatch.status, 'APPROVED');
+
+  const queueItem = await store.insert('queue_items', {
+    batch_id: 'batch-1', voucher_id: 1, idempotency_key: 'y'.repeat(64), status: 'QUEUED',
+    claimed_by: null, claimed_at: null, claim_expires_at: null, run_after: null, attempts: 0,
+    last_error_code: null, created_at: now, updated_at: now,
+  });
+  assert.ok(/^\d+$/.test(queueItem.id));
+  const claimed = await store.claim('queue_items', queueItem.id, { workerId: 'w1', expectedStatus: 'QUEUED', newStatus: 'CLAIMED', ttlMs: 60000 });
+  assert.equal(claimed.status, 'CLAIMED');
+
+  await store.insert('books_snapshots', {
+    branch_code: 'PILOT01', zoho_location_id: 'LOC-PILOT01', organization_id: 'mock_org', kind: 'BASELINE',
+    batch_id: 'batch-1', driver: 'mock', taken_at: now, balances_json: '[]', records_json: null,
+    snapshot_hash: 'z'.repeat(64), created_at: now,
+  });
+  assert.equal(await store.count('books_snapshots', { batch_id: 'batch-1' }), 1);
+  await store.close();
+});
+
+test('catalyst_fake: checkVarcharLength rejects an oversized varchar value at insert time', async () => {
+  const store = await openFakeStore();
+  await assert.rejects(
+    () => store.insert('extraction_runs', runRow('toolong', { query_id: 'x'.repeat(200) })), // query_id max_length is 128
+    (err) => {
+      assert.match(err.message, /too long/i);
+      return true;
+    }
+  );
+  await store.close();
+});
+
+test('catalyst_fake: assertWithinLimits() passes on clean data (the same enforcement checkVarcharLength/checkTextLength apply at insert time, re-verified independently over the whole store)', async () => {
+  const fake = createCatalystFake();
+  const store = await openStore({ app: fake.app });
+  await store.insert('extraction_runs', runRow('within-limits'));
+  await store.insert('exceptions', {
+    category: 'SCHEMA_FAILURE', severity: 'P1', branch_code: 'PILOT01', period: '2026-04', run_id: 'within-limits',
+    file_id: null, voucher_id: null, batch_id: null, financial_impact: '0.00', owner: null, status: 'OPEN',
+    root_cause: null, disposition: null, evidence_json: null, message: 'x'.repeat(9999), // text column, under the 10000 cap
+    dedupe_key: 'dk-1', created_at: nowIso(), updated_at: nowIso(),
+  });
+  assert.equal(fake.assertWithinLimits(), true);
+  await store.close();
+});
+
+test('catalyst store: pagination past the 300-row ZCQL cap on audit_events specifically (the table the pipeline appends to heavily)', async () => {
+  const store = await openFakeStore();
+  const audit = createAudit(store);
+  const total = 320;
+  for (let i = 0; i < total; i++) {
+    await audit.emit({ actor: 'tester', action: 'TEST.EVENT', entityType: 'x', entityId: String(i), correlationId: 'corr-page' });
+  }
+  const all = await store.find('audit_events', { correlation_id: 'corr-page' });
+  assert.equal(all.length, total, 'find(audit_events) with no limit must page past the 300-row ZCQL cap');
+  assert.equal(await store.count('audit_events', { correlation_id: 'corr-page' }), total);
+  await store.close();
+});
+
 test('catalyst_types: coerceScalar/normaliseRow apply the documented type coercion', () => {
   assert.equal(coerceScalar('int', '7'), 7);
   assert.equal(coerceScalar('int', 7), 7);
