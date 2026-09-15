@@ -325,17 +325,28 @@ test('POST /api/branches/:code/refresh: 403 out of branch scope', async () => {
   }
 });
 
-test('POST /api/branches/:code/refresh: 404 when the branch has no `branches` row to compute from', async () => {
-  const { base, close } = await startApp();
+test('POST /api/branches/:code/refresh: a summary-only (synthetic) branch refreshes in place (200, version bumped); an unknown branch is 404', async () => {
+  const { base, store, close } = await startApp();
   try {
+    const before = await store.get('branch_summaries', 'EG-0002');
     const res = await fetch(`${base}/api/branches/EG-0002/refresh`, {
       method: 'POST',
       headers: { ...authHeader(TOKENS.admin), 'Content-Type': 'application/json' },
       body: '{}',
     });
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.error, 'BRANCH_NOT_FOUND');
+    assert.equal(body.branch_code, 'EG-0002');
+    assert.equal(body.summary_version, before.summary_version + 1);
+    assert.equal(body.readiness_status, before.readiness_status, 'seeded statuses are kept for a branch with no transactional rows');
+
+    const unknown = await fetch(`${base}/api/branches/NOPE-9999/refresh`, {
+      method: 'POST',
+      headers: { ...authHeader(TOKENS.admin), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(unknown.status, 404);
+    assert.equal((await unknown.json()).error, 'BRANCH_NOT_FOUND');
   } finally {
     await close();
   }
