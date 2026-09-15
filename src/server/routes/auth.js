@@ -26,7 +26,7 @@ function originOf(req) {
  *    directly (e.g. a diagnostics endpoint) without changing the factory shape.
  *  - environment: 'Development'|'Production'|'local'|... — accepted for parity with the
  *    other route factories in this directory (src/server/app.js passes it everywhere);
- *    no environment-specific behaviour is required by this pass (CATALYST_AUTH_LOGIN_URL
+ *    no environment-specific behaviour is required by this pass (AUTH_LOGIN_URL
  *    being unset already hides the login/logout paths in every environment).
  */
 export function createAuthRouter({ auth, sessionAuth, environment } = {}) {
@@ -48,8 +48,8 @@ export function createAuthRouter({ auth, sessionAuth, environment } = {}) {
   router.get('/api/auth/config', (req, res) => {
     res.json({
       modes: authModes(),
-      catalystLoginUrl: process.env.CATALYST_AUTH_LOGIN_URL || null,
-      catalystLogoutUrl: process.env.CATALYST_AUTH_LOGOUT_URL || null,
+      catalystLoginUrl: process.env.AUTH_LOGIN_URL || null,
+      catalystLogoutUrl: process.env.AUTH_LOGOUT_URL || null,
     });
   });
 
@@ -74,7 +74,7 @@ export function createAuthRouter({ auth, sessionAuth, environment } = {}) {
   );
 
   router.get('/auth/login', (req, res) => {
-    const target = process.env.CATALYST_AUTH_LOGIN_URL || null;
+    const target = process.env.AUTH_LOGIN_URL || null;
     if (!target) {
       return res.status(404).json({ error: 'AUTH_MODE_NOT_ENABLED', message: 'Catalyst login is not configured on this deployment.' });
     }
@@ -84,7 +84,7 @@ export function createAuthRouter({ auth, sessionAuth, environment } = {}) {
   });
 
   router.get('/auth/logout', (req, res) => {
-    const target = process.env.CATALYST_AUTH_LOGOUT_URL || null;
+    const target = process.env.AUTH_LOGOUT_URL || null;
     if (!target) {
       return res.status(404).json({ error: 'AUTH_MODE_NOT_ENABLED', message: 'Catalyst logout is not configured on this deployment.' });
     }

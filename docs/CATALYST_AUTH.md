@@ -14,12 +14,12 @@ HTTP GETs (no session):
 | Path | Result | What it settles |
 |---|---|---|
 | `/__catalyst/sdk/init.js` | 200, `application/javascript`, 468 B: `catalyst.initApp({ project_Id, zaid, auth_domain: "https://accounts.zohoportal.in", is_appsail: true, ... })` | AppSail **does** serve the SDK init on its own origin (`is_appsail: true`), so a session established here is first-party to this origin — §3 item 1 is resolved. |
-| `/__catalyst/auth/login` | 200, `text/html`, 3.1 KB hosted login page; loads only `https://static.zohocdn.com/catalyst-cdn/{css,js}/catalyst_hosted_login_page-*.min.*` and `https://static.zohocdn.com/catalyst/sdk/js/4.6.2/catalystWebSDK.js` | The platform serves a **hosted login page on the AppSail origin itself** (intercepted before Express — our helmet CSP does not apply to it). No login widget needs to be embedded in our pages; `CATALYST_AUTH_LOGIN_URL` = `<appsail-origin>/__catalyst/auth/login` is same-origin and leaks no ID that the page itself does not already expose. §3 items 2 and 4 resolved. |
+| `/__catalyst/auth/login` | 200, `text/html`, 3.1 KB hosted login page; loads only `https://static.zohocdn.com/catalyst-cdn/{css,js}/catalyst_hosted_login_page-*.min.*` and `https://static.zohocdn.com/catalyst/sdk/js/4.6.2/catalystWebSDK.js` | The platform serves a **hosted login page on the AppSail origin itself** (intercepted before Express — our helmet CSP does not apply to it). No login widget needs to be embedded in our pages; `AUTH_LOGIN_URL` = `<appsail-origin>/__catalyst/auth/login` is same-origin and leaks no ID that the page itself does not already expose. §3 items 2 and 4 resolved. |
 | `/__catalyst/auth/signin` | 404 | Not a valid path. |
 
 Consequences applied in this pass:
 - `src/server/app.js` CSP `frame-src` tightened from the `https://*.zoho.com` guess to `'self'` + `https://accounts.zohoportal.in` (the observed `auth_domain`). `script-src` keeps `https://static.zohocdn.com` for the SDK bundle in case a page embeds it later.
-- Deploy env: `AUTH_MODE=token,catalyst`, `CATALYST_AUTH_LOGIN_URL=https://<appsail-origin>/__catalyst/auth/login`, `CATALYST_AUTH_LOGOUT_URL` left unset until the sign-out path is observed (the UI clears the bearer token and calls `/auth/logout`, which 404s harmlessly when unset).
+- Deploy env: `AUTH_MODE=token,catalyst`, `AUTH_LOGIN_URL=https://<appsail-origin>/__catalyst/auth/login`, `AUTH_LOGOUT_URL` left unset until the sign-out path is observed (the UI clears the bearer token and calls `/auth/logout`, which 404s harmlessly when unset).
 - Still unverified until a real user signs in: item 3 (`getCurrentUser()` throw-vs-null for no session — code handles both) and the post-login redirect target of the hosted page (expected: the `redirect_uri`/`service_url` query parameter — to be confirmed in the first manual sign-in and recorded here).
 
 ## 1. Decision
@@ -103,13 +103,13 @@ specific behaviour:
    (`try/catch` around the call, plus a falsy/`no email_id` check on whatever value comes
    back) so this is safe either way, but which one actually happens in the real
    AppSail+Catalyst-session case is unconfirmed.
-4. **Exact CATALYST_AUTH_LOGIN_URL / CATALYST_AUTH_LOGOUT_URL values for this project.**
+4. **Exact AUTH_LOGIN_URL / AUTH_LOGOUT_URL values for this project.**
    No page documents a stable, publicly-safe URL format for the hosted/embedded login
    entry point that avoids leaking the project ID or ZAID in the URL itself. This repo's
    convention (`docs/CATALYST_REFERENCES.md`, `DEPLOYMENT.md`) is to keep IDs out of
    anything unauthenticated (`GET /api/health` "Never includes any project/org/branch
    id"); `GET /api/auth/config` in this pass follows the same rule by simply relaying
-   whatever `CATALYST_AUTH_LOGIN_URL`/`CATALYST_AUTH_LOGOUT_URL` an operator configures
+   whatever `AUTH_LOGIN_URL`/`AUTH_LOGOUT_URL` an operator configures
    (or `null` if unset) rather than deriving/guessing a URL that might embed an ID.
 5. **`registerUser`/`addUserToOrg` admin-scope requirement.** The Node SDK typings show
    both on `UserManagement`, with no scope annotation in the `.d.ts` itself;
@@ -151,7 +151,7 @@ real deployment:
    here because it is easy for an operator following generic AppSail docs to add it by
    habit; doing so will break `GET /api/health` and the bot bearer-token path.
 6. **Verify the redirect/callback origin** matches exactly (scheme + host, no trailing
-   path surprises) whatever is configured in `CATALYST_AUTH_LOGIN_URL`'s target
+   path surprises) whatever is configured in `AUTH_LOGIN_URL`'s target
    (Hosted) or embedded widget's `redirect_url` (Embedded) — a mismatch is the most common
    cause of `PATTERN_NOT_MATCHED` per the local skill's troubleshooting notes.
 
@@ -160,8 +160,8 @@ real deployment:
 | Var | Meaning | Default when unset |
 |---|---|---|
 | `AUTH_MODE` | `'token'` \| `'catalyst'` \| `'token,catalyst'` — which authentication path(s) `composeAuthenticate()` will try. | `'token'` (byte-for-byte the pre-existing behaviour: catalyst is never consulted) |
-| `CATALYST_AUTH_LOGIN_URL` | Full URL of the hosted/embedded login entry point `GET /auth/login` 302s to. `null`/unset ⇒ `/auth/login` returns 404 `AUTH_MODE_NOT_ENABLED` and the console hides the "Sign in with Zoho" button. | unset (`null`) |
-| `CATALYST_AUTH_LOGOUT_URL` | Same idea for `GET /auth/logout`. | unset (`null`) |
+| `AUTH_LOGIN_URL` | Full URL of the hosted/embedded login entry point `GET /auth/login` 302s to. `null`/unset ⇒ `/auth/login` returns 404 `AUTH_MODE_NOT_ENABLED` and the console hides the "Sign in with Zoho" button. | unset (`null`) |
+| `AUTH_LOGOUT_URL` | Same idea for `GET /auth/logout`. | unset (`null`) |
 
 ## 6. CSP additions (this pass, `src/server/app.js` helmet block only)
 

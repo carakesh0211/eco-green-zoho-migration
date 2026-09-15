@@ -36,8 +36,14 @@ if (!Array.isArray(envVars) || envVars.some((e) => !e.key || typeof e.value !== 
   process.exit(2);
 }
 for (const e of envVars) {
-  if (/^egdev/i.test(e.value) || /"token"\s*:/.test(e.value)) {
+  if (/^eg(dev|adm|bot)_/i.test(e.value) || /"token"\s*:/.test(e.value)) {
     console.error(`Refusing: env var ${e.key} looks like it contains a plaintext token.`);
+    process.exit(2);
+  }
+  // AppSail rejects the whole deploy ("environment_variables must not contain reserved
+  // keywords") for any key starting with CATALYST_ or X_ZOHO_ — fail here, before upload.
+  if (/^(CATALYST_|X_ZOHO_)/i.test(e.key)) {
+    console.error(`Refusing: env var ${e.key} uses a reserved AppSail prefix (CATALYST_/X_ZOHO_); rename it (e.g. APP_ENVIRONMENT, AUTH_LOGIN_URL).`);
     process.exit(2);
   }
 }

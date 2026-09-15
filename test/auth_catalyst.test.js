@@ -61,12 +61,12 @@ async function insertDirectoryUser(store, { id, email, role = 'operator', princi
 async function buildHarness({ authMode = 'catalyst', sessionImpl, envOverrides = {} } = {}) {
   const prevEnv = {
     AUTH_MODE: process.env.AUTH_MODE,
-    CATALYST_AUTH_LOGIN_URL: process.env.CATALYST_AUTH_LOGIN_URL,
-    CATALYST_AUTH_LOGOUT_URL: process.env.CATALYST_AUTH_LOGOUT_URL,
+    AUTH_LOGIN_URL: process.env.AUTH_LOGIN_URL,
+    AUTH_LOGOUT_URL: process.env.AUTH_LOGOUT_URL,
   };
   process.env.AUTH_MODE = authMode;
-  process.env.CATALYST_AUTH_LOGIN_URL = envOverrides.CATALYST_AUTH_LOGIN_URL ?? '';
-  process.env.CATALYST_AUTH_LOGOUT_URL = envOverrides.CATALYST_AUTH_LOGOUT_URL ?? '';
+  process.env.AUTH_LOGIN_URL = envOverrides.AUTH_LOGIN_URL ?? '';
+  process.env.AUTH_LOGOUT_URL = envOverrides.AUTH_LOGOUT_URL ?? '';
 
   const store = await openStore();
   const audit = createAudit(store);
@@ -100,8 +100,8 @@ async function buildHarness({ authMode = 'catalyst', sessionImpl, envOverrides =
       await new Promise((resolve) => server.close(resolve));
       await store.close();
       process.env.AUTH_MODE = prevEnv.AUTH_MODE;
-      process.env.CATALYST_AUTH_LOGIN_URL = prevEnv.CATALYST_AUTH_LOGIN_URL;
-      process.env.CATALYST_AUTH_LOGOUT_URL = prevEnv.CATALYST_AUTH_LOGOUT_URL;
+      process.env.AUTH_LOGIN_URL = prevEnv.AUTH_LOGIN_URL;
+      process.env.AUTH_LOGOUT_URL = prevEnv.AUTH_LOGOUT_URL;
     },
   };
 }
@@ -234,7 +234,7 @@ test("catalyst session: AUTH_MODE='token' -> session never consulted even withou
 test('GET /api/auth/config is public and reflects AUTH_MODE / configured URLs', async () => {
   const { base, close } = await buildHarness({
     authMode: 'token,catalyst',
-    envOverrides: { CATALYST_AUTH_LOGIN_URL: 'https://accounts.example.zoho.com/login', CATALYST_AUTH_LOGOUT_URL: 'https://accounts.example.zoho.com/logout' },
+    envOverrides: { AUTH_LOGIN_URL: 'https://accounts.example.zoho.com/login', AUTH_LOGOUT_URL: 'https://accounts.example.zoho.com/logout' },
   });
   try {
     const res = await fetch(`${base}/api/auth/config`);
@@ -261,7 +261,7 @@ test('GET /auth/login -> 404 AUTH_MODE_NOT_ENABLED when unconfigured, 302 with r
     }
   }
   {
-    const { base, close } = await buildHarness({ envOverrides: { CATALYST_AUTH_LOGIN_URL: 'https://accounts.example.zoho.com/login' } });
+    const { base, close } = await buildHarness({ envOverrides: { AUTH_LOGIN_URL: 'https://accounts.example.zoho.com/login' } });
     try {
       const res = await fetch(`${base}/auth/login`, { redirect: 'manual' });
       assert.equal(res.status, 302);
@@ -285,7 +285,7 @@ test('GET /auth/logout -> 404 AUTH_MODE_NOT_ENABLED when unconfigured, 302 when 
     }
   }
   {
-    const { base, close } = await buildHarness({ envOverrides: { CATALYST_AUTH_LOGOUT_URL: 'https://accounts.example.zoho.com/logout' } });
+    const { base, close } = await buildHarness({ envOverrides: { AUTH_LOGOUT_URL: 'https://accounts.example.zoho.com/logout' } });
     try {
       const res = await fetch(`${base}/auth/logout`, { redirect: 'manual' });
       assert.equal(res.status, 302);
