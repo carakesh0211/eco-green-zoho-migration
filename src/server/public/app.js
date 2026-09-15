@@ -266,9 +266,9 @@ async function refreshHealth() {
     const health = await api('/api/health');
     lastHealth = health;
     banner.textContent =
-      `POSTING DISABLED — driver=${health.driver} — store=${health.storeAdapter} (${health.claimSemantics}) — ` +
-      `archive=${health.archiveStatus} — env=${health.environment}` +
-      (health.postingEnabled ? ' (POSTING IS ENABLED!)' : '');
+      `${health.postingEnabled ? 'POSTING IS ENABLED!' : 'POSTING DISABLED'} — WORKER ${String(health.workerMode || 'disabled').toUpperCase()} — ` +
+      `driver=${health.driver} — store=${health.storeAdapter} (${health.claimSemantics}) — ` +
+      `archive=${health.archiveStatus}${health.archiveBucket?.name ? ' (' + health.archiveBucket.name + ')' : ''} — env=${health.environment}`;
     archiveNotice.hidden = health.archiveStatus !== 'DISABLED_DEVELOPMENT';
   } catch (err) {
     banner.textContent = `POSTING DISABLED — health check failed: ${err.message}`;

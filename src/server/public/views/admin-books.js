@@ -44,12 +44,62 @@
     return 'chip-grey'; // NOT_CONNECTED
   }
 
-  async function renderConnectionCard(container, refreshAll) {
+  // ---- Connection readiness card ------------------------------------------------------
+  // Pure display: the seven `readiness()` items from GET /api/admin/books/connection.
+  // Never renders anything token-like — state/detail strings only.
+
+  const READINESS_EXPLANATION =
+    'Connecting Zoho Books via OAuth grants read-only reconciliation access only when read ' +
+    'authorization is separately enabled. It never enables posting: production posting requires ' +
+    'BOOKS_DRIVER=live, POSTING_ENABLED=true, an authorization reference and an allow-listed ' +
+    'organisation through controlled deployment configuration.';
+
+  function readinessBadgeClass(item) {
+    const state = String(item?.state || '');
+    if (item?.key === 'connection') return statusBadgeClass(state);
+    if (item?.key === 'posting') return state === 'DISABLED' ? 'chip-green' : 'chip-red';
+    if (/^(MISSING|NOT_|DISABLED|INCOMPLETE)/.test(state)) return 'chip-red';
+    if (/^(CONFIGURED|VERIFIED|SYNCHRONIZED|COMPLETE)/.test(state)) return 'chip-green';
+    return 'chip-grey'; // e.g. SYNTHETIC_ONLY
+  }
+
+  function readinessBadgeText(item) {
+    if (item?.key === 'posting' && item?.state === 'DISABLED') return 'DISABLED (required)';
+    return item?.state || '';
+  }
+
+  function readinessRow(item) {
+    return el('div', { class: 'control-row' }, [
+      el('span', { class: `chip ${readinessBadgeClass(item)}` }, readinessBadgeText(item)),
+      el('span', { class: 'control-label' }, item?.label || item?.key || ''),
+      el('span', { class: 'muted' }, item?.detail || ''),
+    ]);
+  }
+
+  function renderReadinessCard(container, readiness) {
+    container.innerHTML = '';
+    container.appendChild(el('h3', {}, 'Connection readiness'));
+    container.appendChild(el('p', { class: 'muted' }, READINESS_EXPLANATION));
+    const rows = el('div', { class: 'controls-checklist' });
+    for (const item of readiness || []) {
+      rows.appendChild(readinessRow(item));
+    }
+    container.appendChild(rows);
+  }
+
+  async function renderConnectionCard(container, refreshAll, readinessContainer) {
     container.innerHTML = '';
     let data;
     try {
       data = await api('/api/admin/books/connection');
     } catch (err) {
+      if (readinessContainer) {
+        if (err.status === 404 || err.status === 501) {
+          notAvailableNote(readinessContainer, 'Zoho Books connection API is not available yet.');
+        } else {
+          showError(readinessContainer, err);
+        }
+      }
       if (err.status === 404 || err.status === 501) {
         notAvailableNote(container, 'Zoho Books connection API is not available yet.');
         return null;
@@ -57,6 +107,10 @@
       showError(container, err);
       return null;
     }
+
+    if (readinessContainer) renderReadinessCard(readinessContainer, data.readiness);
+    const clientConfigItem = (data.readiness || []).find((r) => r.key === 'clientConfiguration');
+    const clientConfigMissing = clientConfigItem ? clientConfigItem.state === 'MISSING' : false;
 
     container.appendChild(
       el('div', { class: 'controls' }, [
@@ -106,6 +160,8 @@
     const actions = el('div', { class: 'controls' }, [
       el('label', {}, ['Region', regionSelect]),
       el('button', {
+        disabled: clientConfigMissing ? '' : null,
+        title: clientConfigMissing ? 'Client configuration missing' : null,
         onclick: async () => {
           try {
             const result = await api('/api/admin/books/connect', { method: 'POST', body: { region: regionSelect.value } });
@@ -214,16 +270,18 @@
       replaceQuery('/admin/connections/books', rest);
     }
 
+    const readinessCard = el('section', { class: 'card' });
     const connectionCard = el('section', { class: 'card' });
     const locationsCard = el('section', { class: 'card' });
+    container.appendChild(readinessCard);
     container.appendChild(connectionCard);
     container.appendChild(locationsCard);
 
     const refreshAll = () => {
-      renderConnectionCard(connectionCard, refreshAll);
+      renderConnectionCard(connectionCard, refreshAll, readinessCard);
       renderLocationsCard(locationsCard);
     };
-    await renderConnectionCard(connectionCard, refreshAll);
+    await renderConnectionCard(connectionCard, refreshAll, readinessCard);
     await renderLocationsCard(locationsCard);
   }
 

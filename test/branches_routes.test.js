@@ -195,6 +195,81 @@ test('GET /api/branches: sort by open_exception_impact descending (money-string 
   }
 });
 
+test('GET /api/branches: counts.byOperator/byApprover are included alongside counts.byReadiness', async () => {
+  const { base, close } = await startApp();
+  try {
+    const res = await fetch(`${base}/api/branches`, { headers: authHeader(TOKENS.admin) });
+    const body = await res.json();
+    assert.deepEqual(body.counts.byOperator, { 'op-1': 1 });
+    assert.deepEqual(body.counts.byApprover, { 'ap-1': 1 });
+  } finally {
+    await close();
+  }
+});
+
+test('GET /api/branches/facets: admin sees facets aggregated over every branch in scope', async () => {
+  const { base, close } = await startApp();
+  try {
+    const res = await fetch(`${base}/api/branches/facets`, { headers: authHeader(TOKENS.admin) });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.operators, [{ id: 'op-1', count: 1 }]);
+    assert.deepEqual(body.approvers, [{ id: 'ap-1', count: 1 }]);
+    assert.deepEqual(body.readiness, { IN_PROGRESS: 1, NOT_STARTED: 1, BLOCKED: 1 });
+    assert.deepEqual(body.receipt, { RECEIVED: 2, NOT_RECEIVED: 1 });
+  } finally {
+    await close();
+  }
+});
+
+test('GET /api/branches/facets: a PILOT01-only operator only sees PILOT01 data (scope-filtered, not affected by other query params)', async () => {
+  const { base, close } = await startApp();
+  try {
+    const res = await fetch(`${base}/api/branches/facets?readiness=BLOCKED`, { headers: authHeader(TOKENS.operatorPilot) });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.operators, [{ id: 'op-1', count: 1 }]);
+    assert.deepEqual(body.approvers, [{ id: 'ap-1', count: 1 }]);
+    assert.deepEqual(body.readiness, { IN_PROGRESS: 1 }, 'scope excludes EG-0002/EG-0003 entirely, regardless of the readiness query param');
+    assert.deepEqual(body.receipt, { RECEIVED: 1 });
+  } finally {
+    await close();
+  }
+});
+
+test('GET /api/branches/facets: bots may read (any authenticated role including bots)', async () => {
+  const { base, close } = await startApp();
+  try {
+    const res = await fetch(`${base}/api/branches/facets`, { headers: authHeader(TOKENS.bot) });
+    assert.equal(res.status, 200);
+  } finally {
+    await close();
+  }
+});
+
+test('GET /api/branches?migrationMonth=YYYY-MM: keeps rows whose migration window includes that month', async () => {
+  const { base, close } = await startApp();
+  try {
+    // EG-0002: from 2026-04-01, to null (open-ended) -> matches any month from April onward.
+    const res = await fetch(`${base}/api/branches?migrationMonth=2026-07`, { headers: authHeader(TOKENS.admin) });
+    const body = await res.json();
+    assert.deepEqual(body.items.map((r) => r.branch_code).sort(), ['EG-0002', 'EG-0003']);
+  } finally {
+    await close();
+  }
+});
+
+test('GET /api/branches?openExceptions=min:3&impactMin=999.99: combines with AND', async () => {
+  const { base, close } = await startApp();
+  try {
+    const res = await fetch(`${base}/api/branches?openExceptions=min:3&impactMin=999.99`, { headers: authHeader(TOKENS.admin) });
+    const body = await res.json();
+    assert.deepEqual(body.items.map((r) => r.branch_code), ['EG-0003']);
+  } finally {
+    await close();
+  }
+});
+
 test('GET /api/branches/:code: 200 in scope, 404 unknown, 403 out of scope', async () => {
   const { base, close } = await startApp();
   try {

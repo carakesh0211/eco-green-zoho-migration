@@ -643,6 +643,108 @@ export function createBooksConnection({ store, audit, config, fetchImpl = fetch,
     }
   }
 
+  // ---- readiness (Admin dashboard "Connection readiness" card) ------------------------
+  //
+  // Pure display data: computing this NEVER initiates OAuth, NEVER calls fetchImpl, and NEVER
+  // changes `row.status` — it only reads the current row/env/table state and reports it back.
+  // Each item is { key, label, state, detail }. `state` is one of the literal values enumerated
+  // in the task brief (locations/branchMapping embed their counts directly in the state string,
+  // e.g. "SYNCHRONIZED (3)" / "INCOMPLETE (1/2)"); `detail` never echoes a secret/env VALUE — at
+  // most it names which env var(s) are missing.
+  const CLIENT_CONFIG_ENV_FIELDS = Object.freeze([
+    { name: 'BOOKS_CLIENT_ID', get: () => config.clientId },
+    { name: 'BOOKS_CLIENT_SECRET', get: () => config.clientSecret },
+    { name: 'BOOKS_SECRET_KEY', get: () => config.secretKey },
+    { name: 'BOOKS_REDIRECT_URI', get: () => config.redirectUri },
+  ]);
+
+  function isPresent(value) {
+    return typeof value === 'string' && value.trim() !== '';
+  }
+
+  async function readiness() {
+    const row = await ensureRow();
+
+    const missingFields = CLIENT_CONFIG_ENV_FIELDS.filter((f) => !isPresent(f.get())).map((f) => f.name);
+    const clientConfiguration = {
+      key: 'clientConfiguration',
+      label: 'Client configuration',
+      state: missingFields.length === 0 ? 'CONFIGURED' : 'MISSING',
+      detail:
+        missingFields.length === 0
+          ? 'All required client configuration values are present'
+          : `Missing: ${missingFields.join(', ')}`,
+    };
+
+    const connectionItem = {
+      key: 'connection',
+      label: 'Connection',
+      state: row.status,
+      detail: `Books connection status is ${row.status}`,
+    };
+
+    const organizationVerified = Boolean(row.org_id) && Boolean(config.organizationId) && row.org_id === config.organizationId;
+    const organization = {
+      key: 'organization',
+      label: 'Organisation',
+      state: organizationVerified ? 'VERIFIED' : 'NOT_VERIFIED',
+      detail: organizationVerified
+        ? 'Connected organisation matches BOOKS_ORGANIZATION_ID'
+        : 'Connected organisation id does not match BOOKS_ORGANIZATION_ID (or nothing is connected yet)',
+    };
+
+    const nonSynthetic = await store.count('books_locations', { is_synthetic: 0 });
+    const synthetic = await store.count('books_locations', { is_synthetic: 1 });
+    let locationsState;
+    let locationsDetail;
+    if (nonSynthetic > 0) {
+      locationsState = `SYNCHRONIZED (${nonSynthetic})`;
+      locationsDetail = `${nonSynthetic} live location(s) synchronised`;
+    } else if (synthetic > 0) {
+      locationsState = `SYNTHETIC_ONLY (${synthetic})`;
+      locationsDetail = `${synthetic} synthetic location(s) synchronised (Development only)`;
+    } else {
+      locationsState = 'NOT_SYNCHRONIZED';
+      locationsDetail = 'No locations synchronised yet';
+    }
+    const locations = { key: 'locations', label: 'Locations', state: locationsState, detail: locationsDetail };
+
+    const branchRows = await store.find('branch_summaries', {});
+    const totalBranches = branchRows.length;
+    const mappedBranches = branchRows.filter((r) => r.zoho_location_id != null && r.zoho_location_id !== '').length;
+    // Conservative on purpose: zero branch_summaries rows is NOT "complete" — there is nothing to
+    // be ready about yet, and this card must never show a green state before anything real exists.
+    const branchMappingComplete = totalBranches > 0 && mappedBranches === totalBranches;
+    const branchMapping = {
+      key: 'branchMapping',
+      label: 'Branch mapping',
+      state: branchMappingComplete ? 'COMPLETE' : `INCOMPLETE (${mappedBranches}/${totalBranches})`,
+      detail: branchMappingComplete
+        ? `All ${totalBranches} branch(es) are mapped to a Zoho Books location`
+        : `${mappedBranches} of ${totalBranches} branch(es) are mapped to a Zoho Books location`,
+    };
+
+    const readAuthorizationEnabled = config.readAuthorized === true;
+    const readAuthorization = {
+      key: 'readAuthorization',
+      label: 'Read authorization',
+      state: readAuthorizationEnabled ? 'ENABLED' : 'DISABLED',
+      detail: readAuthorizationEnabled ? 'BOOKS_READ_AUTHORIZED=true' : 'BOOKS_READ_AUTHORIZED is not enabled',
+    };
+
+    const postingOk = isPostingEnabled(config);
+    const posting = {
+      key: 'posting',
+      label: 'Posting',
+      state: postingOk ? 'ENABLED' : 'DISABLED',
+      detail: postingOk
+        ? 'PRODUCTION POSTING IS ENABLED'
+        : 'Production posting is disabled (POSTING_ENABLED/authorization ref/org allowlist gate)',
+    };
+
+    return [clientConfiguration, connectionItem, organization, locations, branchMapping, readAuthorization, posting];
+  }
+
   // ---- controls (Admin dashboard summary) --------------------------------------------
 
   async function controls() {
@@ -699,5 +801,6 @@ export function createBooksConnection({ store, audit, config, fetchImpl = fetch,
     disconnect,
     refreshStatus,
     controls,
+    readiness,
   };
 }

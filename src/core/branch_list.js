@@ -115,15 +115,125 @@ export function filterAndSortBranches(rows, query = {}) {
   if (query.activityFrom) filtered = filtered.filter((r) => r.last_activity_at && r.last_activity_at >= query.activityFrom);
   if (query.activityTo) filtered = filtered.filter((r) => r.last_activity_at && r.last_activity_at <= query.activityTo);
 
-  // counts.byReadiness is over the FILTERED set, before pagination.
+  // migrationMonth=YYYY-MM: keep rows whose [migration_from_date, migration_to_date]
+  // window includes ANY day of that month. A null migration_to_date is open-ended (never
+  // excludes on the "to" side); a null/missing migration_from_date has no defined window
+  // at all, so it never matches. YYYY-MM-DD strings compare correctly lexicographically.
+  if (query.migrationMonth) {
+    const range = monthRange(query.migrationMonth);
+    if (range) {
+      const [monthFirst, monthLast] = range;
+      filtered = filtered.filter((r) => {
+        if (!r.migration_from_date) return false;
+        if (r.migration_from_date > monthLast) return false;
+        if (r.migration_to_date && r.migration_to_date < monthFirst) return false;
+        return true;
+      });
+    }
+  }
+
+  // liveMonth=YYYY-MM: live_start_date falls within that calendar month.
+  if (query.liveMonth) {
+    const range = monthRange(query.liveMonth);
+    if (range) {
+      filtered = filtered.filter((r) => typeof r.live_start_date === 'string' && r.live_start_date.slice(0, 7) === query.liveMonth);
+    }
+  }
+
+  // openExceptions=any|none|min:<n> over open_exception_count.
+  if (query.openExceptions) {
+    const spec = String(query.openExceptions);
+    if (spec === 'any') {
+      filtered = filtered.filter((r) => (Number(r.open_exception_count) || 0) > 0);
+    } else if (spec === 'none') {
+      filtered = filtered.filter((r) => (Number(r.open_exception_count) || 0) === 0);
+    } else {
+      const m = /^min:(\d+)$/.exec(spec);
+      if (m) {
+        const threshold = Number(m[1]);
+        filtered = filtered.filter((r) => (Number(r.open_exception_count) || 0) >= threshold);
+      }
+    }
+  }
+
+  // impactMin=<decimal>: open_exception_impact >= value, compared numerically (paise).
+  if (query.impactMin !== undefined && query.impactMin !== null && query.impactMin !== '') {
+    let threshold = null;
+    try {
+      threshold = parseMoney(query.impactMin);
+    } catch {
+      threshold = null; // unparsable threshold -> filter is a no-op rather than a 500
+    }
+    if (threshold !== null) {
+      filtered = filtered.filter((r) => parseMoney(r.open_exception_impact ?? '0.00') >= threshold);
+    }
+  }
+
+  // counts.* are over the FILTERED set, before pagination.
   const byReadiness = {};
-  for (const r of filtered) byReadiness[r.readiness_status] = (byReadiness[r.readiness_status] ?? 0) + 1;
+  const byOperator = {};
+  const byApprover = {};
+  for (const r of filtered) {
+    byReadiness[r.readiness_status] = (byReadiness[r.readiness_status] ?? 0) + 1;
+    if (r.assigned_operator) byOperator[r.assigned_operator] = (byOperator[r.assigned_operator] ?? 0) + 1;
+    if (r.assigned_approver) byApprover[r.assigned_approver] = (byApprover[r.assigned_approver] ?? 0) + 1;
+  }
 
   const sortCol = BRANCH_SUMMARY_COLUMNS.includes(query.sort) ? query.sort : 'branch_code';
   const dir = String(query.dir ?? '').toLowerCase() === 'desc' ? -1 : 1;
-  const sorted = [...filtered].sort((a, b) => compareValues(a[sortCol], b[sortCol], sortCol) * dir);
+  const sorted = [...filtered].sort((a, b) => {
+    const primary = compareValues(a[sortCol], b[sortCol], sortCol) * dir;
+    if (primary !== 0) return primary;
+    // Deterministic tiebreak, independent of `dir`: equal sort keys always resolve to a
+    // total order on branch_code ascending, so paging never drops/duplicates a row and
+    // repeated requests for the same page always return the same rows in the same order.
+    if (a.branch_code < b.branch_code) return -1;
+    if (a.branch_code > b.branch_code) return 1;
+    return 0;
+  });
 
-  return { sorted, counts: { byReadiness } };
+  return { sorted, counts: { byReadiness, byOperator, byApprover } };
+}
+
+/** 'YYYY-MM' -> ['YYYY-MM-01', 'YYYY-MM-<lastDay>'], or null if malformed. */
+function monthRange(monthStr) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(monthStr ?? ''));
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return [`${m[1]}-${m[2]}-01`, `${m[1]}-${m[2]}-${String(lastDay).padStart(2, '0')}`];
+}
+
+/**
+ * computeBranchFacets(rows) -> { operators, approvers, readiness, receipt }
+ * Pure aggregate over an already branch-scoped (but otherwise unfiltered) set of
+ * branch_summaries rows — backs GET /api/branches/facets so the dashboard's operator/
+ * approver selects can be populated with exactly the values a user is entitled to see,
+ * independent of whatever other filters are currently applied to the list view.
+ */
+export function computeBranchFacets(rows) {
+  const byReadiness = {};
+  const byReceipt = {};
+  const operatorCounts = {};
+  const approverCounts = {};
+  for (const r of rows) {
+    byReadiness[r.readiness_status] = (byReadiness[r.readiness_status] ?? 0) + 1;
+    byReceipt[r.receipt_status] = (byReceipt[r.receipt_status] ?? 0) + 1;
+    if (r.assigned_operator) operatorCounts[r.assigned_operator] = (operatorCounts[r.assigned_operator] ?? 0) + 1;
+    if (r.assigned_approver) approverCounts[r.assigned_approver] = (approverCounts[r.assigned_approver] ?? 0) + 1;
+  }
+  const toList = (counts) =>
+    Object.entries(counts)
+      .map(([id, count]) => ({ id, count }))
+      .sort((a, b) => b.count - a.count || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return {
+    operators: toList(operatorCounts),
+    approvers: toList(approverCounts),
+    readiness: byReadiness,
+    receipt: byReceipt,
+  };
 }
 
 /**

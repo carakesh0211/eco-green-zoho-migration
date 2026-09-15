@@ -20,11 +20,30 @@ async function toBuffer(body) {
   return Buffer.concat(chunks);
 }
 
-function makeBucketApi(name, objects) {
+function makeBucketApi(name, objects, bucketMetas) {
   let versionCounter = 0;
   return {
     getName() {
       return name;
+    },
+    // Mirrors Bucket.getDetails(): Promise<IStratusBucket> (lib/stratus/bucket.d.ts).
+    // Only buckets created via `fake.createBucket(name, meta)` have metadata registered;
+    // any other bucket name throws. The real SDK's error code for "getDetails() on a
+    // bucket the caller can't/doesn't see" is not documented in the typings — BUCKET_NOT_FOUND
+    // is an assumed code here (mirrors the shape stratus.js's headBucket fallback uses),
+    // not a value confirmed against the live API.
+    async getDetails() {
+      const meta = bucketMetas.get(name);
+      if (!meta) throw fakeError('BUCKET_NOT_FOUND', `Bucket not found or has no registered details: ${name}`);
+      return {
+        bucket_name: name,
+        bucket_meta: {
+          versioning: meta.versioning,
+          caching: { status: meta.caching },
+          encryption: meta.encryption,
+          audit_consent: meta.audit,
+        },
+      };
     },
     async putObject(key, body, options = {}) {
       const bytes = await toBuffer(body);
@@ -91,6 +110,7 @@ function makeBucketApi(name, objects) {
 
 export function createStratusFake() {
   const buckets = new Map(); // bucketName -> Map<key, { versions: [...] }>
+  const bucketMetas = new Map(); // bucketName -> { protected, encryption, versioning, audit, caching }
 
   function objectsFor(bucketName) {
     if (!buckets.has(bucketName)) buckets.set(bucketName, new Map());
@@ -104,14 +124,38 @@ export function createStratusFake() {
           return buckets.has(bucketName);
         },
         bucket(bucketName) {
-          return makeBucketApi(bucketName, objectsFor(bucketName));
+          return makeBucketApi(bucketName, objectsFor(bucketName), bucketMetas);
         },
         async listBuckets() {
-          return [...buckets.keys()].map((name) => makeBucketApi(name, objectsFor(name)));
+          return [...buckets.keys()].map((name) => makeBucketApi(name, objectsFor(name), bucketMetas));
         },
       };
     },
   };
 
-  return { app };
+  /**
+   * createBucket(name, meta) — registers realistic IStratusBucket-shaped metadata so
+   * `bucket(name).getDetails()` resolves instead of throwing BUCKET_NOT_FOUND, and marks
+   * the bucket as existing for `headBucket()`/`listBuckets()`. Mirrors the live bucket
+   * `ecogreen-pilot-evidence-dev` created via the console (docs/CATALYST_REFERENCES.md
+   * "Stratus" row: protected, encryption on, versioning on, audit on, caching disabled) —
+   * used as the default `meta` here.
+   *
+   * Note: `meta.protected` is stored for fake realism only. The real IStratusBucket /
+   * IStratusBucketMeta typings (lib/utils/pojo/stratus.d.ts) have no 'protected'/'type'
+   * field on getDetails()'s response, so `getDetails()` above does not surface it, and
+   * stratus.js's verify() never reads it either.
+   */
+  function createBucket(name, meta = {}) {
+    objectsFor(name); // ensure the bucket "exists" for headBucket()/listBuckets()
+    bucketMetas.set(name, {
+      protected: meta.protected ?? true,
+      encryption: meta.encryption ?? true,
+      versioning: meta.versioning ?? true,
+      audit: meta.audit ?? true,
+      caching: meta.caching ?? 'Disabled',
+    });
+  }
+
+  return { app, createBucket };
 }

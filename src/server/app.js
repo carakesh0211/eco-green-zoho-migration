@@ -22,6 +22,7 @@ import { createCatalystSessionAuth, composeAuthenticate } from './auth_catalyst.
 import { currentApp as runtimeCurrentApp } from './catalyst_runtime.js';
 import { refreshBranchSummary } from '../core/branch_summary.js';
 import { createBooksConnection } from '../books/connection.js';
+import { createArchiveHealth } from './archive_health.js';
 import { isPostingEnabled, postingBlockedReasons, loadBooksConfig } from '../books/guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -77,6 +78,7 @@ export function createApp({
   authMode = process.env.AUTH_MODE ?? 'token',
   booksConnection,
   sessionAuth,
+  archiveHealth,
 }) {
   const app = express();
   // Bearer tokens resolve against the config users first, then the app_users directory
@@ -85,7 +87,7 @@ export function createApp({
   const modes = String(authMode).split(',').map((s) => s.trim()).filter(Boolean);
   if (modes.includes('catalyst')) {
     sessionAuth = sessionAuth ?? createCatalystSessionAuth({
-      store, audit, currentApp: runtime?.currentApp ?? runtimeCurrentApp, resolveDirectoryUser,
+      store, audit, currentApp: runtime?.currentApp ?? runtimeCurrentApp, resolveDirectoryUser, environment,
     });
     // Compose BEFORE any router captures auth.authenticate(): Bearer header -> bearer path
     // (byte-for-byte the previous behaviour), otherwise -> Catalyst session path.
@@ -138,14 +140,17 @@ export function createApp({
   // handler (including the request-scoped store/archive) via AsyncLocalStorage.
   if (runtime) app.use(runtime.middleware());
 
-  const archiveStatus = archiveAdapter === 'disabled' ? 'DISABLED_DEVELOPMENT' : 'ENABLED';
+  // Archive readiness is an ACTUAL bucket check (cached, single-flight — src/server/archive_health.js),
+  // never a value derived from configuration alone.
+  archiveHealth = archiveHealth ?? createArchiveHealth({ archive: devDeps.archive, archiveAdapter });
   const claimSemantics = store?.claimSemantics === 'BEST_EFFORT' ? 'BEST_EFFORT' : 'ATOMIC';
   const workerMode = process.env.WORKER_MODE === 'singleton' ? 'singleton' : 'disabled';
 
   // Public, unauthenticated: drives the console's permanent red banner and lets an
   // operator confirm production posting is disabled before doing anything else. Never
   // includes any id (project/org/branch) — see task note "Unauthenticated, no IDs".
-  app.get('/api/health', (req, res) => {
+  app.get('/api/health', async (req, res) => {
+    const archiveHealthResult = await archiveHealth.status();
     let driver = 'mock';
     let postingEnabled = false;
     try {
@@ -161,7 +166,10 @@ export function createApp({
       storeAdapter,
       claimSemantics,
       archiveAdapter,
-      archiveStatus,
+      archiveStatus: archiveHealthResult.archiveStatus,
+      archiveBucket: archiveHealthResult.bucket ?? null,
+      archiveCheckedAt: archiveHealthResult.checkedAt ?? null,
+      archiveError: archiveHealthResult.error ?? null,
       driver,
       postingEnabled,
       postingBlockedBy,

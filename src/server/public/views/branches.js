@@ -17,6 +17,14 @@
   const OVERLAP_VALUES = ['NOT_ASSESSED', 'CLEAR', 'OVERLAP_FOUND'];
   const APPROVAL_VALUES = ['NONE', 'DRAFT', 'READY_FOR_APPROVAL', 'APPROVED', 'REJECTED'];
   const PAGE_SIZES = ['25', '50', '100', '200'];
+  const OPEN_EXCEPTIONS_VALUES = [
+    { value: '', label: '(any)' },
+    { value: 'any', label: 'Any (> 0)' },
+    { value: 'none', label: 'None (0)' },
+    { value: 'min:1', label: '≥ 1' },
+    { value: 'min:5', label: '≥ 5' },
+    { value: 'min:10', label: '≥ 10' },
+  ];
 
   function selectField(labelText, name, values, current) {
     const select = el(
@@ -45,6 +53,10 @@
       liveTo: initialQuery.liveTo || '',
       activityFrom: initialQuery.activityFrom || '',
       activityTo: initialQuery.activityTo || '',
+      migrationMonth: initialQuery.migrationMonth || '',
+      liveMonth: initialQuery.liveMonth || '',
+      openExceptions: initialQuery.openExceptions || '',
+      impactMin: initialQuery.impactMin || '',
       sort: initialQuery.sort || 'branch_code',
       dir: initialQuery.dir === 'desc' ? 'desc' : 'asc',
       page: Number(initialQuery.page) > 0 ? Number(initialQuery.page) : 1,
@@ -53,6 +65,8 @@
 
     const header = el('div', { class: 'dashboard-header' });
     const chipsRow = el('div', { class: 'chips-row' });
+    const operatorWorkloadRow = el('div', { class: 'chips-row' });
+    const approverWorkloadRow = el('div', { class: 'chips-row' });
     const filterBar = el('div', { class: 'controls filter-bar' });
     const tableHost = el('div');
     const paginationBar = el('div', { class: 'pagination-bar' });
@@ -60,6 +74,10 @@
     container.appendChild(el('h2', {}, 'Branch Control Dashboard'));
     container.appendChild(header);
     container.appendChild(chipsRow);
+    container.appendChild(el('p', { class: 'muted small-label' }, 'Workload — operator'));
+    container.appendChild(operatorWorkloadRow);
+    container.appendChild(el('p', { class: 'muted small-label' }, 'Workload — approver'));
+    container.appendChild(approverWorkloadRow);
     container.appendChild(filterBar);
     container.appendChild(tableHost);
     container.appendChild(paginationBar);
@@ -94,12 +112,87 @@
     // (src/core/branch_summary.js).
     const layerCSel = selectField('Layer C', 'layerC', ['NOT_RUN', 'PASS', 'FAIL'], filters.layerC);
     const bridgeSel = selectField('Balance bridge', 'bridge', ['NOT_RUN', 'PASS', 'FAIL'], filters.bridge);
-    const operatorInput = el('input', { placeholder: 'assigned operator', value: filters.operator });
-    const approverInput = el('input', { placeholder: 'assigned approver', value: filters.approver });
+    // Operator/approver start as free-text exact-match inputs; loadFacets() below swaps
+    // each host's contents for a <select> populated from GET /api/branches/facets once
+    // that responds, keeping the free-text fallback if it 404s (older backend).
+    const operatorHost = el('span', { class: 'filter-control-host' });
+    const approverHost = el('span', { class: 'filter-control-host' });
+    let operatorInput = equalityTextInput('assigned operator', 'operator');
+    let approverInput = equalityTextInput('assigned approver', 'approver');
+    operatorHost.appendChild(operatorInput);
+    approverHost.appendChild(approverInput);
+
     const liveFromInput = el('input', { type: 'date', value: filters.liveFrom });
     const liveToInput = el('input', { type: 'date', value: filters.liveTo });
     const activityFromInput = el('input', { type: 'date', value: filters.activityFrom });
     const activityToInput = el('input', { type: 'date', value: filters.activityTo });
+    const migrationMonthInput = el('input', { type: 'month', value: filters.migrationMonth });
+    const liveMonthInput = el('input', { type: 'month', value: filters.liveMonth });
+    const impactMinInput = el('input', { type: 'number', step: '0.01', min: '0', placeholder: 'min impact (₹)', value: filters.impactMin });
+
+    const openExceptionsSel = el(
+      'select',
+      {},
+      OPEN_EXCEPTIONS_VALUES.map((o) => el('option', { value: o.value, selected: o.value === filters.openExceptions ? '' : null }, o.label))
+    );
+    openExceptionsSel.value = filters.openExceptions || '';
+    openExceptionsSel.addEventListener('change', () => {
+      filters.openExceptions = openExceptionsSel.value;
+      onFilterChanged();
+    });
+
+    /** Builds a free-text input wired to exact-match filter `key`, debounced like the
+     * date-range inputs below. Factored out so loadFacets() can build the same wiring
+     * for the fallback path if the facets endpoint 404s. */
+    function equalityTextInput(placeholder, key) {
+      const input = el('input', { placeholder, value: filters[key] });
+      const handler = debounce(() => {
+        filters[key] = input.value.trim();
+        onFilterChanged();
+      }, 300);
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+      return input;
+    }
+
+    /** Builds an exact-match <select> for filter `key` from a facets list of
+     * `{ id, count }`, appending the current value as an extra option if it isn't in
+     * the list (e.g. a stale/typed-in value from a restored URL) so it isn't silently
+     * dropped out from under the user. */
+    function equalitySelect(list, key) {
+      const current = filters[key] || '';
+      const options = [el('option', { value: '' }, '(any)')];
+      let hasCurrent = current === '';
+      for (const { id, count } of list) {
+        if (id === current) hasCurrent = true;
+        options.push(el('option', { value: id }, `${id} (${count})`));
+      }
+      if (!hasCurrent) options.push(el('option', { value: current }, current));
+      const select = el('select', {}, options);
+      select.value = current;
+      select.addEventListener('change', () => {
+        filters[key] = select.value;
+        onFilterChanged();
+      });
+      return select;
+    }
+
+    async function loadFacets() {
+      let facets = null;
+      try {
+        facets = await window.App.apiOptional('/api/branches/facets');
+      } catch {
+        facets = null; // treat any facets failure as "fall back to free text", not a page error
+      }
+      if (!facets) return;
+      operatorHost.innerHTML = '';
+      operatorInput = equalitySelect(facets.operators ?? [], 'operator');
+      operatorHost.appendChild(operatorInput);
+      approverHost.innerHTML = '';
+      approverInput = equalitySelect(facets.approvers ?? [], 'approver');
+      approverHost.appendChild(approverInput);
+    }
+    loadFacets();
 
     for (const [sel, key] of [
       [readinessSel, 'readiness'], [receiptSel, 'receipt'], [layerASel, 'layerA'],
@@ -112,8 +205,8 @@
       });
     }
     for (const [input, key] of [
-      [operatorInput, 'operator'], [approverInput, 'approver'],
       [liveFromInput, 'liveFrom'], [liveToInput, 'liveTo'], [activityFromInput, 'activityFrom'], [activityToInput, 'activityTo'],
+      [migrationMonthInput, 'migrationMonth'], [liveMonthInput, 'liveMonth'], [impactMinInput, 'impactMin'],
     ]) {
       const handler = debounce(() => {
         filters[key] = input.value.trim();
@@ -143,8 +236,12 @@
     filterBar.appendChild(approvalSel.node);
     filterBar.appendChild(layerCSel.node);
     filterBar.appendChild(bridgeSel.node);
-    filterBar.appendChild(el('label', {}, ['Operator', operatorInput]));
-    filterBar.appendChild(el('label', {}, ['Approver', approverInput]));
+    filterBar.appendChild(el('label', {}, ['Operator', operatorHost]));
+    filterBar.appendChild(el('label', {}, ['Approver', approverHost]));
+    filterBar.appendChild(el('label', {}, ['Migration month', migrationMonthInput]));
+    filterBar.appendChild(el('label', {}, ['Live month', liveMonthInput]));
+    filterBar.appendChild(el('label', {}, ['Open exceptions', openExceptionsSel]));
+    filterBar.appendChild(el('label', {}, ['Min exception impact', impactMinInput]));
     filterBar.appendChild(el('label', {}, ['Live start from', liveFromInput]));
     filterBar.appendChild(el('label', {}, ['Live start to', liveToInput]));
     filterBar.appendChild(el('label', {}, ['Activity from', activityFromInput]));
@@ -219,6 +316,8 @@
           header.innerHTML = '';
           notAvailableNote(tableHost, 'Branch dashboard API (GET /api/branches) is not available yet.');
           chipsRow.innerHTML = '';
+          operatorWorkloadRow.innerHTML = '';
+          approverWorkloadRow.innerHTML = '';
           paginationBar.innerHTML = '';
           return;
         }
@@ -245,12 +344,39 @@
         );
       }
 
+      renderWorkloadRow(operatorWorkloadRow, data.counts?.byOperator ?? {}, 'operator');
+      renderWorkloadRow(approverWorkloadRow, data.counts?.byApprover ?? {}, 'approver');
+
       renderDataTable(tableHost, data.items, columns, {
         onRowClick: (row) => navigate(`/branches/${encodeURIComponent(row.branch_code)}`),
         empty: 'No branches match these filters.',
       });
 
       renderPagination(data);
+    }
+
+    /** Workload chip row: one chip per operator/approver id with their row count over
+     * the current filtered+scoped set. Clicking a chip toggles that id as the
+     * corresponding exact-match filter — same toggle behaviour as the readiness chips. */
+    function renderWorkloadRow(rowEl, counts, key) {
+      rowEl.innerHTML = '';
+      const ids = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || (a < b ? -1 : a > b ? 1 : 0));
+      if (ids.length === 0) {
+        rowEl.appendChild(el('span', { class: 'muted' }, 'No assignments in this view.'));
+        return;
+      }
+      for (const id of ids) {
+        const active = filters[key] === id;
+        rowEl.appendChild(
+          el('button', {
+            class: `chip-btn chip-grey${active ? ' chip-btn-active' : ''}`,
+            onclick: () => {
+              filters[key] = active ? '' : id;
+              onFilterChanged();
+            },
+          }, `${id}: ${counts[id]}`)
+        );
+      }
     }
 
     function renderPagination(data) {

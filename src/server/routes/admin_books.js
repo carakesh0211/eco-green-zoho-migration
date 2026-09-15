@@ -72,8 +72,12 @@ export function createAdminBooksRouter({ connection, auth }) {
     '/admin/books/connection',
     ...humanAdminOnly('view_connection'),
     wrap(async (req, res) => {
-      const [status, controls] = await Promise.all([connection.getStatus(), connection.controls()]);
-      res.json({ ...status, controls });
+      const [status, controls, readiness] = await Promise.all([
+        connection.getStatus(),
+        connection.controls(),
+        connection.readiness(),
+      ]);
+      res.json({ ...status, controls, readiness });
     })
   );
 

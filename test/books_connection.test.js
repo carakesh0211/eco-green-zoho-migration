@@ -373,3 +373,107 @@ test('decryptSecret: throws a redacted error (never the ciphertext/key) on a wro
 test('encryptSecret: rejects a key that is not exactly 32 bytes', () => {
   assert.throws(() => encryptSecret('x', Buffer.alloc(16).toString('base64')), (e) => e.code === 'BOOKS_SECRET_KEY_MISSING');
 });
+
+// ---------------------------------------------------------------- readiness()
+
+function readinessByKey(items) {
+  return Object.fromEntries(items.map((i) => [i.key, i]));
+}
+
+test('readiness(): unconfigured case reports MISSING/NOT_CONNECTED/NOT_VERIFIED/NOT_SYNCHRONIZED/INCOMPLETE/DISABLED, never CONNECTED and never ENABLED', async () => {
+  const { connection } = await setup({
+    config: { clientId: '', clientSecret: '', secretKey: '', redirectUri: '', readAuthorized: false },
+  });
+  const items = await connection.readiness();
+  assert.equal(items.length, 7);
+  const byKey = readinessByKey(items);
+
+  assert.equal(byKey.clientConfiguration.state, 'MISSING');
+  assert.equal(byKey.connection.state, 'NOT_CONNECTED');
+  assert.equal(byKey.organization.state, 'NOT_VERIFIED');
+  assert.equal(byKey.locations.state, 'NOT_SYNCHRONIZED');
+  assert.equal(byKey.branchMapping.state, 'INCOMPLETE (0/0)');
+  assert.equal(byKey.readAuthorization.state, 'DISABLED');
+  assert.equal(byKey.posting.state, 'DISABLED');
+
+  assert.match(byKey.clientConfiguration.detail, /BOOKS_CLIENT_ID/);
+  assert.match(byKey.clientConfiguration.detail, /BOOKS_CLIENT_SECRET/);
+  assert.match(byKey.clientConfiguration.detail, /BOOKS_SECRET_KEY/);
+  assert.match(byKey.clientConfiguration.detail, /BOOKS_REDIRECT_URI/);
+});
+
+test('readiness(): configured-but-not-connected case reports CONFIGURED alongside the still-not-ready states', async () => {
+  const { connection } = await setup(); // baseConfig(): full clientId/clientSecret/secretKey/redirectUri, readAuthorized: false
+  const items = await connection.readiness();
+  const byKey = readinessByKey(items);
+
+  assert.equal(byKey.clientConfiguration.state, 'CONFIGURED');
+  assert.equal(byKey.connection.state, 'NOT_CONNECTED');
+  assert.equal(byKey.organization.state, 'NOT_VERIFIED');
+  assert.equal(byKey.locations.state, 'NOT_SYNCHRONIZED');
+  assert.equal(byKey.readAuthorization.state, 'DISABLED');
+  assert.equal(byKey.posting.state, 'DISABLED');
+});
+
+test('readiness(): locations reflects synced synthetic/live counts', async () => {
+  const { connection } = await setup();
+  await connection.syncLocations({ actor: 'u_admin', driver: 'mock' });
+  const items = await connection.readiness();
+  const byKey = readinessByKey(items);
+  assert.equal(byKey.locations.state, 'SYNTHETIC_ONLY (2)');
+});
+
+test('readiness(): branchMapping reports INCOMPLETE (mapped/total) and then COMPLETE once every branch is mapped', async () => {
+  const { connection, store } = await setup();
+  await connection.syncLocations({ actor: 'u_admin', driver: 'mock' });
+  const now = new Date().toISOString();
+  await store.insert('branches', { branch_code: 'PILOT01', branch_name: 'Pilot 1', zoho_location_id: null, status: 'ACTIVE', created_at: now, updated_at: now });
+  await store.insert('branches', { branch_code: 'PILOT02', branch_name: 'Pilot 2', zoho_location_id: null, status: 'ACTIVE', created_at: now, updated_at: now });
+  function branchSummaryRow(branch_code, branch_name) {
+    return {
+      branch_code, branch_name, zoho_location_id: null, zoho_location_name: null,
+      assigned_operator: null, assigned_approver: null, live_start_date: null, migration_from_date: null, migration_to_date: null,
+      receipt_status: 'NOT_RECEIVED', layer_a_status: 'NOT_RUN', mapping_status: 'NOT_STARTED', overlap_status: 'NOT_ASSESSED',
+      open_exception_count: 0, open_exception_impact: '0.00',
+      batch_approval_status: 'NONE', layer_c_status: 'NOT_RUN', balance_bridge_status: 'NOT_RUN',
+      last_activity_at: null, readiness_status: 'NOT_STARTED', created_at: now, updated_at: now,
+    };
+  }
+  await store.insert('branch_summaries', branchSummaryRow('PILOT01', 'Pilot 1'));
+  await store.insert('branch_summaries', branchSummaryRow('PILOT02', 'Pilot 2'));
+
+  let byKey = readinessByKey(await connection.readiness());
+  assert.equal(byKey.branchMapping.state, 'INCOMPLETE (0/2)');
+
+  await connection.setLocationMapping({ actor: 'u_admin', mappings: [{ branch_code: 'PILOT01', location_id: 'SYN-LOC-001' }] });
+  byKey = readinessByKey(await connection.readiness());
+  assert.equal(byKey.branchMapping.state, 'INCOMPLETE (1/2)');
+
+  await connection.setLocationMapping({ actor: 'u_admin', mappings: [{ branch_code: 'PILOT02', location_id: 'SYN-LOC-002' }] });
+  byKey = readinessByKey(await connection.readiness());
+  assert.equal(byKey.branchMapping.state, 'COMPLETE');
+});
+
+test('readiness(): never echoes any configured env value anywhere in its JSON output', async () => {
+  const plantedValues = {
+    clientId: 'PLANTED-CLIENT-ID-98214',
+    clientSecret: 'PLANTED-CLIENT-SECRET-71133',
+    secretKey: VALID_SECRET_KEY,
+    redirectUri: 'https://PLANTED-REDIRECT.example.invalid/cb',
+    organizationId: 'PLANTED-ORG-55009',
+    readAuthorized: true,
+  };
+  const { connection, store } = await setup({ config: plantedValues });
+  // Give organization/locations/branchMapping something real to report too, so every branch of
+  // readiness() actually executes with real (planted) config values in scope.
+  await connection.getStatus();
+  await store.update('books_connections', 'default', { status: 'CONNECTED', org_id: plantedValues.organizationId });
+  await connection.syncLocations({ actor: 'u_admin', driver: 'mock' });
+
+  const items = await connection.readiness();
+  const json = JSON.stringify(items);
+  for (const [key, value] of Object.entries(plantedValues)) {
+    if (typeof value !== 'string' || value === '') continue;
+    assert.ok(!json.includes(value), `readiness() leaked config.${key}`);
+  }
+});

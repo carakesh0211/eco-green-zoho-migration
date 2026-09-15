@@ -286,6 +286,47 @@ field is reproducible from the transactional tables it derives from (no field is
 hand-editable).
 Errors: `INVALID_FILTER`, `INVALID_SORT_FIELD`, `PAGE_OUT_OF_RANGE`.
 
+Query parameters -- `GET /api/branches`, `GET /api/branches/export.csv` (identical filter/sort
+params; export ignores `page`/`pageSize` and returns every matching row):
+- `search` -- case-insensitive substring match against branch_code, branch_name, zoho_location_name.
+- Equality filters (exact match): `readiness`, `receipt`, `layerA`, `mapping`, `overlap`,
+  `approval`, `layerC`, `bridge`, `operator`, `approver` -- see `EQUALITY_FILTER_MAP`
+  (`src/core/branch_list.js`) for the param -> column mapping. `operator`/`approver` are
+  populated in the UI from `GET /api/branches/facets` (exact-match selects; free-text input
+  remains a valid fallback and still round-trips as an exact-match filter if facets 404s).
+- `liveFrom` / `liveTo` -- inclusive `live_start_date` range (`YYYY-MM-DD`); a null
+  `live_start_date` never matches either bound.
+- `activityFrom` / `activityTo` -- inclusive `last_activity_at` range (ISO 8601); a null
+  `last_activity_at` never matches either bound.
+- `migrationMonth=YYYY-MM` -- keeps rows whose `[migration_from_date, migration_to_date]`
+  window includes ANY day of that month; a null `migration_to_date` is open-ended (never
+  excludes on the "to" side); a null `migration_from_date` never matches (no defined window).
+  A malformed value is a no-op, not an error.
+- `liveMonth=YYYY-MM` -- `live_start_date` falls within that calendar month. A malformed
+  value is a no-op, not an error.
+- `openExceptions=any|none|min:<n>` -- `any` = `open_exception_count > 0`, `none` = `== 0`,
+  `min:<n>` = `>= n`. Any other value is a no-op.
+- `impactMin=<decimal>` -- `open_exception_impact >= value`, compared numerically (paise),
+  not as strings. An unparsable value is a no-op, not an error.
+- `sort` -- any `BRANCH_SUMMARY_COLUMNS` name; anything else falls back to `branch_code`.
+  `dir` -- `asc` (default) or `desc`. Equal sort keys are always tiebroken by
+  `branch_code` ascending regardless of `dir`, so the result order is a total order:
+  paging is stable and two pages of the same query never overlap or drop a row.
+- `page` (default 1, floored at 1) / `pageSize` (default 50, clamped to [1, 200]) --
+  `GET /api/branches` only; ignored by `export.csv`, which always returns every matching row.
+
+Query parameters -- `GET /api/branches/facets` (authenticated, scope-filtered; no other
+query params accepted -- the returned option lists are deliberately independent of the
+current filter selection so narrowing one filter never removes another filter's own
+options): none. Response shape: `{ operators: [{ id, count }], approvers: [{ id, count }],
+readiness: { <readiness_status>: count }, receipt: { <receipt_status>: count } }`, all
+computed over the caller's branch-scoped `branch_summaries` rows (`operators`/`approvers`
+omit rows with no assignment; both lists are sorted by count descending, then id ascending).
+
+Response `counts` on `GET /api/branches` (over the filtered+scoped set, before pagination):
+`byReadiness`, `byOperator`, `byApprover` -- the latter two keyed by assigned_operator/
+assigned_approver, omitting unassigned rows (mirrors the facets endpoint's omission rule).
+
 ## §N  Books connection -- `src/books/connection.js`
 ```js
 export async function getConnectionState(ctx)                      // redacted: never returns secret_ciphertext or raw tokens

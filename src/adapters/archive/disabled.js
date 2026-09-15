@@ -73,5 +73,14 @@ export async function openArchive({ environment = process.env.CATALYST_ENVIRONME
     async get(archiveUri) {
       throw new ArchiveDisabledError(archiveUri);
     },
+
+    /**
+     * verify() -> readiness check for /api/health (src/server/archive_health.js). This
+     * adapter never stores a byte, so it is always unverified/disabled by construction —
+     * no bucket or disk to probe. Never throws.
+     */
+    async verify() {
+      return { ok: false, kind: 'disabled', reason: 'DISABLED_DEVELOPMENT' };
+    },
   };
 }

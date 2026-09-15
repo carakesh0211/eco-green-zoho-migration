@@ -1,7 +1,7 @@
 // Local-folder immutable archive adapter. See CONTRACTS.md §R.
 // uri shape: local://<branch>/<run>/<sha256>/<fileName>
 // On-disk layout mirrors the uri exactly: <root>/<branch>/<run>/<sha256>/<fileName>.
-import { readdir, readFile, writeFile, rename, chmod, mkdir, stat } from 'node:fs/promises';
+import { readdir, readFile, writeFile, rename, chmod, mkdir, stat, access } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256Bytes } from '../../core/hash.js';
 
@@ -102,6 +102,20 @@ export async function openArchive(opts = {}) {
     async get(archiveUri) {
       const { branchCode, runId, sha256, fileName } = parseUri(archiveUri);
       return readFile(path.join(root, branchCode, runId, sha256, fileName));
+    },
+
+    /**
+     * verify() -> readiness check for /api/health (src/server/archive_health.js).
+     * Confirms the archive root directory itself is reachable (an `access()` check) —
+     * there is no remote bucket to round-trip against for the local adapter. Never throws.
+     */
+    async verify() {
+      try {
+        await access(root);
+        return { ok: true, kind: 'local', root };
+      } catch (err) {
+        return { ok: false, kind: 'local', root, error: err?.code ?? 'ACCESS_FAILED' };
+      }
     },
   };
 }

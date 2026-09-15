@@ -203,3 +203,37 @@ Not official (referenced only to sanity-check path shapes already corroborated b
 source above; never the sole basis for a VERIFIED marker): third-party API directories and blogs
 surfaced by search (e.g. getknit.dev, aiproductivity.ai) and a GitHub issue on an unofficial
 Zoho Books client library (mentions of `X-Rate-Limit-*` headers).
+
+## Connection readiness
+
+Short, non-secret summary — the full private checklist (with the exact redirect URL, per-scope
+verified/assumed status, and env var list) lives at `var/private/BOOKS_CONNECTION_CHECKLIST.md`
+(gitignored; not part of this repo's history). Access date for the citations below: 2026-09-15.
+
+### Zoho API Console client type
+
+Register a **Server-based Applications** client (not Self Client, which has no redirect URL and
+is meant for backend-only, no-user-interaction access). Source:
+https://www.zoho.com/books/api/v3/oauth/ and
+https://www.zoho.com/accounts/protocol/oauth/self-client/overview.html (official, 2026-09-15).
+
+### Required READ-only scopes
+
+Read-only scopes only, never `ZohoBooks.fullaccess.all`. Verified module names (confirmed present
+in the official scopes table): `settings`, `contacts`, `bills`, `invoices`, `creditnotes`,
+`customerpayments`, `vendorpayments`, `expenses`, `accountants`. Assumed/unconfirmed module names
+used for chart of accounts, journals, vendor credits, and bank transactions, plus the absence of
+any `reports` scope — see the private checklist §3 for the full per-scope table and citations.
+
+### India region endpoints
+
+Accounts/OAuth: `https://accounts.zoho.in`. Books REST API base:
+`https://www.zohoapis.in/books/v3`. (Same values already in this file's OAuth and REST sections
+above.)
+
+### Who must authorise
+
+Two separate approvals are required before any read access goes live: (1) the Zoho Books
+organisation admin of the Eco Green org performs the OAuth consent itself, and (2) the project
+owner separately approves read-only access in writing before `BOOKS_READ_AUTHORIZED` is set. See
+the private checklist §6 for the full statement.

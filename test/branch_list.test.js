@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyBranchQuery, filterAndSortBranches, toCsv, BRANCH_SUMMARY_COLUMNS } from '../src/core/branch_list.js';
+import { applyBranchQuery, filterAndSortBranches, toCsv, BRANCH_SUMMARY_COLUMNS, computeBranchFacets } from '../src/core/branch_list.js';
 
 function row(overrides = {}) {
   return {
@@ -183,4 +183,146 @@ test('toCsv: formula-injection guard prefixes leading =, +, -, @ with a single q
   assert.ok(lines[2].includes("'-2"));
   assert.ok(lines[3].includes("'@cmd"));
   assert.ok(!lines[4].includes("'normal text") && lines[4].includes('normal text'));
+});
+
+// ---------------------------------------------------------------- migrationMonth / liveMonth
+
+test('applyBranchQuery: migrationMonth keeps rows whose window includes any day of that month; null to_date is open-ended', () => {
+  const rows = [
+    row({ branch_code: 'A', migration_from_date: '2026-04-01', migration_to_date: '2026-05-31' }), // fully before June
+    row({ branch_code: 'B', migration_from_date: '2026-05-15', migration_to_date: '2026-06-10' }), // straddles into June
+    row({ branch_code: 'C', migration_from_date: '2026-06-01', migration_to_date: null }), // open-ended, starts in June
+    row({ branch_code: 'D', migration_from_date: '2026-07-01', migration_to_date: '2026-08-01' }), // fully after June
+    row({ branch_code: 'E', migration_from_date: null, migration_to_date: null }), // no window at all
+  ];
+  const result = applyBranchQuery(rows, { migrationMonth: '2026-06' });
+  assert.deepEqual(result.items.map((r) => r.branch_code), ['B', 'C']);
+});
+
+test('applyBranchQuery: migrationMonth with a malformed value is a no-op rather than an error', () => {
+  const rows = [row({ branch_code: 'A' }), row({ branch_code: 'B' })];
+  const result = applyBranchQuery(rows, { migrationMonth: 'not-a-month' });
+  assert.equal(result.total, 2);
+});
+
+test('applyBranchQuery: liveMonth matches the calendar month of live_start_date', () => {
+  const rows = [
+    row({ branch_code: 'A', live_start_date: '2026-06-01' }),
+    row({ branch_code: 'B', live_start_date: '2026-06-30' }),
+    row({ branch_code: 'C', live_start_date: '2026-07-01' }),
+    row({ branch_code: 'D', live_start_date: null }),
+  ];
+  const result = applyBranchQuery(rows, { liveMonth: '2026-06' });
+  assert.deepEqual(result.items.map((r) => r.branch_code), ['A', 'B']);
+});
+
+// ---------------------------------------------------------------- openExceptions / impactMin
+
+test('applyBranchQuery: openExceptions=any|none|min:<n>', () => {
+  const rows = [
+    row({ branch_code: 'A', open_exception_count: 0 }),
+    row({ branch_code: 'B', open_exception_count: 1 }),
+    row({ branch_code: 'C', open_exception_count: 5 }),
+    row({ branch_code: 'D', open_exception_count: 10 }),
+  ];
+  assert.deepEqual(applyBranchQuery(rows, { openExceptions: 'any' }).items.map((r) => r.branch_code), ['B', 'C', 'D']);
+  assert.deepEqual(applyBranchQuery(rows, { openExceptions: 'none' }).items.map((r) => r.branch_code), ['A']);
+  assert.deepEqual(applyBranchQuery(rows, { openExceptions: 'min:5' }).items.map((r) => r.branch_code), ['C', 'D']);
+  assert.deepEqual(applyBranchQuery(rows, { openExceptions: 'min:11' }).items.map((r) => r.branch_code), []);
+});
+
+test('applyBranchQuery: impactMin compares open_exception_impact numerically', () => {
+  const rows = [
+    row({ branch_code: 'A', open_exception_impact: '4.99' }),
+    row({ branch_code: 'B', open_exception_impact: '5.00' }),
+    row({ branch_code: 'C', open_exception_impact: '100.00' }),
+  ];
+  assert.deepEqual(applyBranchQuery(rows, { impactMin: '5' }).items.map((r) => r.branch_code), ['B', 'C']);
+  assert.deepEqual(applyBranchQuery(rows, { impactMin: '5.00' }).items.map((r) => r.branch_code), ['B', 'C']);
+  assert.deepEqual(applyBranchQuery(rows, { impactMin: '100.01' }).items.map((r) => r.branch_code), []);
+});
+
+test('applyBranchQuery: impactMin with an unparsable threshold is a no-op rather than an error', () => {
+  const rows = [row({ branch_code: 'A' }), row({ branch_code: 'B' })];
+  const result = applyBranchQuery(rows, { impactMin: 'garbage' });
+  assert.equal(result.total, 2);
+});
+
+// ---------------------------------------------------------------- workload counts
+
+test('applyBranchQuery: counts.byOperator/byApprover reflect the FILTERED set, skipping unassigned rows', () => {
+  const rows = [
+    row({ branch_code: 'A', assigned_operator: 'op-1', assigned_approver: 'ap-1' }),
+    row({ branch_code: 'B', assigned_operator: 'op-1', assigned_approver: 'ap-2' }),
+    row({ branch_code: 'C', assigned_operator: 'op-2', assigned_approver: null }),
+    row({ branch_code: 'D', assigned_operator: null, assigned_approver: null }),
+  ];
+  const result = applyBranchQuery(rows, {});
+  assert.deepEqual(result.counts.byOperator, { 'op-1': 2, 'op-2': 1 });
+  assert.deepEqual(result.counts.byApprover, { 'ap-1': 1, 'ap-2': 1 });
+
+  const filtered = applyBranchQuery(rows, { operator: 'op-1' });
+  assert.deepEqual(filtered.counts.byOperator, { 'op-1': 2 });
+});
+
+// ---------------------------------------------------------------- computeBranchFacets
+
+test('computeBranchFacets: aggregates operators/approvers/readiness/receipt over the given rows', () => {
+  const rows = [
+    row({ branch_code: 'A', assigned_operator: 'op-1', assigned_approver: 'ap-1', readiness_status: 'READY', receipt_status: 'RECEIVED' }),
+    row({ branch_code: 'B', assigned_operator: 'op-1', assigned_approver: 'ap-2', readiness_status: 'BLOCKED', receipt_status: 'NOT_RECEIVED' }),
+    row({ branch_code: 'C', assigned_operator: 'op-2', assigned_approver: null, readiness_status: 'READY', receipt_status: 'RECEIVED' }),
+  ];
+  const facets = computeBranchFacets(rows);
+  assert.deepEqual(facets.operators, [{ id: 'op-1', count: 2 }, { id: 'op-2', count: 1 }]);
+  assert.deepEqual(facets.approvers, [{ id: 'ap-1', count: 1 }, { id: 'ap-2', count: 1 }]);
+  assert.deepEqual(facets.readiness, { READY: 2, BLOCKED: 1 });
+  assert.deepEqual(facets.receipt, { RECEIVED: 2, NOT_RECEIVED: 1 });
+});
+
+// ---------------------------------------------------------------- stability / total order
+
+test('applyBranchQuery: 351-row fixture with heavily duplicated sort keys — pages never overlap and exactly cover the input set', () => {
+  const READINESS = ['NOT_STARTED', 'IN_PROGRESS', 'BLOCKED', 'READY', 'MIGRATED'];
+  const rows = Array.from({ length: 351 }, (_, i) =>
+    row({
+      branch_code: `EG-${String(i).padStart(4, '0')}`,
+      readiness_status: READINESS[i % READINESS.length], // heavy duplication of the sort key
+    })
+  );
+
+  const pageSize = 50;
+  const totalPages = Math.ceil(351 / pageSize);
+  const seen = new Set();
+  let allItemsInOrder = [];
+  for (let page = 1; page <= totalPages; page += 1) {
+    const result = applyBranchQuery(rows, { sort: 'readiness_status', dir: 'asc', page, pageSize });
+    for (const item of result.items) {
+      assert.ok(!seen.has(item.branch_code), `branch_code ${item.branch_code} appeared on more than one page`);
+      seen.add(item.branch_code);
+    }
+    allItemsInOrder = allItemsInOrder.concat(result.items);
+  }
+
+  assert.equal(seen.size, 351, 'every branch_code appears exactly once across all pages');
+  assert.deepEqual([...seen].sort(), rows.map((r) => r.branch_code).sort(), 'pages cover exactly the input set, no more and no less');
+
+  // Total order: within each readiness_status run, branch_code is strictly ascending
+  // (the deterministic tiebreak), and the readiness_status groups themselves are in
+  // ascending lexical order (since 'asc' was requested and readiness_status is a plain
+  // string column).
+  for (let i = 1; i < allItemsInOrder.length; i += 1) {
+    const prev = allItemsInOrder[i - 1];
+    const cur = allItemsInOrder[i];
+    if (prev.readiness_status === cur.readiness_status) {
+      assert.ok(prev.branch_code < cur.branch_code, 'equal sort keys must be tiebroken by branch_code ascending');
+    } else {
+      assert.ok(prev.readiness_status < cur.readiness_status, 'readiness_status groups must be in ascending order');
+    }
+  }
+
+  // Fetching the same page twice is byte-for-byte identical (determinism, not just "no overlap").
+  const again = applyBranchQuery(rows, { sort: 'readiness_status', dir: 'asc', page: 2, pageSize });
+  const first = applyBranchQuery(rows, { sort: 'readiness_status', dir: 'asc', page: 2, pageSize });
+  assert.deepEqual(again.items.map((r) => r.branch_code), first.items.map((r) => r.branch_code));
 });

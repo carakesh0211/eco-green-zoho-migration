@@ -171,6 +171,25 @@ test('GET /api/admin/books/connection: 200 for admin, includes status + controls
   }
 });
 
+test('GET /api/admin/books/connection: includes a readiness array of 7 items, and posting is always DISABLED', async () => {
+  const ctx = await buildApp();
+  try {
+    const res = await request(ctx.port, 'GET', '/api/admin/books/connection', { token: TOKENS.admin });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.readiness));
+    assert.equal(res.body.readiness.length, 7);
+    const byKey = Object.fromEntries(res.body.readiness.map((r) => [r.key, r]));
+    assert.equal(byKey.posting.state, 'DISABLED');
+    for (const key of ['clientConfiguration', 'connection', 'organization', 'locations', 'branchMapping', 'readAuthorization', 'posting']) {
+      assert.ok(byKey[key], `readiness item "${key}" missing`);
+      assert.ok(typeof byKey[key].label === 'string' && byKey[key].label.length > 0);
+      assert.ok(typeof byKey[key].detail === 'string');
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('POST /api/admin/books/connect: 409 BOOKS_NOT_CONFIGURED when BOOKS_CLIENT_ID is empty', async () => {
   const ctx = await buildApp({ config: { clientId: '' } });
   try {

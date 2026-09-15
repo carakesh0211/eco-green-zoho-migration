@@ -5,7 +5,7 @@
 // mount itself into src/server/app.js.
 import express from 'express';
 import { refreshBranchSummary } from '../../core/branch_summary.js';
-import { applyBranchQuery, filterAndSortBranches, toCsv, EQUALITY_FILTER_MAP } from '../../core/branch_list.js';
+import { applyBranchQuery, filterAndSortBranches, toCsv, EQUALITY_FILTER_MAP, computeBranchFacets } from '../../core/branch_list.js';
 import { nowIso } from '../../core/ids.js';
 import { isBotUser, botMayPerform } from './agent.js';
 
@@ -77,6 +77,21 @@ export function createBranchesRouter({ store, audit, auth }) {
         expectedBranchCount: expectedBranchCount(),
         meta: { queryMs: Date.now() - startedAt },
       });
+    })
+  );
+
+  // ---- facets (any authenticated role, including bots; must precede '/branches/:code')
+  // Scope-filtered like the list route, but deliberately NOT filtered by the rest of
+  // req.query — the operator/approver/readiness/receipt option lists should reflect
+  // everything the caller is entitled to see, not just what today's filter selection
+  // happens to match, so narrowing one filter never makes another filter's own options
+  // disappear out from under it. ----
+  router.get(
+    '/branches/facets',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const rows = scopeRows(await store.find('branch_summaries', {}), req.user);
+      res.json(computeBranchFacets(rows));
     })
   );
 

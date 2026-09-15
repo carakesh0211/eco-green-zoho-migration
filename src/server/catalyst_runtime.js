@@ -163,7 +163,7 @@ export function makeRequestScopedArchive(opts = {}) {
     return cache.get(app);
   }
 
-  const methods = ['put', 'exists', 'get'];
+  const methods = ['put', 'exists', 'get', 'verify'];
   const scoped = {};
   for (const name of methods) {
     scoped[name] = async (...args) => {

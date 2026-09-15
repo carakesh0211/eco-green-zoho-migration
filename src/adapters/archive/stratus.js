@@ -104,6 +104,11 @@ function stubArchive() {
     async get() {
       return stub();
     },
+    // verify() never throws (see the real implementation below) — there is no live
+    // connection to probe here, so it fails closed instead of raising NOT_IMPLEMENTED.
+    async verify() {
+      return { ok: false, bucketName: null, error: 'NOT_IMPLEMENTED', checkedAt: new Date().toISOString() };
+    },
   };
 }
 
@@ -170,6 +175,66 @@ export async function openArchive({ app, transport, bucketName } = {}) {
       const bytes = await streamToBuffer(stream);
       if (sha256Bytes(bytes) !== sha256) throw new ArchiveIntegrityError(archiveUri);
       return bytes;
+    },
+
+    /**
+     * verify() -> readiness check for /api/health (src/server/archive_health.js). Proves
+     * ENABLED means "we touched the bucket", not just "config says stratus". Prefers
+     * `bucket.getDetails()` (lib/stratus/bucket.d.ts `getDetails(): Promise<IStratusBucket>`);
+     * falls back to `stratus.headBucket(name)` (lib/stratus/index.d.ts) when the transport
+     * exposes no `getDetails`. Never throws — failures resolve `{ ok: false, ... }`.
+     *
+     * Field mapping, read from node_modules/zcatalyst-sdk-node/lib/utils/pojo/stratus.d.ts:
+     *   bucketName  <- IStratusBucket.bucket_name                    (line 107)
+     *   encryption  <- IStratusBucket.bucket_meta.encryption         (line 101, via 115)
+     *   versioning  <- IStratusBucket.bucket_meta.versioning         (line 95,  via 115)
+     *   audit       <- IStratusBucket.bucket_meta.audit_consent      (line 103, via 115)
+     *   caching     <- IStratusBucket.bucket_meta.caching.status     (lines 97-99, via 115)
+     *   protected   <- always null. Neither IStratusBucket (lines 105-116) nor
+     *                  IStratusBucketMeta (lines 93-104) declares a 'protected' or 'type'
+     *                  field, despite docs/CATALYST_REFERENCES.md noting the *creation-time*
+     *                  Create_Bucket API accepts `bucket_meta.type: 'protected'|'public'` —
+     *                  that field is not documented as present on the getDetails()/headBucket
+     *                  response shape, so it is never guessed here.
+     * When only headBucket() is available (no bucket details at all), every flag field is
+     * null; only `ok`, `bucketName` and `checkedAt` are populated.
+     */
+    async verify() {
+      try {
+        let bucketMeta = null;
+        if (typeof bucket.getDetails === 'function') {
+          const details = await bucket.getDetails();
+          bucketMeta = details?.bucket_meta ?? null;
+        } else if (typeof source.stratus === 'function' && typeof source.stratus().headBucket === 'function') {
+          const exists = await source.stratus().headBucket(resolvedBucketName);
+          if (!exists) {
+            const err = new Error(`Stratus bucket not found: ${resolvedBucketName}`);
+            err.code = 'BUCKET_NOT_FOUND';
+            throw err;
+          }
+        } else {
+          const err = new Error('Stratus transport exposes neither bucket.getDetails() nor stratus.headBucket()');
+          err.code = 'VERIFY_UNSUPPORTED';
+          throw err;
+        }
+        return {
+          ok: true,
+          bucketName: resolvedBucketName,
+          protected: null,
+          encryption: bucketMeta?.encryption ?? null,
+          versioning: bucketMeta?.versioning ?? null,
+          audit: bucketMeta?.audit_consent ?? null,
+          caching: bucketMeta?.caching?.status ?? null,
+          checkedAt: new Date().toISOString(),
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          bucketName: resolvedBucketName,
+          error: err?.code ?? 'VERIFY_FAILED',
+          checkedAt: new Date().toISOString(),
+        };
+      }
     },
   };
 }

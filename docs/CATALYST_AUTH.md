@@ -162,6 +162,7 @@ real deployment:
 | `AUTH_MODE` | `'token'` \| `'catalyst'` \| `'token,catalyst'` — which authentication path(s) `composeAuthenticate()` will try. | `'token'` (byte-for-byte the pre-existing behaviour: catalyst is never consulted) |
 | `AUTH_LOGIN_URL` | Full URL of the hosted/embedded login entry point `GET /auth/login` 302s to. `null`/unset ⇒ `/auth/login` returns 404 `AUTH_MODE_NOT_ENABLED` and the console hides the "Sign in with Zoho" button. | unset (`null`) |
 | `AUTH_LOGOUT_URL` | Same idea for `GET /auth/logout`. | unset (`null`) |
+| `OWNER_BOOTSTRAP_EMAIL` | **Development only, one-time.** See §8. Enables the owner-bootstrap mechanism for a single matching Catalyst sign-in while no ACTIVE human admin exists yet; ignored entirely outside `environment === 'Development'`. Remove after the first admin is bootstrapped. | unset (mechanism disabled) |
 
 ## 6. CSP additions (this pass, `src/server/app.js` helmet block only)
 
@@ -196,3 +197,81 @@ to decide the role/principal_type/branches — exactly mirroring how the bearer 
 to `token_sha256` lookups today. A Catalyst-authenticated email with no matching
 `app_users` row (or an `INACTIVE` one) is refused with `403 USER_NOT_PROVISIONED`, never
 silently granted a default role.
+
+## 8. Owner bootstrap (Development only)
+
+**Problem.** §4 above requires a human admin to add every Catalyst app user AND give
+them a matching `app_users` row before they can sign in at all. That leaves a bootstrap
+gap: the very first admin has no admin yet to provision them, and there is no HTTP
+admin endpoint that can be called without already holding an admin bearer token
+(`POST /api/admin/users` requires `auth.requireRole('admin')`). Owner bootstrap closes
+that gap for a freshly-deployed Development app **without** any new HTTP endpoint and
+without ever accepting a bearer token for it — it only ever runs inside the existing
+Catalyst session path (`authenticateSession()` in `src/server/auth_catalyst.js`).
+
+**Mechanism.** On every successful Catalyst sign-in, `authenticateSession()` calls an
+internal `maybeBootstrapOwner()` step, gated by **all** of:
+
+1. `environment === 'Development'` — the literal string, passed into
+   `createCatalystSessionAuth({ ..., environment })` by the caller (e.g. `createApp()`).
+   Any other value (`'Production'`, `'UAT'`, unset/`undefined`) disables it completely;
+   this is checked before anything else, so a Production deploy never even queries the
+   store for this.
+2. The env var `OWNER_BOOTSTRAP_EMAIL` is set (private Catalyst/AppSail configuration —
+   **never committed**, not even to `.env.example` with a real value).
+3. **The latch is open**: no `app_users` row currently has
+   `role='admin' AND principal_type='human' AND status='ACTIVE'`
+   (`findActiveHumanAdmin(store)`). This is the durable, *data-driven* part of the
+   gate — once any human admin is ACTIVE, this permanently returns false, **even if the
+   env var is left set**. The env var alone can never re-open it; only deleting every
+   ACTIVE human admin row would (and nothing in this codebase does that automatically).
+4. The signed-in Catalyst email equals `OWNER_BOOTSTRAP_EMAIL`, compared
+   case-insensitively and with both sides trimmed.
+
+The pure decision (`shouldBootstrapOwner({ environment, ownerEmail, sessionEmail,
+activeHumanAdminExists })`) and the latch query (`findActiveHumanAdmin(store)`) are both
+exported from `src/server/auth_catalyst.js` for unit testing independent of HTTP.
+
+**What happens on a match.** Before the normal `app_users` lookup:
+
+- If an `app_users` row already exists for that email, it is promoted in place: `role`
+  → `'admin'`, `branches_json` → `'["*"]'`, `status` → `'ACTIVE'`, `version` →
+  `version + 1`. Its `id` never changes.
+- Otherwise a new row is inserted: `id: 'owner-<sha256(email).slice(0,12)>'`,
+  `display_name`: the Catalyst account's first+last name, or the literal `'Owner'` if
+  Catalyst has neither, `role: 'admin'`, `principal_type: 'human'`, `status: 'ACTIVE'`,
+  `branches_json: '["*"]'`, `created_by: 'owner-bootstrap'`, `version: 1`.
+- Either way, one `USER.OWNER_BOOTSTRAP` audit event is emitted: `actor` and `entityId`
+  are the app_users row's `id` (never the email — the hashed-actor convention already
+  used for denies), `entityType: 'app_users'`, `reason: 'OWNER_BOOTSTRAP_EMAIL matched;
+  no active human admin existed'`, and `before`/`after` are the row snapshots **with the
+  `email` field stripped** — `audit.emit()`'s own `redact()` only scrubs
+  token/secret-shaped keys, so this file strips `email` itself before the row ever
+  reaches the audit payload.
+- The request then continues through the existing `app_users` lookup immediately below,
+  which now finds the row ACTIVE — the same sign-in proceeds as that admin. There is no
+  separate "you are now the owner" response; `GET /api/auth/me` simply reflects
+  `role: 'admin'`, `branches: ['*']`.
+
+**Idempotence.** A second sign-in with the same email is a pure no-op: the latch is now
+closed (an ACTIVE human admin exists), so `shouldBootstrapOwner()` returns `false`
+before any write — no version bump, no second audit event.
+
+**What it will never do:** create a second admin once one exists (even for the same
+configured email pointed at a different Catalyst account), run outside Development,
+run over HTTP, or log/audit the raw email anywhere.
+
+**Owner procedure (do this once, on a fresh Development deploy with zero ACTIVE human
+admins):**
+
+1. In the Catalyst/AppSail console, set the environment variable
+   `OWNER_BOOTSTRAP_EMAIL` to the exact email of the Zoho account that will be the first
+   admin. Do **not** commit this value anywhere.
+2. Sign in to the console once with that Zoho account (via the normal Catalyst
+   Embedded Authentication flow — §1/§4 above).
+3. Verify: `GET /api/auth/me` should now show `"role": "admin"` and
+   `"branches": ["*"]`.
+4. **Remove `OWNER_BOOTSTRAP_EMAIL` from the environment.** The data-driven latch
+   already makes the mechanism permanently inert once step 2 succeeds, but removing the
+   var closes the door at the configuration layer too, and avoids any confusion for a
+   future reader of the deploy config about why it is still there.

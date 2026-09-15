@@ -58,6 +58,26 @@ request whose branch is outside the caller's `branches` list gets 403 and an aud
 rejects `approver === batch.created_by`, controlled by `SOD_ENFORCED` (default `true`).
 Any exception requires Finance-lead sign-off (D-10) and has not been granted.
 
+## 4a. Owner bootstrap (Development only)
+
+The first admin on a freshly-deployed Development app cannot be provisioned through
+`POST /api/admin/users` because that route itself requires an existing admin bearer
+token. `src/server/auth_catalyst.js` closes this gap with a narrow, self-disabling
+mechanism: on a successful Catalyst sign-in it will create-or-promote a single
+`app_users` row to `role='admin', principal_type='human', status='ACTIVE',
+branches=['*']` if, and only if, `environment === 'Development'`, the private env var
+`OWNER_BOOTSTRAP_EMAIL` is set and matches the signed-in email (case-insensitively), and
+no `app_users` row already has `role='admin' AND principal_type='human' AND
+status='ACTIVE'`. That last condition is a durable, data-driven latch, not a one-time
+flag — once any human admin is ACTIVE, the mechanism is permanently inert even if the
+env var is left set, so leaving it set is a documented-but-inert misconfiguration rather
+than a standing hole. It is never exposed as an HTTP endpoint, never accepts a bearer
+token, never runs outside `environment === 'Development'`, and its audit event
+(`USER.OWNER_BOOTSTRAP`) never carries the raw email — only the row's `id` (a
+`sha256`-derived identifier), matching the hashed-actor convention already used
+elsewhere for denies. See `docs/CATALYST_AUTH.md` §8 for the full mechanism and the
+owner's one-time procedure, including removing the env var afterwards.
+
 ## 5. Audit immutability
 
 `audit_events` is append-only — `src/core/audit.js#emit` only inserts; there is no

@@ -82,6 +82,7 @@ of them is populated in any committed file.
 | `AUTH_MODE` | `token` \| `catalyst` \| `token,catalyst` -- which authentication mode(s) are active (`CONTRACTS.md` §E) | `token` |
 | `AUTH_LOGIN_URL` | Catalyst-hosted login page URL, surfaced by `GET /api/auth/config` when `catalyst` mode is active | (empty) |
 | `AUTH_LOGOUT_URL` | Catalyst-hosted logout URL, same surfacing | (empty) |
+| `OWNER_BOOTSTRAP_EMAIL` | Development only, one-time -- promotes the first matching Catalyst sign-in to an ACTIVE human admin when no such admin exists yet (`docs/CATALYST_AUTH.md` §8, `SECURITY.md` §4a); remove after use | (empty) |
 | `BOOKS_CLIENT_ID` | Zoho API console client ID for Books OAuth (`src/books/connection.js`) | (empty) |
 | `BOOKS_CLIENT_SECRET` | Zoho API console client secret -- stored only as ciphertext once exchanged; never logged | (empty) |
 | `BOOKS_SECRET_KEY` | AES-256-GCM key encrypting `books_connections.secret_ciphertext` | (empty; required before connecting) |
