@@ -199,9 +199,13 @@ export async function openStore({ app, transport } = {}) {
   // call) and reused for every page, so chunking composes with pagination per-page
   // rather than across pages: each page independently issues its own chunk queries with
   // that page's LIMIT/OFFSET, never a chunk query spanning two pages.
+  // Every paged SELECT tiebreaks on ROWID (OBSERVED LIVE 2026-09-15: without an ORDER BY,
+  // Catalyst returned row EG-0158 of a 351-row table on both the OFFSET 0 and OFFSET 300
+  // pages and dropped another row — LIMIT/OFFSET order is not stable across pages unless
+  // the ORDER BY is total). ORDER BY <caller cols>, ROWID makes it total.
   async function fetchPageRows(logicalTable, where, { orderBy, limit, offset, chunks }) {
     if (chunks.length === 1) {
-      const sql = buildSelectSql(logicalTable, where, { orderBy, limit, offset, columns: chunks[0] });
+      const sql = buildSelectSql(logicalTable, where, { orderBy, limit, offset, columns: chunks[0], tieBreakRowid: true });
       return zcqlRows(logicalTable, sql);
     }
     const perChunkRows = [];

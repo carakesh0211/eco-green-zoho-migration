@@ -33,6 +33,26 @@ const ERROR_STATUS = {
   CONFIG_USER_READONLY: 409,
 };
 
+/** HTTP bodies are accepted in the documented snake_case shape (CONTRACTS.md §U / the console)
+ *  and, for compatibility, camelCase. `version` and `expectedVersion` are synonyms. */
+function normaliseAssignmentBody(raw) {
+  const b = raw ?? {};
+  const pick = (...keys) => { for (const k of keys) if (b[k] !== undefined && b[k] !== null && b[k] !== '') return b[k]; return undefined; };
+  const versionRaw = pick('version', 'expectedVersion');
+  return {
+    branchCode: pick('branch_code', 'branchCode'),
+    period: pick('period'),
+    transactionClass: pick('transaction_class', 'transactionClass'),
+    assignedOperator: pick('assigned_operator', 'assignedOperator'),
+    assignedApprover: pick('assigned_approver', 'assignedApprover'),
+    priority: pick('priority', 'priority_level', 'priorityLevel'),
+    dueAt: pick('due_at', 'dueAt'),
+    reason: pick('reason', 'reassignment_reason', 'reassignmentReason'),
+    status: pick('status'),
+    expectedVersion: versionRaw === undefined ? undefined : Number(versionRaw),
+  };
+}
+
 function domainError(code, message) {
   return Object.assign(new Error(message), { code });
 }
@@ -344,7 +364,7 @@ export function createAdminRouter({ store, audit, auth, users = [], deps = {} })
     auth.requireCorrelationId(),
     auth.requireRole('admin'),
     wrap(async (req, res) => {
-      const body = req.body ?? {};
+      const body = normaliseAssignmentBody(req.body);
       if (body.branchCode && !auth.branchAllowed(req.user, body.branchCode)) {
         return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${body.branchCode}` });
       }
@@ -370,18 +390,19 @@ export function createAdminRouter({ store, audit, auth, users = [], deps = {} })
     auth.requireRole('admin'),
     wrap(async (req, res) => {
       const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id < 1) throw domainError('ASSIGNMENT_NOT_FOUND', `branch_period_assignment not found: ${req.params.id}`);
       const existing = await store.get('branch_period_assignments', id);
       if (!existing) throw domainError('ASSIGNMENT_NOT_FOUND', `branch_period_assignment not found: ${id}`);
       if (!auth.branchAllowed(req.user, existing.branch_code)) {
         return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${existing.branch_code}` });
       }
-      const body = req.body ?? {};
+      const body = normaliseAssignmentBody(req.body);
       const updated = await reassign(ctxFor(req), {
         id,
         assignedOperator: body.assignedOperator,
         assignedApprover: body.assignedApprover,
         reason: body.reason,
-        expectedVersion: Number(body.expectedVersion),
+        expectedVersion: body.expectedVersion,
       });
       res.json(updated);
     })
@@ -395,16 +416,17 @@ export function createAdminRouter({ store, audit, auth, users = [], deps = {} })
     auth.requireRole('operator', 'approver', 'admin'),
     wrap(async (req, res) => {
       const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id < 1) throw domainError('ASSIGNMENT_NOT_FOUND', `branch_period_assignment not found: ${req.params.id}`);
       const existing = await store.get('branch_period_assignments', id);
       if (!existing) throw domainError('ASSIGNMENT_NOT_FOUND', `branch_period_assignment not found: ${id}`);
       if (!auth.branchAllowed(req.user, existing.branch_code)) {
         return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${existing.branch_code}` });
       }
-      const body = req.body ?? {};
+      const body = normaliseAssignmentBody(req.body);
       const updated = await setStatus(ctxFor(req), {
         id,
         status: body.status,
-        expectedVersion: Number(body.expectedVersion),
+        expectedVersion: body.expectedVersion,
         actor: req.user.id,
       });
       res.json(updated);
@@ -418,6 +440,7 @@ export function createAdminRouter({ store, audit, auth, users = [], deps = {} })
     auth.requireRole('admin', 'approver', 'viewer'),
     wrap(async (req, res) => {
       const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id < 1) throw domainError('ASSIGNMENT_NOT_FOUND', `branch_period_assignment not found: ${req.params.id}`);
       const existing = await store.get('branch_period_assignments', id);
       if (!existing) throw domainError('ASSIGNMENT_NOT_FOUND', `branch_period_assignment not found: ${id}`);
       if (!auth.branchAllowed(req.user, existing.branch_code)) {

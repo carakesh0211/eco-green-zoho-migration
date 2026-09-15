@@ -569,3 +569,23 @@ test('catalyst_types: coerceScalar/normaliseRow apply the documented type coerci
   assert.equal(row.line_count, 3); // int -> number
   assert.equal(row.branch_code, 'PILOT01');
 });
+
+test('catalyst store: a paged read past the 300-row cap returns every row exactly once, with and without a non-unique orderBy (live duplicate EG-0158, 2026-09-15)', async () => {
+  const store = await openFakeStore();
+  const N = 700; // three ZCQL pages
+  const rows = [];
+  for (let i = 0; i < N; i += 1) {
+    const id = 'run-' + String(i).padStart(4, '0');
+    rows.push({ ...runRow(id), manifest_sha256: 'sha-' + id, status: i % 2 ? 'RECEIVED' : 'VALIDATED' });
+  }
+  for (let i = 0; i < rows.length; i += 100) await store.insertMany('extraction_runs', rows.slice(i, i + 100));
+
+  const unordered = await store.find('extraction_runs', {});
+  assert.equal(unordered.length, N);
+  assert.equal(new Set(unordered.map((r) => r.id)).size, N, 'no duplicates / no gaps without an explicit orderBy');
+
+  const byStatus = await store.find('extraction_runs', {}, { orderBy: 'status ASC' });
+  assert.equal(new Set(byStatus.map((r) => r.id)).size, N, 'no duplicates / no gaps with a non-unique orderBy');
+  assert.ok(byStatus.every((r, i) => i === 0 || byStatus[i - 1].status <= r.status), 'still ordered by the caller column');
+  await store.close();
+});

@@ -191,6 +191,17 @@ const COUNT_RE = /^SELECT\s+COUNT\(\s*ROWID\s*\)\s+AS\s+(\w+)\s+FROM\s+(\w+)(?:\
 const SELECT_RE =
   /^SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?$/i;
 
+/** FNV-1a over `rowid:offset` — a different permutation per OFFSET, deterministic per run. */
+function unstableOrderKey(rowid, offset) {
+  let h = 0x811c9dc5;
+  const s = `${rowid}:${offset}`;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
+
 function parseOrderBy(orderByRaw) {
   if (!orderByRaw) return [];
   return orderByRaw.split(',').map((termRaw) => {
@@ -286,6 +297,15 @@ export function createCatalystFake() {
 
     const offset = offsetRaw ? Number(offsetRaw) : 0;
     const limit = limitRaw ? Number(limitRaw) : undefined;
+    // Live Catalyst does NOT guarantee a stable order across LIMIT/OFFSET pages when the
+    // ORDER BY is absent or not total (observed 2026-09-15: duplicate + missing rows in a
+    // 351-row paged read). Model it: with no ORDER BY, each page sees a different
+    // deterministic permutation, so a caller that paginates without a ROWID tiebreak gets
+    // duplicates/gaps here too instead of only in production.
+    if (!orderTerms.length && (offsetRaw || limitRaw)) {
+      const key = (row) => unstableOrderKey(String(row.ROWID), offset);
+      list = [...list].sort((a, b) => key(a) - key(b));
+    }
     let page = limit !== undefined ? list.slice(offset, offset + limit) : list.slice(offset);
     if (page.length > 300) page = page.slice(0, 300); // real Catalyst ZCQL row cap
 
