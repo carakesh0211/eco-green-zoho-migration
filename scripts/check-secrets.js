@@ -143,7 +143,8 @@ const RULES = [
     kind: 'EMAIL',
     test: (line) => {
       const all = line.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g) ?? [];
-      return all.filter((e) => !/\.(local|example|invalid)$/i.test(e));
+      // RFC 2606 reserved TLDs (.test/.example/.invalid) and .local can never be real addresses.
+      return all.filter((e) => !/\.(local|example|invalid|test)$/i.test(e));
     },
   },
   {

@@ -81,3 +81,16 @@ test('check-secrets ignores empty/placeholder secret-shaped values and .example.
     assert.deepEqual(findings.filter((f) => f.kind === 'SECRET_CONFIG_VALUE'), []);
   });
 });
+
+test('check-secrets excuses RFC 2606 reserved-TLD addresses (.test/.example/.invalid) but still flags a real-looking one', () => {
+  withTempDir((dir) => {
+    writeFileSync(path.join(dir, 'a.js'), "const fixtures = ['nobody@example.test', 'op@example.invalid', 'x@corp.example'];\n", 'utf8');
+    assert.deepEqual(checkSecrets(dir), [], 'reserved-TLD fixture addresses must not be findings');
+    // Built at runtime for the same reason as PLANTED_GSTIN above.
+    const realLooking = 'finance.lead' + '@' + 'somecompany.co.in';
+    writeFileSync(path.join(dir, 'b.js'), `const leak = '${realLooking}';\n`, 'utf8');
+    const findings = checkSecrets(dir);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].kind, 'EMAIL');
+  });
+});
