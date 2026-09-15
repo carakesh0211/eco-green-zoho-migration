@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { newId, newCorrelationId, nowIso } from '../../core/ids.js';
+import { sha256Bytes } from '../../core/hash.js';
 import { ingestRun } from '../../core/ingest.js';
 import { summariseRun } from '../../core/summarise.js';
 import { reconcileLayerA } from '../../core/recon_a.js';
@@ -575,6 +576,67 @@ export async function runSeedJob(ctx, deps) {
  *     SAME per-request Catalyst app after the response is sent; when omitted (sqlite/local
  *     deployments) the job is simply detached with no ALS re-entry needed.
  */
+/**
+ * runArchiveSmoke({ archive, audit, correlationId, actor }) -> report
+ *
+ * Live proof of the configured archive adapter (in the deployment: Stratus via the
+ * Catalyst SDK, running INSIDE AppSail with the request's Catalyst app). Uses a clearly
+ * synthetic CSV under branch SMOKE01 and a per-call run id, so it never touches pilot
+ * evidence. Proves, in order: put -> uri; exists(uri); get(uri) returns the same bytes
+ * (the adapter itself re-verifies the sha); a second put of IDENTICAL bytes is an
+ * idempotent no-op returning the same uri; a put of DIFFERENT bytes for the same
+ * (branch, run, fileName) is refused with IMMUTABLE_CONFLICT; a never-written uri does
+ * not exist. Each step is recorded individually so a partial failure is legible.
+ */
+export async function runArchiveSmoke({ archive, audit, correlationId, actor = 'dev:archive-smoke' }) {
+  const runId = `smoke-${newId('run').slice(-12)}`;
+  const branchCode = 'SMOKE01';
+  const fileName = 'synthetic.csv';
+  const bytesA = Buffer.from('branch_code,voucher_id,debit,credit\nSMOKE01,V-SMOKE-1,10.00,0.00\nSMOKE01,V-SMOKE-1,0.00,10.00\n', 'utf8');
+  const bytesB = Buffer.from('branch_code,voucher_id,debit,credit\nSMOKE01,V-SMOKE-2,99.00,0.00\n', 'utf8');
+  const shaA = sha256Bytes(bytesA);
+  const steps = [];
+  const step = async (name, fn, expect) => {
+    const started = Date.now();
+    try {
+      const value = await fn();
+      const ok = expect ? expect(value) : true;
+      steps.push({ name, ok, ms: Date.now() - started, value: typeof value === 'boolean' || typeof value === 'string' ? value : undefined });
+      return value;
+    } catch (err) {
+      steps.push({ name, ok: false, ms: Date.now() - started, error: err?.code ?? err?.message ?? String(err) });
+      return undefined;
+    }
+  };
+
+  const uri = await step('put', () => archive.put({ runId, branchCode, fileName, bytes: bytesA, sha256: shaA }), (v) => typeof v === 'string' && v.includes(shaA));
+  if (uri) {
+    await step('exists', () => archive.exists(uri), (v) => v === true);
+    await step('get_bytes_match_and_sha_verified', async () => Buffer.compare(await archive.get(uri), bytesA) === 0, (v) => v === true);
+    await step('put_same_bytes_is_idempotent', () => archive.put({ runId, branchCode, fileName, bytes: bytesA }), (v) => v === uri);
+    // Different bytes for the same logical evidence key must be refused, never overwrite.
+    const started = Date.now();
+    try {
+      await archive.put({ runId, branchCode, fileName, bytes: bytesB });
+      steps.push({ name: 'put_different_bytes_rejected', ok: false, ms: Date.now() - started, error: 'NO_ERROR_THROWN' });
+    } catch (err) {
+      steps.push({ name: 'put_different_bytes_rejected', ok: err?.code === 'IMMUTABLE_CONFLICT', ms: Date.now() - started, error: err?.code ?? err?.message });
+    }
+    await step('exists_after_conflict_still_original', () => archive.get(uri).then((b) => Buffer.compare(b, bytesA) === 0), (v) => v === true);
+    const ghost = uri.replace(shaA, 'f'.repeat(64));
+    await step('unwritten_uri_does_not_exist', () => archive.exists(ghost), (v) => v === false);
+  }
+
+  const ok = steps.length >= 7 && steps.every((s) => s.ok);
+  const report = { ok, branchCode, runId, fileName, sha256: shaA, uri: uri ?? null, steps, at: nowIso() };
+  await audit.emit({
+    actor, action: 'DEV.ARCHIVE_SMOKE', entityType: 'archive', entityId: uri ?? runId,
+    after: { ok, steps: steps.map((s) => `${s.name}:${s.ok ? 'ok' : 'FAIL'}`) },
+    reason: '[SYNTHETIC DEMO] live archive adapter smoke (synthetic CSV only)', correlationId,
+  });
+  return report;
+}
+
 export function createDevRouter({ store, audit, auth, deps = {}, environment, devSeedEnabled, runtime }) {
   const router = express.Router();
   const jobs = new Map(); // jobId -> progress object
@@ -583,6 +645,27 @@ export function createDevRouter({ store, audit, auth, deps = {}, environment, de
   function seedIsAllowed() {
     return environment === 'Development' && devSeedEnabled === true;
   }
+
+  // Development-only, admin-only live proof of the configured archive adapter (Stratus in
+  // the deployment). Runs inside the request: ~7 object operations, well under AppSail's
+  // 30 s cap. Same gate as the seed endpoint: never in Production.
+  router.post(
+    '/dev/archive-smoke',
+    auth.authenticate(),
+    auth.requireCorrelationId(),
+    auth.requireRole('admin'),
+    wrap(async (req, res) => {
+      if (environment === 'Production' || !seedIsAllowed()) {
+        return auth.deny(req, res, {
+          status: 403, error: 'DEV_SEED_DISABLED', reason: `DEV_SEED_DISABLED:environment=${environment}`,
+          message: 'The archive smoke endpoint is only available in a Development environment with DEV_SEED_ENABLED=true.',
+        });
+      }
+      if (!deps.archive) return res.status(501).json({ error: 'NOT_IMPLEMENTED', message: 'no archive adapter configured' });
+      const report = await runArchiveSmoke({ archive: deps.archive, audit, correlationId: req.correlationId, actor: req.user.id });
+      res.status(report.ok ? 200 : 500).json(report);
+    })
+  );
 
   router.post(
     '/dev/seed',
