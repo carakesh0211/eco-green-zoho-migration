@@ -132,26 +132,22 @@ Platform behaviours learned the hard way (all observed on CLI 1.27.2):
 
 ## 4d. Manual Catalyst configuration still required (increment 2)
 
-Status: **to be finalised by the lead after deployment.** These are one-time,
-console/API actions no script in this repository performs automatically:
+Status as of **2026-09-15** (build `9f9d374` on Development, lead-verified):
 
-1. Create the 5 increment-2 Data Store tables (`branch_summaries`, `app_users`,
-   `branch_period_assignments`, `books_connections`, `books_locations`) in Development,
-   via the generated column bodies (the same `--emit-columns` generator pattern used for
-   the original 20 tables, `IMPLEMENTATION_PLAN.md` §11).
-2. Enable Catalyst Authentication for the project and add the team's Zoho accounts as
-   authorized users.
-3. Set the increment-2 AppSail environment variables/secrets (§4c's
-   `var/appsail-env.local.json` pattern) -- see the table in §4a.
-4. Register the Zoho API console client (self-client or server-based) for Books OAuth,
-   with callback URL `<appsail-url>/api/admin/books/callback`.
-5. Rotate the Development bearer tokens -- the ones already printed to stdout during
-   earlier fixture seeding are considered exposed (`SECURITY.md` §1, token rotation
-   policy).
+| # | Item | Status | Who |
+|---|---|---|---|
+| 1 | Create the 5 increment-2 Data Store tables (`branch_summaries`, `app_users`, `branch_period_assignments`, `books_connections`, `books_locations`) in Development from the `--emit-columns` bodies | **Done** (25 tables live; IDs only in the gitignored `var/iac/live-ids.json`) | lead |
+| 2 | Rotate the Development bearer tokens (the operator token previously reported in conversation is revoked; new tokens are hash-only in `var/appsail-env.local.json`, plaintext only in the lead's local scratch file, never in chat or git) | **Done** — old token returns 401 | lead |
+| 3 | AppSail env: `EXPECTED_BRANCH_COUNT=351`, `AUTH_MODE=token,catalyst`, `AUTH_LOGIN_URL=<appsail-origin>/__catalyst/auth/login` (keys must not start with `CATALYST_`/`X_ZOHO_` — the deploy script now refuses them) | **Done** | lead |
+| 4 | Seed 351 synthetic branch summaries (`POST /api/dev/seed-branches`, idempotent) | **Done** (PILOT01 real + `EG-0002..EG-0351` synthetic) | lead |
+| 5 | Enable **Catalyst Authentication** for project EcoGreenMigration (console → Authentication), keep public sign-up off, and add each team member's Zoho account as an app user; then create the matching `app_users` row (Team & Assignments → add user, role + branches) — the row activates on the user's first sign-in. The hosted login page is already served on the AppSail origin (`/__catalyst/auth/login`, verified) | **Owner action** | project owner |
+| 6 | First real sign-in check: sign in at `<appsail-origin>/#/login` → "Sign in with Zoho (Catalyst)", then confirm `GET /api/auth/me` reports `authMode: "catalyst"`; record the post-login redirect behaviour in `docs/CATALYST_AUTH.md` §0 | **Owner action** (needs a real Zoho account) | project owner |
+| 7 | Register a Zoho API console client for Books OAuth (server-based, redirect `<appsail-origin>/api/admin/books/callback`), then set `BOOKS_CLIENT_ID`, `BOOKS_CLIENT_SECRET`, `BOOKS_SECRET_KEY` (32 random bytes, base64), `BOOKS_REGION`, `BOOKS_REDIRECT_URI` as AppSail env vars. Until then the page shows **NOT CONNECTED** and `Connect` returns `BOOKS_NOT_CONFIGURED` | **Owner action** | project owner + RapGuru ops |
+| 8 | Read-only Books access: only after written authorization, set `BOOKS_READ_AUTHORIZED=true` and `BOOKS_ORGANIZATION_ID`. No live Books call is made before this | **Blocked on authorization** | finance lead + owner |
+| 9 | Capacity design approval (`docs/CAPACITY_REVIEW.md`) before any real ingestion | **Blocked on approval** | project owner |
 
-None of the above is scripted; each is a manual console/API action by whoever holds
-Catalyst project ownership.
-
+Not enabled in this increment, by instruction: worker loop, WorkDrive inbox, Stratus-dependent
+ingestion, Zoho Books posting (`BOOKS_DRIVER=mock`, `POSTING_ENABLED=false`).
 ## 5. Production posting enablement procedure
 
 Production posting is not authorized by any prompt, plan, or document in this

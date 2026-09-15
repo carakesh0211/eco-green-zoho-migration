@@ -9,6 +9,15 @@
         "dev"
       ],
       "port": 3000
+    },
+    {
+      "name": "console-screens",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--env-file=var/screens.env",
+        "src/server/index.js"
+      ],
+      "port": 4100
     }
   ]
 }
