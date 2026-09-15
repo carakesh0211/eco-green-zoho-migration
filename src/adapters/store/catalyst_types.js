@@ -70,6 +70,11 @@ export const LOGICAL_TABLES = Object.freeze([
   'queue_items',
   'api_attempts',
   'books_snapshots',
+  'branch_summaries',
+  'app_users',
+  'branch_period_assignments',
+  'books_connections',
+  'books_locations',
 ]);
 
 export class TableNotAllowedError extends Error {

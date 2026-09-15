@@ -165,6 +165,46 @@
         "dependsOn": []
       },
       {
+        "type": "table",
+        "name": "branch_summaries",
+        "properties": {
+          "table_name": "branch_summaries"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "app_users",
+        "properties": {
+          "table_name": "app_users"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "branch_period_assignments",
+        "properties": {
+          "table_name": "branch_period_assignments"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "books_connections",
+        "properties": {
+          "table_name": "books_connections"
+        },
+        "dependsOn": []
+      },
+      {
+        "type": "table",
+        "name": "books_locations",
+        "properties": {
+          "table_name": "books_locations"
+        },
+        "dependsOn": []
+      },
+      {
         "type": "column",
         "name": "audit_events.actor",
         "properties": {
@@ -4357,6 +4397,1146 @@
         },
         "dependsOn": [
           "books_snapshots"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.branch_code",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.branch_name",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "branch_name",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.zoho_location_id",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "zoho_location_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.zoho_location_name",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "zoho_location_name",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.assigned_operator",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "assigned_operator",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.assigned_approver",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "assigned_approver",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.live_start_date",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "live_start_date",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.migration_from_date",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "migration_from_date",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.migration_to_date",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "migration_to_date",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.receipt_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "receipt_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.layer_a_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "layer_a_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.mapping_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "mapping_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.overlap_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "overlap_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.open_exception_count",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "open_exception_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.open_exception_impact",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "open_exception_impact",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 24
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.batch_approval_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "batch_approval_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.migrated_count",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "migrated_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.total_count",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "total_count",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.migration_progress_pct",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "migration_progress_pct",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.layer_c_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "layer_c_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.balance_bridge_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "balance_bridge_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.last_activity_at",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "last_activity_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.readiness_status",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "readiness_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.is_synthetic",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "is_synthetic",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.summary_version",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "summary_version",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.created_at",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_summaries.updated_at",
+        "properties": {
+          "table_name": "branch_summaries",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_summaries"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.id",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.email",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "email",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.display_name",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "display_name",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.role",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "role",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.principal_type",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "principal_type",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.status",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.branches_json",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "branches_json",
+          "data_type": "text",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.token_sha256",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "token_sha256",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.created_by",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "created_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.created_at",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.updated_at",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.version",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "version",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "app_users.last_login_at",
+        "properties": {
+          "table_name": "app_users",
+          "column_name": "last_login_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "app_users"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.branch_code",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.period",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "period",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 7
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.transaction_class",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "transaction_class",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.assigned_operator",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "assigned_operator",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.assigned_approver",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "assigned_approver",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.status",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.priority_level",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "priority_level",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.assigned_at",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "assigned_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.due_at",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "due_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.version",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "version",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.assigned_by",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "assigned_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.reassignment_reason",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "reassignment_reason",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.uk",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "uk",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.created_at",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "branch_period_assignments.updated_at",
+        "properties": {
+          "table_name": "branch_period_assignments",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "branch_period_assignments"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.id",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.status",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.org_id",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "org_id",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.org_name",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "org_name",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.region",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "region",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.api_domain",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "api_domain",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.connected_by",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "connected_by",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 128
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.connected_at",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "connected_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.last_success_at",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "last_success_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.last_error_redacted",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "last_error_redacted",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.token_refresh_status",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "token_refresh_status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.token_expires_at",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "token_expires_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.secret_ciphertext",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "secret_ciphertext",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.api_limit_json",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "api_limit_json",
+          "data_type": "text",
+          "is_mandatory": false
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.locations_synced_at",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "locations_synced_at",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.oauth_state_sha256",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "oauth_state_sha256",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 64
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.version",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "version",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.created_at",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_connections.updated_at",
+        "properties": {
+          "table_name": "books_connections",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_connections"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.location_id",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "location_id",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 128,
+          "is_unique": true
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.location_name",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "location_name",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 255
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.status",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "status",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.is_synthetic",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "is_synthetic",
+          "data_type": "int",
+          "is_mandatory": true
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.branch_code",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "branch_code",
+          "data_type": "varchar",
+          "is_mandatory": false,
+          "max_length": 32
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.synced_at",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "synced_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.created_at",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "created_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_locations"
+        ]
+      },
+      {
+        "type": "column",
+        "name": "books_locations.updated_at",
+        "properties": {
+          "table_name": "books_locations",
+          "column_name": "updated_at",
+          "data_type": "varchar",
+          "is_mandatory": true,
+          "max_length": 40
+        },
+        "dependsOn": [
+          "books_locations"
         ]
       }
     ]

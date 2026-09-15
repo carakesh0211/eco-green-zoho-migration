@@ -33,11 +33,20 @@ const ADDED_TABLES = [
   'books_snapshots',
 ];
 
-const EXPECTED_TABLES = [...LIVE_TABLES, ...ADDED_TABLES];
+// Increment 2 (team-operable console): dashboard summaries, team directory, assignments, Books connection.
+const INCREMENT2_TABLES = [
+  'branch_summaries',
+  'app_users',
+  'branch_period_assignments',
+  'books_connections',
+  'books_locations',
+];
+
+const EXPECTED_TABLES = [...LIVE_TABLES, ...ADDED_TABLES, ...INCREMENT2_TABLES];
 
 const RESERVED = new Set(['date', 'key', 'result', 'priority']);
 
-test('schema.catalyst: exactly the 20 schema.sql tables (9 live + 11 added for the full pipeline)', () => {
+test('schema.catalyst: exactly the 25 schema.sql tables (9 live + 11 pipeline + 5 increment-2)', () => {
   assert.deepEqual(TABLES.map((t) => t.name).sort(), [...EXPECTED_TABLES].sort());
 });
 
@@ -63,7 +72,8 @@ test('schema.catalyst: audit_events columns match the live-created spec exactly'
 });
 
 test('schema.catalyst: id-keyed tables have a unique varchar id column; branches is keyed on branch_code; every other table is ROWID-keyed', () => {
-  const ID_KEYED = new Set(['extraction_runs', 'recon_runs', 'migration_batches', 'approvals']);
+  const ID_KEYED = new Set(['extraction_runs', 'recon_runs', 'migration_batches', 'approvals', 'app_users', 'books_connections']);
+  const CODE_KEYED = new Set(['branches', 'branch_summaries']);
   for (const t of TABLES) {
     if (ID_KEYED.has(t.name)) {
       assert.equal(t.logicalKey, 'id');
@@ -72,14 +82,14 @@ test('schema.catalyst: id-keyed tables have a unique varchar id column; branches
       assert.equal(idCol.data_type, 'varchar');
       assert.equal(idCol.is_unique, true);
       assert.equal(idCol.is_mandatory, true);
-    } else if (t.name === 'branches') {
+    } else if (CODE_KEYED.has(t.name)) {
       assert.equal(t.logicalKey, 'branch_code');
       const keyCol = t.columns.find((c) => c.column_name === 'branch_code');
-      assert.ok(keyCol, 'branches must declare an explicit branch_code column');
+      assert.ok(keyCol, `${t.name} must declare an explicit branch_code column`);
       assert.equal(keyCol.data_type, 'varchar');
       assert.equal(keyCol.is_unique, true);
       assert.equal(keyCol.is_mandatory, true);
-      assert.ok(!t.columns.some((c) => c.column_name === 'id'), 'branches must not declare an id column');
+      assert.ok(!t.columns.some((c) => c.column_name === 'id'), `${t.name} must not declare an id column`);
     } else {
       assert.equal(t.logicalKey, 'ROWID');
       assert.ok(!t.columns.some((c) => c.column_name === 'id'), `${t.name} must not declare an id column (ROWID is the key)`);

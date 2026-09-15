@@ -2,14 +2,16 @@
 // See CONTRACTS.md §S/§R, docs/CATALYST_REFERENCES.md, and src/adapters/store/schema.sql
 // (the sqlite source of truth this file is a curated, hand-derived translation of).
 //
-// Scope: all 20 tables in src/adapters/store/schema.sql —
+// Scope: all 25 tables in src/adapters/store/schema.sql —
 //   audit_events, extraction_runs, source_files, vouchers, source_txn_lines,
 //   source_summaries (physical name for sqlite's `summaries` table), recon_runs,
 //   recon_results, exceptions (the original 9, LIVE in Catalyst Development — column
 //   definitions for these 9 must never change, see the note on each below), plus
 //   branches, cutover_matrix, mapping_rules, trial_balance_lines, overlap_candidates,
 //   preview_payloads, migration_batches, approvals, queue_items, api_attempts,
-//   books_snapshots (the 11 added to complete the dashboard pipeline).
+//   books_snapshots (the 11 added to complete the dashboard pipeline), plus the 5
+//   increment-2 tables branch_summaries, app_users, branch_period_assignments,
+//   books_connections, books_locations (team-operable console).
 //
 // TYPE MAPPING (sqlite -> Catalyst), decided and applied uniformly below:
 //   - Physical primary key is Catalyst ROWID for EVERY table whose sqlite PK is an
@@ -558,6 +560,119 @@ export const TABLES = [
       text('records_json'),
       varchar('snapshot_hash', W.SHA256, { is_mandatory: true }),
       varchar('created_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  // ---------------------------------------------------------------- increment 2 (team-operable console)
+  {
+    name: 'branch_summaries',
+    logicalKey: 'branch_code',
+    columns: [
+      varchar('branch_code', W.CODE, { is_mandatory: true, is_unique: true }),
+      varchar('branch_name', W.NAME, { is_mandatory: true }),
+      varchar('zoho_location_id', W.ID),
+      varchar('zoho_location_name', W.NAME),
+      varchar('assigned_operator', W.ID),
+      varchar('assigned_approver', W.ID),
+      varchar('live_start_date', W.TS),
+      varchar('migration_from_date', W.TS),
+      varchar('migration_to_date', W.TS),
+      varchar('receipt_status', W.CODE, { is_mandatory: true }),
+      varchar('layer_a_status', W.CODE, { is_mandatory: true }),
+      varchar('mapping_status', W.CODE, { is_mandatory: true }),
+      varchar('overlap_status', W.CODE, { is_mandatory: true }),
+      int('open_exception_count', { is_mandatory: true }),
+      varchar('open_exception_impact', W.MONEY, { is_mandatory: true }),
+      varchar('batch_approval_status', W.CODE, { is_mandatory: true }),
+      int('migrated_count', { is_mandatory: true }),
+      int('total_count', { is_mandatory: true }),
+      int('migration_progress_pct', { is_mandatory: true }),
+      varchar('layer_c_status', W.CODE, { is_mandatory: true }),
+      varchar('balance_bridge_status', W.CODE, { is_mandatory: true }),
+      varchar('last_activity_at', W.TS),
+      varchar('readiness_status', W.CODE, { is_mandatory: true }),
+      int('is_synthetic', { is_mandatory: true }),
+      int('summary_version', { is_mandatory: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'app_users',
+    logicalKey: 'id',
+    columns: [
+      varchar('id', W.ID, { is_mandatory: true, is_unique: true }),
+      varchar('email', W.NAME, { is_unique: true }),
+      varchar('display_name', W.NAME),
+      varchar('role', W.CODE, { is_mandatory: true }),
+      varchar('principal_type', W.CODE, { is_mandatory: true }),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      text('branches_json', { is_mandatory: true }),
+      varchar('token_sha256', W.SHA256),
+      varchar('created_by', W.ID),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+      int('version', { is_mandatory: true }),
+      varchar('last_login_at', W.TS),
+    ],
+  },
+  {
+    name: 'branch_period_assignments',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('branch_code', W.CODE, { is_mandatory: true }),
+      varchar('period', W.PERIOD, { is_mandatory: true }),
+      varchar('transaction_class', W.CODE, { is_mandatory: true }),
+      varchar('assigned_operator', W.ID),
+      varchar('assigned_approver', W.ID),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      varchar('priority_level', W.CODE, { is_mandatory: true }),
+      varchar('assigned_at', W.TS),
+      varchar('due_at', W.TS),
+      int('version', { is_mandatory: true }),
+      varchar('assigned_by', W.ID),
+      text('reassignment_reason'),
+      varchar('uk', W.UK, { is_mandatory: true, is_unique: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'books_connections',
+    logicalKey: 'id',
+    columns: [
+      varchar('id', W.ID, { is_mandatory: true, is_unique: true }),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      varchar('org_id', W.ID),
+      varchar('org_name', W.NAME),
+      varchar('region', W.CODE),
+      varchar('api_domain', W.NAME),
+      varchar('connected_by', W.ID),
+      varchar('connected_at', W.TS),
+      varchar('last_success_at', W.TS),
+      varchar('last_error_redacted', W.NAME),
+      varchar('token_refresh_status', W.CODE, { is_mandatory: true }),
+      varchar('token_expires_at', W.TS),
+      text('secret_ciphertext'),
+      text('api_limit_json'),
+      varchar('locations_synced_at', W.TS),
+      varchar('oauth_state_sha256', W.SHA256),
+      int('version', { is_mandatory: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
+    ],
+  },
+  {
+    name: 'books_locations',
+    logicalKey: 'ROWID',
+    columns: [
+      varchar('location_id', W.ID, { is_mandatory: true, is_unique: true }),
+      varchar('location_name', W.NAME, { is_mandatory: true }),
+      varchar('status', W.CODE, { is_mandatory: true }),
+      int('is_synthetic', { is_mandatory: true }),
+      varchar('branch_code', W.CODE),
+      varchar('synced_at', W.TS, { is_mandatory: true }),
+      varchar('created_at', W.TS, { is_mandatory: true }),
+      varchar('updated_at', W.TS, { is_mandatory: true }),
     ],
   },
 ];

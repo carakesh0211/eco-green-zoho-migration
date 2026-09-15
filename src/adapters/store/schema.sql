@@ -426,4 +426,114 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS ix_audit_entity ON audit_events(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS ix_audit_corr ON audit_events(correlation_id);
 
--- Users are loaded from config (hashed tokens), not stored here in the MVP.
+-- ---------------------------------------------------------------- increment 2: team-operable console
+-- Branch Control Dashboard: exactly one denormalised row per branch (~351, configurable via
+-- EXPECTED_BRANCH_COUNT). Kept <= 30 columns so a Catalyst ZCQL page never needs chunking.
+-- Refreshed from the transactional tables for real branches; synthetic rows carry is_synthetic=1.
+CREATE TABLE IF NOT EXISTS branch_summaries (
+  branch_code             TEXT PRIMARY KEY,
+  branch_name             TEXT NOT NULL,
+  zoho_location_id        TEXT,
+  zoho_location_name      TEXT,
+  assigned_operator       TEXT,
+  assigned_approver       TEXT,
+  live_start_date         TEXT,                    -- Smart Pharma / live-system start (YYYY-MM-DD)
+  migration_from_date     TEXT,                    -- historical migration window
+  migration_to_date       TEXT,
+  receipt_status          TEXT NOT NULL,           -- NOT_RECEIVED | PARTIAL | RECEIVED | VALIDATION_FAILED
+  layer_a_status          TEXT NOT NULL,           -- NOT_RUN | PASS | FAIL
+  mapping_status          TEXT NOT NULL,           -- NOT_STARTED | DRAFT | APPROVED
+  overlap_status          TEXT NOT NULL,           -- NOT_ASSESSED | CLEAR | OVERLAP_FOUND
+  open_exception_count    INTEGER NOT NULL DEFAULT 0,
+  open_exception_impact   TEXT NOT NULL DEFAULT '0.00',  -- decimal string, absolute financial impact
+  batch_approval_status   TEXT NOT NULL,           -- NONE | DRAFT | READY_FOR_APPROVAL | APPROVED | REJECTED
+  migrated_count          INTEGER NOT NULL DEFAULT 0,
+  total_count             INTEGER NOT NULL DEFAULT 0,
+  migration_progress_pct  INTEGER NOT NULL DEFAULT 0,
+  layer_c_status          TEXT NOT NULL,           -- NOT_RUN | PASS | FAIL
+  balance_bridge_status   TEXT NOT NULL,           -- NOT_RUN | PASS | FAIL
+  last_activity_at        TEXT,
+  readiness_status        TEXT NOT NULL,           -- NOT_STARTED | IN_PROGRESS | BLOCKED | READY | MIGRATED
+  is_synthetic            INTEGER NOT NULL DEFAULT 0,
+  summary_version         INTEGER NOT NULL DEFAULT 1,
+  created_at              TEXT NOT NULL,
+  updated_at              TEXT NOT NULL
+);
+
+-- Team directory (config-file users remain the bootstrap; this table is the operable directory).
+-- token_sha256 is only ever populated for bot principals; humans authenticate via Catalyst.
+CREATE TABLE IF NOT EXISTS app_users (
+  id              TEXT PRIMARY KEY,
+  email           TEXT UNIQUE,
+  display_name    TEXT,
+  role            TEXT NOT NULL,                   -- admin | operator | approver | viewer
+  principal_type  TEXT NOT NULL,                   -- human | bot
+  status          TEXT NOT NULL,                   -- INVITED | ACTIVE | INACTIVE
+  branches_json   TEXT NOT NULL DEFAULT '[]',      -- ["*"] or ["PILOT01", ...]
+  token_sha256    TEXT,
+  created_by      TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  version         INTEGER NOT NULL DEFAULT 1,      -- optimistic lock
+  last_login_at   TEXT
+);
+
+-- Who works which branch-period (and, where required, transaction class). Optimistic locking
+-- via `version`; SoD (assigned_operator <> assigned_approver) enforced in src/core/assignments.js.
+-- `priority_level` because `priority` is a reserved Catalyst column name (API exposes `priority`).
+CREATE TABLE IF NOT EXISTS branch_period_assignments (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  branch_code          TEXT NOT NULL,
+  period               TEXT NOT NULL,              -- YYYY-MM
+  transaction_class    TEXT NOT NULL DEFAULT '*',  -- '*' = all classes
+  assigned_operator    TEXT,
+  assigned_approver    TEXT,
+  status               TEXT NOT NULL,              -- UNASSIGNED | ASSIGNED | IN_PROGRESS | READY_FOR_APPROVAL | APPROVED | ON_HOLD | DONE
+  priority_level       TEXT NOT NULL DEFAULT 'NORMAL',  -- LOW | NORMAL | HIGH | URGENT
+  assigned_at          TEXT,
+  due_at               TEXT,
+  version              INTEGER NOT NULL DEFAULT 1, -- optimistic lock / claim field
+  assigned_by          TEXT,
+  reassignment_reason  TEXT,
+  uk                   TEXT NOT NULL UNIQUE,       -- branch_code|period|transaction_class
+  created_at           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL
+);
+
+-- Zoho Books connection state (singleton row id='default'). Secrets are stored ONLY as
+-- secret_ciphertext (AES-256-GCM under BOOKS_SECRET_KEY, see src/books/connection.js) and are
+-- never returned by any API response.
+CREATE TABLE IF NOT EXISTS books_connections (
+  id                    TEXT PRIMARY KEY,
+  status                TEXT NOT NULL,             -- NOT_CONNECTED | PENDING_AUTH | CONNECTED | ERROR | DISCONNECTED
+  org_id                TEXT,
+  org_name              TEXT,
+  region                TEXT,                      -- in | com | eu | ...
+  api_domain            TEXT,
+  connected_by          TEXT,
+  connected_at          TEXT,
+  last_success_at       TEXT,
+  last_error_redacted   TEXT,
+  token_refresh_status  TEXT NOT NULL DEFAULT 'NONE',  -- NONE | OK | FAILED | EXPIRED
+  token_expires_at      TEXT,
+  secret_ciphertext     TEXT,
+  api_limit_json        TEXT,
+  locations_synced_at   TEXT,
+  oauth_state_sha256    TEXT,
+  version               INTEGER NOT NULL DEFAULT 1,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL
+);
+
+-- Books locations as last synchronised (synthetic rows come from the mock driver only).
+CREATE TABLE IF NOT EXISTS books_locations (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  location_id     TEXT NOT NULL UNIQUE,
+  location_name   TEXT NOT NULL,
+  status          TEXT NOT NULL,                   -- ACTIVE | INACTIVE
+  is_synthetic    INTEGER NOT NULL DEFAULT 0,
+  branch_code     TEXT,                            -- mapped Eco Green branch, if any
+  synced_at       TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
