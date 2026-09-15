@@ -10,7 +10,7 @@ When repository code, an implementation plan, or an informal discussion conflict
 
 Eco Green is the legacy source application. Accounting and inventory data is held in MySQL, but the migration team does not have a direct application-level source connector. Data can be obtained only by running the Eco Green team's existing extraction queries and exporting the results as CSV files.
 
-The target is one live Zoho Books organisation containing approximately 326 branches represented as Books locations. The historical migration period begins on 1 April 2026. Smart Pharma/live Books activity began from June 2026 for some branches and August 2026 for others, with additional branches moving in phases. Therefore migration eligibility and reconciliation must be controlled by a branch-wise, and where necessary transaction-class-wise, cutover matrix rather than one organisation-wide end date.
+The target is one live Zoho Books organisation containing approximately 351 branches represented as Books locations. This branch count is a **configurable expectation**, not a hard-coded constant: it is read from the environment variable `EXPECTED_BRANCH_COUNT` (default `351`), it must never be baked into application logic as a literal, and the Branch Control Dashboard (`ARCHITECTURE.md` §7) seeds its synthetic rows and sizes its pagination against this configured value so the real count can be corrected without a code change. The historical migration period begins on 1 April 2026. Smart Pharma/live Books activity began from June 2026 for some branches and August 2026 for others, with additional branches moving in phases. Therefore migration eligibility and reconciliation must be controlled by a branch-wise, and where necessary transaction-class-wise, cutover matrix rather than one organisation-wide end date.
 
 Smart Pharma is the new WMS/POS for all branches. It is already integrated with Zoho Books and posts inventory-related, summarized B2C accounting data grouped by date and payment/receipt method. Therefore this project is primarily a historical accounting migration and reconciliation platform. It must not repost inventory or B2C populations already posted by Smart Pharma.
 
@@ -21,8 +21,8 @@ Zoho Catalyst will be the staging, transformation, reconciliation, exception, ap
 - Source: Eco Green MySQL, accessed only through existing extraction queries whose outputs are CSV files.
 - File landing: extracted CSV files and manifests arrive in a controlled Zoho WorkDrive folder; WorkDrive is an inbox, not the immutable system of record.
 - Worker: Hermes on the VPS performs deterministic pickup, parsing, summarisation, mapping, reconciliation, and approved migration work. MCP/LLM calls are not the per-record execution path.
-- Scale: approximately 326 branches, with data beginning 1 April 2026.
-- Target topology: one Zoho Books organisation with approximately 326 branches/locations.
+- Scale: approximately 351 branches, with data beginning 1 April 2026.
+- Target topology: one Zoho Books organisation with approximately 351 branches/locations.
 - Live-target constraint: Zoho Books is already live. Some branches have captured new-system activity from June 2026, some from August 2026, and others begin as they are phased in.
 - Cutover rule: maintain an explicit branch and transaction-class cutover matrix. The default historical window is from 1 April 2026 through the day before the verified live-system start date, subject to signed coverage rules and gap/overlap investigation.
 - New operational system: Smart Pharma, serving as WMS/POS and already posting summarized inventory-related B2C/payment-method/date-wise data to Zoho Books.
@@ -419,7 +419,7 @@ Bulk overrides are prohibited unless rule-based, previewed, scoped, approved, an
 
 ## Queueing, rate limiting, and resilience
 
-- Apply a single organisation-wide rate limiter across all 326 locations.
+- Apply a single organisation-wide rate limiter across all approximately 351 locations (see `docs/CAPACITY_REVIEW.md` §7 for the resulting throughput/posting-days estimate).
 - Read configurable limits from deployment configuration; confirm them from the current Books plan and official documentation.
 - Use bounded concurrency, token/leaky-bucket-style throttling as appropriate, exponential backoff with jitter, and `Retry-After` when supplied.
 - Separate retryable, non-retryable, authorization, data-validation, and unknown-outcome errors.
@@ -482,7 +482,7 @@ Evolve the product into a `RapGuru Data Migration & Reconciliation Engine` with 
 
 ### Rapid MVP — lightweight foundation and pilot
 
-The immediate delivery target is a small, usable pilot rather than the full hardened 326-branch platform. Subject to credentials, representative inputs, and approved mappings, the first increment should provide:
+The immediate delivery target is a small, usable pilot rather than the full hardened approximately-351-branch platform. Subject to credentials, representative inputs, and approved mappings, the first increment should provide:
 
 - one agreed CSV/manifest format and WorkDrive inbox
 - one or a few representative pilot branches
@@ -495,7 +495,7 @@ The immediate delivery target is a small, usable pilot rather than the full hard
 - a lightweight console for file status, cutover matrix, reconciliation, exceptions, approval, and posting results
 - one minimal Hermes-connected bot, initially read-oriented with only narrowly governed actions
 
-Do not compromise financial safeguards to meet the rapid timeline. Full production readiness for 326 branches, all mappings, volume, recovery, and live posting remains subject to later acceptance gates.
+Do not compromise financial safeguards to meet the rapid timeline. Full production readiness for approximately 351 branches, all mappings, volume, recovery, and live posting remains subject to later acceptance gates.
 
 ### Phase 0 — Repository and platform discovery
 
@@ -581,7 +581,7 @@ Exact financial tolerances, completeness thresholds, performance targets, retent
 ### Source and data
 
 - What are the verified live-system start date and historical migration end date for each branch and transaction class?
-- Are all 326 branch codes stable and mapped to existing Books location IDs?
+- Are all approximately 351 branch codes stable and mapped to existing Books location IDs?
 - What queries/files exist, what tables feed them, and are original primary/foreign keys included?
 - Are header/line relationships reconstructable without fuzzy matching?
 - What are actual row counts, file sizes, currencies, tax regimes, encodings, and historical corrections?

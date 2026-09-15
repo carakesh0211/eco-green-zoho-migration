@@ -12,7 +12,8 @@
 A rapid, lightweight pilot for migrating historical Eco Green accounting data into a
 live Zoho Books organisation, with three-way reconciliation against independent Eco
 Green controls and against Books itself, and explicit exclusion of anything already
-posted by Smart Pharma (the new WMS/POS). It reuses proven parts of an existing RapGuru
+posted by Smart Pharma (the new WMS/POS). The target scope is approximately
+351 branches (configurable via `EXPECTED_BRANCH_COUNT`, see `PROJECT_CONTEXT.md`). It reuses proven parts of an existing RapGuru
 Tally migration tool, refactored into a source-pluggable migration engine. Full context
 and constraints are in `PROJECT_CONTEXT.md`; this repository implements only the
 rapid-MVP slice described there and in `CLAUDE_IMPLEMENTATION_PROMPT.md`.
@@ -67,6 +68,19 @@ fixtures/, config/, test/, docs/   synthetic data, local config templates, tests
 | `SECURITY.md` | Threat model, secrets, RBAC, audit, environment isolation, pre-publish checklist |
 | `DEPLOYMENT.md` | Local dev, VPS worker, Catalyst target design, environment matrix, posting enablement procedure |
 | `OPERATIONS_RUNBOOK.md` | Pause/resume, retry rules, incident containment, restart recovery |
+
+## Console views (increment 2, in progress)
+
+Status: in progress -- verify against code on merge; see `ARCHITECTURE.md` §7 and
+`CONTRACTS.md` §U/§D/§N/§E.
+
+- **Branch dashboard** -- one row per branch (~351, configurable via
+  `EXPECTED_BRANCH_COUNT`), server-side filter/sort/pagination, CSV export.
+- **Branch workspace** -- single-branch drilldown reusing the existing Layer A/B/C,
+  cutover, and exception views.
+- **Team & assignments** -- who is assigned to each branch-period, SoD-checked.
+- **Books connection** -- connection/organisation/location status and the six
+  independent posting controls (`ARCHITECTURE.md` §7.3).
 
 ## Safety notice
 

@@ -89,7 +89,7 @@ auditable (`PROJECT_CONTEXT.md`).
 
 None of the following has been supplied:
 
-- The verified Smart Pharma go-live date for each of the ~326 branches.
+- The verified Smart Pharma go-live date for each of the ~351 branches.
 - Exactly what is posted to Books: which modules, aggregation grain, tax detail,
   payment methods, references, and correction/reversal behavior.
 - Whether Smart Pharma back-posts or updates historical dates.

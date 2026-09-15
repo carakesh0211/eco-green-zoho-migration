@@ -21,8 +21,8 @@ When reviewing Claude Code's implementation work, also read `CLAUDE_IMPLEMENTATI
 ## Project facts that must remain visible
 
 1. Eco Green data comes from MySQL only through existing queries exported to CSV.
-2. Scope is approximately 326 branches and begins on 1 April 2026; final cutover boundaries remain to be confirmed.
-3. Target is one Zoho Books organisation with approximately 326 locations, so API capacity is shared organisation-wide.
+2. Scope is approximately 351 branches and begins on 1 April 2026; final cutover boundaries remain to be confirmed.
+3. Target is one Zoho Books organisation with approximately 351 locations, so API capacity is shared organisation-wide.
 4. Smart Pharma is the new WMS/POS and already pushes summarized inventory-related B2C data by date and payment/receipt method into Books.
 5. Eco Green migration is primarily historical accounting and reconciliation; duplicate Smart Pharma inventory/B2C posting is a critical failure.
 6. Zoho Catalyst is the staging, reconciliation, exception, approval, migration-control, and audit hub, using Stratus, Data Store, AppSail/services, and Job Scheduling where appropriate.
@@ -79,7 +79,7 @@ Break work into reviewable increments. Each implementation task should state pur
 
 ### Rapid delivery constraint
 
-Optimize the first increment for a same-day lightweight pilot, not the complete 326-branch production rollout. The rapid MVP should use one agreed CSV format and one or a few representative branches; perform WorkDrive pickup, validation, hashing, Stratus archival, branch/account/date debit-credit summarisation, source trial-balance comparison, CSV-to-migration-population bridging, Books baseline/post-run reconciliation, exceptions, dry-run preview, and a minimal control console. Production posting must remain disabled until the relevant accounting, overlap, approval, idempotency, and live-target gates are evidenced. Do not trade those controls for speed.
+Optimize the first increment for a same-day lightweight pilot, not the complete approximately-351-branch production rollout. The rapid MVP should use one agreed CSV format and one or a few representative branches; perform WorkDrive pickup, validation, hashing, Stratus archival, branch/account/date debit-credit summarisation, source trial-balance comparison, CSV-to-migration-population bridging, Books baseline/post-run reconciliation, exceptions, dry-run preview, and a minimal control console. Production posting must remain disabled until the relevant accounting, overlap, approval, idempotency, and live-target gates are evidenced. Do not trade those controls for speed.
 
 ## Review workflow for Claude Code changes
 

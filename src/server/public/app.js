@@ -1,7 +1,12 @@
-// Vanilla-JS console. No framework, no build step. The token lives ONLY in
-// sessionStorage, and only after the user pastes it into the login box — never
+// Vanilla-JS console core. No framework, no build step. The token lives ONLY in
+// sessionStorage, and only after the user pastes it into the login view — never
 // persisted, never sent anywhere but this origin's own API. The UI is not a security
 // boundary: every check here is cosmetic convenience, the server re-checks everything.
+//
+// This file defines the shared `App` namespace (auth, fetch helpers, DOM helpers, hash
+// router, nav, health banner, toasts) that every view script (loaded after this one via
+// <script src> tags, in DOM order — see index.html) attaches to. There is no bundler and
+// no ES module graph: views read/write `window.App` directly.
 'use strict';
 
 const TOKEN_KEY = 'egzb_token';
@@ -26,12 +31,20 @@ function newCorrelationId() {
   return 'ui_' + Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
+/** Core fetch wrapper. Sends the bearer token when we have one (bots / break-glass /
+ * legacy human login) AND `credentials: 'same-origin'` so a Catalyst session cookie
+ * rides along too — the server accepts either (CONTRACTS: GET /api/auth/me). */
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'X-Correlation-Id': newCorrelationId() };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  const res = await fetch(path, {
+    method,
+    headers,
+    credentials: 'same-origin',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
   let data = null;
   try {
     data = await res.json();
@@ -45,6 +58,47 @@ async function api(path, { method = 'GET', body } = {}) {
     throw err;
   }
   return data;
+}
+
+/** Like api(), but resolves to `null` instead of throwing on 404/501 ("endpoint not
+ * built yet by the concurrent backend workstream") so a view can render an
+ * "not available yet" note instead of breaking the whole page. Any other error still
+ * throws so real failures (401/403/500) are handled explicitly by the caller. */
+async function apiOptional(path, opts) {
+  try {
+    return await api(path, opts);
+  } catch (err) {
+    if (err.status === 404 || err.status === 501) return null;
+    throw err;
+  }
+}
+
+/** Fetch a binary/blob response with the auth header a plain <a href> can't carry
+ * (e.g. CSV export), and trigger a save via a transient object URL. */
+async function downloadWithAuth(path, suggestedName) {
+  const headers = { 'X-Correlation-Id': newCorrelationId() };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, { method: 'GET', headers, credentials: 'same-origin' });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      msg = data?.message || data?.error || msg;
+    } catch {
+      /* body wasn't JSON (or was empty) — the HTTP-status message is the best we have */
+    }
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: suggestedName });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -63,6 +117,38 @@ function el(tag, attrs = {}, children = []) {
 
 function statusSpan(status) {
   return el('span', { class: `status-${status}` }, String(status ?? ''));
+}
+
+/** Classifies an arbitrary status string into one of the four chip colours the task
+ * spec calls for: PASS/READY/MIGRATED-shaped -> green, FAIL/BLOCKED-shaped -> red,
+ * IN_PROGRESS/DRAFT-shaped -> amber, NOT_*-shaped (and anything unrecognised) -> grey. */
+function chipClass(status) {
+  const s = String(status ?? '').toUpperCase();
+  if (!s) return 'chip-grey';
+  if (s.startsWith('NOT_')) return 'chip-grey';
+  if (['PASS', 'READY', 'MIGRATED', 'APPROVED', 'CLEAR', 'RECEIVED', 'CONNECTED', 'ACTIVE', 'OK', 'POSTED', 'RESOLVED'].includes(s)) return 'chip-green';
+  if (['FAIL', 'BLOCKED', 'REJECTED', 'VALIDATION_FAILED', 'DEAD_LETTER', 'ERROR', 'OVERLAP_FOUND', 'DISCONNECTED', 'FAILED_FINAL', 'FAILED_RETRYABLE'].includes(s)) return 'chip-red';
+  if (['IN_PROGRESS', 'DRAFT', 'PARTIAL', 'PENDING_AUTH', 'PAUSED', 'QUEUED', 'OPEN', 'ASSIGNED', 'INVITED'].includes(s)) return 'chip-amber';
+  return 'chip-grey';
+}
+function chip(status, label) {
+  return el('span', { class: `chip ${chipClass(status)}` }, String(label ?? status ?? '—'));
+}
+
+/** A 10-segment bar built entirely from <div>s (CSP forbids inline style, so width
+ * cannot be set with a percentage style rule) — see task note "progress bar built from
+ * divs". Each segment is a fixed-width block; `filled` of them get the "filled" class. */
+function progressBar(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  const filled = Math.round(p / 10);
+  const segs = [];
+  for (let i = 0; i < 10; i += 1) {
+    segs.push(el('div', { class: `seg${i < filled ? ' filled' : ''}` }));
+  }
+  return el('div', { class: 'progressbar-wrap' }, [
+    el('div', { class: 'progressbar' }, segs),
+    el('span', { class: 'progressbar-label' }, `${p.toFixed(0)}%`),
+  ]);
 }
 
 /** Render an array of plain objects as a table. `linkCols` maps a column name to a
@@ -97,6 +183,32 @@ function renderTable(container, rows, columns, { linkCols = {}, empty = 'No rows
   container.appendChild(table);
 }
 
+/** A denser table renderer for the new data-heavy views: columns provide `render(row)`
+ * returning a DOM node/string directly (progress bars, chips, links, whatever), the
+ * wrapper gets sticky-header/zebra/horizontal-scroll styling, and rows are clickable. */
+function renderDataTable(container, rows, columns, { onRowClick, empty = 'No rows.' } = {}) {
+  container.innerHTML = '';
+  if (!rows || rows.length === 0) {
+    container.appendChild(el('p', { class: 'muted' }, empty));
+    return;
+  }
+  const wrap = el('div', { class: 'data-table-wrap' });
+  const table = el('table', { class: 'data-table' });
+  table.appendChild(el('thead', {}, el('tr', {}, columns.map((c) => c.headerNode ?? el('th', {}, c.label ?? c.key)))));
+  const tbody = el('tbody');
+  for (const row of rows) {
+    const tr = el('tr', onRowClick ? { class: 'clickable-row', onclick: (evt) => { if (!evt.target.closest('button,a,input,select')) onRowClick(row); } } : {});
+    for (const c of columns) {
+      const content = c.render ? c.render(row) : row[c.key];
+      tr.appendChild(el('td', {}, content === null || content === undefined ? '' : content));
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
 function renderJson(container, obj) {
   container.innerHTML = '';
   container.appendChild(el('pre', { class: 'json' }, JSON.stringify(obj, null, 2)));
@@ -104,23 +216,52 @@ function renderJson(container, obj) {
 
 function showError(container, err) {
   container.innerHTML = '';
-  container.appendChild(el('p', { class: 'muted' }, `Error: ${err.message}`));
+  container.appendChild(el('p', { class: 'muted error-text' }, `Error: ${err.message}`));
 }
 
-function val(id) {
-  const node = document.getElementById(id);
-  return node ? node.value.trim() : '';
+/** Renders the standard "backend endpoint not built yet" placeholder for a route that
+ * answered 404/501, so a partially-built backend never breaks the page. */
+function notAvailableNote(container, note) {
+  container.innerHTML = '';
+  container.appendChild(el('p', { class: 'muted' }, note || 'Not available yet — this API is still being built.'));
 }
 
-// ---------------------------------------------------------------- auth / health
+function debounce(fn, wait) {
+  let t = null;
+  return (...args) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
+/** Builds a query string, dropping empty/undefined/null values so hash URLs stay tidy. */
+function buildQueryString(params = {}) {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue;
+    usp.set(k, v);
+  }
+  const s = usp.toString();
+  return s;
+}
+
+// ---------------------------------------------------------------- toasts
+
+function toast(message, type = 'info') {
+  const host = document.getElementById('toasts');
+  if (!host) return;
+  const node = el('div', { class: `toast toast-${type}` }, message);
+  host.appendChild(node);
+  setTimeout(() => node.remove(), 6000);
+}
+
+// ---------------------------------------------------------------- health / posting banner
 
 let lastHealth = null;
 
 async function refreshHealth() {
   const banner = document.getElementById('postingBanner');
   const archiveNotice = document.getElementById('archiveDisabledNotice');
-  const syntheticBadge = document.getElementById('syntheticBadge');
-  const devSeedBtn = document.getElementById('devSeedBtn');
   try {
     const health = await api('/api/health');
     lastHealth = health;
@@ -129,622 +270,287 @@ async function refreshHealth() {
       `archive=${health.archiveStatus} — env=${health.environment}` +
       (health.postingEnabled ? ' (POSTING IS ENABLED!)' : '');
     archiveNotice.hidden = health.archiveStatus !== 'DISABLED_DEVELOPMENT';
-    syntheticBadge.hidden = health.environment === 'Production';
-    devSeedBtn.hidden = health.environment !== 'Development';
   } catch (err) {
     banner.textContent = `POSTING DISABLED — health check failed: ${err.message}`;
   }
 }
 
-function updateAuthUi() {
-  const token = getToken();
-  document.getElementById('logoutBtn').hidden = !token;
-  document.getElementById('whoami').textContent = token ? 'signed in' : '';
-  document.getElementById('authNotice').hidden = Boolean(token);
-}
+// ---------------------------------------------------------------- auth (token + Catalyst)
 
-document.getElementById('loginBtn').addEventListener('click', () => {
-  const t = document.getElementById('tokenInput').value.trim();
-  if (!t) return;
-  setToken(t);
-  document.getElementById('tokenInput').value = '';
-  updateAuthUi();
-  loadOverview();
-});
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  setToken('');
-  updateAuthUi();
-});
-
-// ---------------------------------------------------------------- Overview (dev/summary)
-
-async function loadOverview() {
-  const branch = val('overviewBranch');
-  const q = branch ? `?branch=${encodeURIComponent(branch)}` : '';
-  try {
-    const summary = await api(`/api/dev/summary${q}`);
-
-    renderTable(document.getElementById('overviewRuns'), summary.runs, [
-      { key: 'id', label: 'Run id' },
-      { key: 'branchCode', label: 'Branch' },
-      { key: 'status', label: 'Status', status: true },
-    ], { empty: 'No runs yet.' });
-
-    const bridgeRows = Object.entries(summary.dispositionBridge?.byDisposition ?? {}).map(([disposition, g]) => ({
-      disposition, count: g.count, debit: g.debit, credit: g.credit,
-    }));
-    renderTable(document.getElementById('overviewBridge'), bridgeRows, [
-      { key: 'disposition', label: 'Disposition', status: true },
-      { key: 'count', label: 'Count' },
-      { key: 'debit', label: 'Debit' },
-      { key: 'credit', label: 'Credit' },
-    ], { empty: 'No dispositions yet.' });
-
-    const layerRows = Object.entries(summary.layerStatus ?? {}).map(([layer, status]) => ({ layer, status }));
-    renderTable(document.getElementById('overviewLayers'), layerRows, [
-      { key: 'layer', label: 'Layer' },
-      { key: 'status', label: 'Status', status: true },
-    ]);
-
-    const batchRows = Object.entries(summary.batches?.byStatus ?? {}).map(([status, count]) => ({ status, count }));
-    renderTable(document.getElementById('overviewBatches'), batchRows, [
-      { key: 'status', label: 'Batch status', status: true },
-      { key: 'count', label: 'Count' },
-    ], { empty: 'No batches yet.' });
-
-    const queueRows = Object.entries(summary.queueCounts ?? {}).map(([status, count]) => ({ status, count }));
-    renderTable(document.getElementById('overviewQueue'), queueRows, [
-      { key: 'status', label: 'Queue status', status: true },
-      { key: 'count', label: 'Count' },
-    ], { empty: 'No queue items yet.' });
-
-    const excRows = Object.entries(summary.exceptionsByCategory ?? {}).map(([category, count]) => ({ category, count }));
-    renderTable(document.getElementById('overviewExceptions'), excRows, [
-      { key: 'category', label: 'Exception category' },
-      { key: 'count', label: 'Count' },
-    ], { empty: 'No exceptions.' });
-  } catch (err) {
-    showError(document.getElementById('overviewRuns'), err);
-  }
-}
-
-async function runDevSeed() {
-  const statusEl = document.getElementById('devSeedStatus');
-  statusEl.textContent = 'starting…';
-  try {
-    const { jobId } = await api('/api/dev/seed', { method: 'POST', body: {} });
-    statusEl.textContent = `job ${jobId}: running…`;
-    for (let i = 0; i < 200; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const status = await api(`/api/dev/seed/status?jobId=${encodeURIComponent(jobId)}`);
-      statusEl.textContent = `job ${jobId}: ${status.stage}${status.outcome ? ` — ${status.outcome}` : ''}`;
-      if (status.outcome) {
-        loadOverview();
-        return;
-      }
-    }
-  } catch (err) {
-    statusEl.textContent = `Error: ${err.message}`;
-  }
-}
-
-// ---------------------------------------------------------------- 1. Files & validation
-
-async function loadRuns() {
-  const container = document.getElementById('runsTable');
-  try {
-    const branch = val('filesBranch');
-    const q = branch ? `?branch=${encodeURIComponent(branch)}` : '';
-    const { runs } = await api(`/api/runs${q}`);
-    renderTable(
-      container,
-      runs,
-      [
-        { key: 'id', label: 'Run id' },
-        { key: 'branch_code', label: 'Branch' },
-        { key: 'status', label: 'Status', status: true },
-        { key: 'from_date', label: 'From' },
-        { key: 'to_date', label: 'To' },
-      ],
-      { linkCols: { id: (row) => { document.getElementById('filesRunId').value = row.id; loadRunDetail(); } } }
-    );
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-async function loadRunDetail() {
-  const container = document.getElementById('runDetail');
-  const id = val('filesRunId');
-  if (!id) return;
-  try {
-    const data = await api(`/api/runs/${encodeURIComponent(id)}`);
-    container.innerHTML = '';
-    container.appendChild(
-      el('p', {}, `Status: `),
-    );
-    container.lastChild.appendChild(statusSpan(data.run.status));
-    container.appendChild(el('p', {}, `Vouchers: ${data.voucher_total} — ${JSON.stringify(data.voucher_counts)}`));
-    const table = el('div');
-    container.appendChild(table);
-    renderTable(table, data.files, [
-      { key: 'file_name', label: 'File' },
-      { key: 'file_role', label: 'Role' },
-      { key: 'status', label: 'Status', status: true },
-      { key: 'actual_row_count', label: 'Rows' },
-      { key: 'sha256', label: 'sha256' },
-    ]);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- 2. Cutover matrix
-
-async function loadCutover() {
-  const container = document.getElementById('cutoverTable');
-  try {
-    const branch = val('cutoverBranch');
-    const q = branch ? `?branch=${encodeURIComponent(branch)}` : '';
-    const { cutover } = await api(`/api/cutover${q}`);
-    renderTable(
-      container,
-      cutover,
-      [
-        { key: 'branch_code', label: 'Branch' },
-        { key: 'transaction_class', label: 'Class' },
-        { key: 'payment_method', label: 'Payment' },
-        { key: 'smart_pharma_coverage_status', label: 'SP coverage' },
-        { key: 'approval_status', label: 'Approval', status: true },
-        { key: 'cutover_rule_version', label: 'Rule version' },
-        { key: 'id', label: 'Approve' },
-      ],
-      {
-        linkCols: {
-          id: async (row) => {
-            if (row.approval_status === 'APPROVED') return;
-            const reason = prompt('Approval reason?') || '';
-            try {
-              await api(`/api/cutover/${row.id}/approve`, { method: 'POST', body: { reason } });
-              loadCutover();
-            } catch (err) {
-              alert(err.message);
-            }
-          },
-        },
-      }
-    );
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- 3. Layer A
-
-async function loadReconA() {
-  const container = document.getElementById('reconATable');
-  const id = val('reconAId');
-  if (!id) return;
-  try {
-    const { recon_run, results } = await api(`/api/recon/${encodeURIComponent(id)}`);
-    container.innerHTML = '';
-    container.appendChild(el('p', {}, [`Layer ${recon_run.layer} — `, statusSpan(recon_run.status)]));
-    const table = el('div');
-    container.appendChild(table);
-    renderTable(table, results, [
-      { key: 'control_key', label: 'Control' },
-      { key: 'expected', label: 'Expected' },
-      { key: 'actual', label: 'Actual' },
-      { key: 'difference', label: 'Diff' },
-      { key: 'status', label: 'Status', status: true },
-    ]);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-/** Loads the newest Layer A recon run for a run id, so the card is reachable without
- * already knowing a recA_... id. */
-async function loadLatestReconA() {
-  const container = document.getElementById('reconATable');
-  const runId = val('rerunReconRunId');
-  if (!runId) return;
-  try {
-    const { recon_run } = await api(`/api/runs/${encodeURIComponent(runId)}/recon-a`);
-    if (!recon_run) { showError(container, new Error('No Layer A reconciliation has been run for ' + runId)); return; }
-    document.getElementById('reconAId').value = recon_run.id;
-    await loadReconA();
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-async function rerunRecon() {
-  const runId = val('rerunReconRunId');
-  if (!runId) return;
-  try {
-    const result = await api(`/api/runs/${encodeURIComponent(runId)}/rerun-recon`, { method: 'POST', body: {} });
-    document.getElementById('reconAId').value = result.reconRunId;
-    loadReconA();
-  } catch (err) {
-    alert(err.message);
-  }
-}
-
-// ---------------------------------------------------------------- 4. Bridge (Layer B)
-
-async function loadBridge() {
-  const container = document.getElementById('bridgeTable');
-  const runId = val('bridgeRunId');
-  if (!runId) return;
-  try {
-    const { recon_run, results } = await api(`/api/runs/${encodeURIComponent(runId)}/bridge`);
-    container.innerHTML = '';
-    if (!recon_run) {
-      container.appendChild(el('p', { class: 'muted' }, 'No Layer B recon run yet for this run.'));
-      return;
-    }
-    container.appendChild(el('p', {}, [`Layer B — `, statusSpan(recon_run.status)]));
-    const table = el('div');
-    container.appendChild(table);
-    renderTable(
-      table,
-      results,
-      [
-        { key: 'control_key', label: 'Control' },
-        { key: 'expected', label: 'Expected' },
-        { key: 'actual', label: 'Actual' },
-        { key: 'status', label: 'Status', status: true },
-        { key: 'control_key', label: 'Drilldown' },
-      ],
-      {
-        linkCols: {
-          // Second "control_key" column is dedicated to the drilldown link.
-        },
-      }
-    );
-    // Drilldown row: click a disposition control to list the vouchers behind it.
-    const dispositions = ['MIGRATE', 'SMART_PHARMA_EXCLUDED', 'OTHER_EXCLUDED', 'BLOCKED'];
-    const linksWrap = el('p');
-    for (const d of dispositions) {
-      linksWrap.appendChild(
-        el('button', { class: 'linklike mr8', onclick: () => loadBridgeVouchers(runId, d) }, d)
-      );
-    }
-    container.appendChild(linksWrap);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-async function loadBridgeVouchers(runId, disposition) {
-  const container = document.getElementById('bridgeVouchers');
-  try {
-    const { vouchers } = await api(`/api/vouchers?run=${encodeURIComponent(runId)}&disposition=${encodeURIComponent(disposition)}`);
-    renderTable(container, vouchers, [
-      { key: 'id', label: 'Voucher id' },
-      { key: 'source_record_id', label: 'Source id' },
-      { key: 'branch_code', label: 'Branch' },
-      { key: 'debit_total', label: 'Debit' },
-      { key: 'credit_total', label: 'Credit' },
-      { key: 'disposition', label: 'Disposition', status: true },
-    ]);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- 5. Exceptions
-
-async function loadExceptions() {
-  const container = document.getElementById('exceptionsTable');
-  try {
-    const params = new URLSearchParams();
-    const branch = val('excBranch');
-    const category = val('excCategory');
-    const status = val('excStatus');
-    if (branch) params.set('branch', branch);
-    if (category) params.set('category', category);
-    if (status) params.set('status', status);
-    const { exceptions } = await api(`/api/exceptions?${params.toString()}`);
-    renderTable(
-      container,
-      exceptions,
-      [
-        { key: 'id', label: 'id' },
-        { key: 'category', label: 'Category' },
-        { key: 'severity', label: 'Severity' },
-        { key: 'status', label: 'Status', status: true },
-        { key: 'branch_code', label: 'Branch' },
-        { key: 'financial_impact', label: 'Impact' },
-        { key: 'message', label: 'Message' },
-        { key: 'id', label: 'Resolve' },
-      ],
-      {
-        linkCols: {
-          id: async (row) => {
-            const status2 = prompt('Resolve as (RESOLVED / APPROVED_EXCEPTION / REJECTED)?', 'RESOLVED');
-            if (!status2) return;
-            const rootCause = prompt('Root cause?') || '';
-            try {
-              await api(`/api/exceptions/${row.id}/resolve`, { method: 'POST', body: { status: status2, rootCause } });
-              loadExceptions();
-            } catch (err) {
-              alert(err.message);
-            }
-          },
-        },
-      }
-    );
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- 6. Preview
-
-async function loadPreview() {
-  const container = document.getElementById('previewModules');
-  document.getElementById('previewVouchers').innerHTML = '';
-  document.getElementById('previewPayload').innerHTML = '';
-  const runId = val('previewRunId');
-  if (!runId) return;
-  try {
-    const { vouchers } = await api(`/api/vouchers?run=${encodeURIComponent(runId)}&disposition=MIGRATE`);
-    const byModule = new Map();
-    for (const v of vouchers) {
-      const mod = v.target_module || '(unrouted)';
-      byModule.set(mod, (byModule.get(mod) || 0) + 1);
-    }
-    const rows = [...byModule.entries()].map(([target_module, count]) => ({ target_module, count }));
-    renderTable(container, rows, [
-      { key: 'target_module', label: 'Module' },
-      { key: 'count', label: 'Count' },
-    ], {
-      linkCols: {
-        count: (row) => loadPreviewVouchers(runId, row.target_module === '(unrouted)' ? null : row.target_module),
-      },
-    });
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-async function loadPreviewVouchers(runId, targetModule) {
-  const container = document.getElementById('previewVouchers');
-  try {
-    const { vouchers } = await api(`/api/vouchers?run=${encodeURIComponent(runId)}&disposition=MIGRATE`);
-    const filtered = targetModule ? vouchers.filter((v) => v.target_module === targetModule) : vouchers.filter((v) => !v.target_module);
-    renderTable(container, filtered, [
-      { key: 'id', label: 'Voucher id' },
-      { key: 'source_record_id', label: 'Source id' },
-      { key: 'target_module', label: 'Module' },
-      { key: 'id', label: 'Payload' },
-    ], {
-      linkCols: { id: (row) => loadPreviewPayload(row.id) },
-    });
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-async function loadPreviewPayload(voucherId) {
-  const container = document.getElementById('previewPayload');
-  try {
-    const detail = await api(`/api/vouchers/${voucherId}`);
-    container.innerHTML = '';
-    for (const p of detail.preview_payloads) {
-      container.appendChild(el('p', {}, p.human_summary));
-    }
-    renderJson(container, detail.preview_payloads);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- 7. Approval
-
-async function loadBatches() {
-  const container = document.getElementById('batchesCards');
-  container.innerHTML = '';
-  try {
-    const branch = val('batchesBranch');
-    const q = branch ? `?branch=${encodeURIComponent(branch)}` : '';
-    const { batches } = await api(`/api/batches${q}`);
-    if (batches.length === 0) {
-      container.appendChild(el('p', { class: 'muted' }, 'No batches.'));
-      return;
-    }
-    for (const b of batches) {
-      const card = el('div', { class: 'batchCard' });
-      card.appendChild(el('div', {}, [`${b.id} — `, statusSpan(b.status)]));
-      card.appendChild(
-        el('div', { class: 'meta' }, `branch ${b.branch_code} · period ${b.period} · scope_hash ${b.scope_hash} · mapping ${b.mapping_version} · transform ${b.transformation_version} · cutover ${b.cutover_rule_version} · vouchers ${b.voucher_count} · debit ${b.debit_total} · credit ${b.credit_total}`)
-      );
-      const actions = el('div', { class: 'actions' });
-      actions.appendChild(
-        el('button', {
-          onclick: async () => {
-            const reason = prompt('Approval reason (segregation of duties: you must not be the batch creator)?') || '';
-            try {
-              await api(`/api/batches/${b.id}/approve`, { method: 'POST', body: { reason } });
-              loadBatches();
-            } catch (err) {
-              alert(err.message);
-            }
-          },
-        }, 'Approve')
-      );
-      actions.appendChild(
-        el('button', {
-          onclick: () => {
-            document.getElementById('queueBatchId').value = b.id;
-            loadBatchQueue();
-          },
-        }, 'View queue/Layer C')
-      );
-      card.appendChild(actions);
-      container.appendChild(card);
-    }
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- 8. Queue & Layer C
-
-let lastBatchDetail = null;
-
-async function loadBatchQueue() {
-  const summary = document.getElementById('queueSummary');
-  const attemptsEl = document.getElementById('attemptsTable');
-  const id = val('queueBatchId');
-  if (!id) return;
-  try {
-    const data = await api(`/api/batches/${encodeURIComponent(id)}`);
-    lastBatchDetail = data;
-    summary.innerHTML = '';
-    summary.appendChild(el('p', {}, [`Batch ${data.batch.id} — `, statusSpan(data.batch.status)]));
-    summary.appendChild(
-      el('p', {}, `Queue counts: ${Object.entries(data.queue_counts).map(([k, v]) => `${k}=${v}`).join(', ') || '(none)'}`)
-    );
-    summary.appendChild(
-      el('div', {}, [
-        el('button', { onclick: () => batchAction(id, 'pause') }, 'Pause'),
-        ' ',
-        el('button', { onclick: () => batchAction(id, 'resume') }, 'Resume'),
-      ])
-    );
-    renderTable(attemptsEl, data.attempts, [
-      { key: 'queue_item_id', label: 'Queue item' },
-      { key: 'attempt_no', label: '#' },
-      { key: 'response_class', label: 'Class' },
-      { key: 'http_status', label: 'HTTP' },
-      { key: 'zoho_record_id', label: 'Target id' },
-      { key: 'error_code', label: 'Error' },
-    ]);
-    renderBalanceBridge(data);
-  } catch (err) {
-    showError(summary, err);
-  }
-}
-
-async function batchAction(id, action) {
-  try {
-    await api(`/api/batches/${id}/${action}`, { method: 'POST', body: {} });
-    loadBatchQueue();
-  } catch (err) {
-    alert(err.message);
-  }
-}
-
-async function retryQueueItem() {
-  const id = val('retryItemId');
-  const reason = val('retryReason');
-  if (!id) return;
-  try {
-    await api(`/api/queue/${id}/retry`, { method: 'POST', body: reason ? { reason } : {} });
-    if (lastBatchDetail) loadBatchQueue();
-  } catch (err) {
-    alert(err.message);
-  }
-}
-
-// ---------------------------------------------------------------- 9. Balance bridge
-
-function renderBalanceBridge(data) {
-  const container = document.getElementById('balanceTable');
-  container.innerHTML = '';
-  container.appendChild(
-    el('p', {}, [
-      'Latest Layer C: ',
-      data.latest_layer_c ? statusSpan(data.latest_layer_c.status) : document.createTextNode('(none)'),
-    ])
-  );
-  const bb = data.latest_balance_bridge;
-  container.appendChild(
-    el('p', {}, [
-      'Latest balance bridge: ',
-      bb ? statusSpan(bb.status) : document.createTextNode('(none)'),
-      bb ? el('button', { class: 'linklike ml8', onclick: () => { document.getElementById('reconAId').value = bb.id; loadReconA(); } }, 'view controls') : null,
-    ])
-  );
-}
-
-async function takeSnapshot() {
-  const branchCode = val('snapBranch');
-  const kind = document.getElementById('snapKind').value;
-  if (!branchCode) return;
-  try {
-    const result = await api('/api/snapshots', { method: 'POST', body: { branchCode, kind } });
-    alert(`Snapshot taken: ${JSON.stringify(result)}`);
-  } catch (err) {
-    alert(err.message);
-  }
-}
-
-// ---------------------------------------------------------------- 10. Audit & worker health
-
-async function loadAudit() {
-  const container = document.getElementById('auditTable');
-  try {
-    const params = new URLSearchParams();
-    const entity = val('auditEntity');
-    const id = val('auditId');
-    if (entity) params.set('entity', entity);
-    if (id) params.set('id', id);
-    const { audit_events } = await api(`/api/audit?${params.toString()}`);
-    renderTable(container, audit_events, [
-      { key: 'created_at', label: 'When' },
-      { key: 'actor', label: 'Actor' },
-      { key: 'action', label: 'Action' },
-      { key: 'entity_type', label: 'Entity' },
-      { key: 'entity_id', label: 'Entity id' },
-      { key: 'authorization_decision', label: 'Decision', status: true },
-      { key: 'correlation_id', label: 'Correlation' },
-    ]);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-async function loadWorkerHealth() {
-  const container = document.getElementById('workerHealth');
-  try {
-    const health = await api('/api/worker/health');
-    renderJson(container, health);
-  } catch (err) {
-    showError(container, err);
-  }
-}
-
-// ---------------------------------------------------------------- wiring
-
-const ACTIONS = {
-  loadOverview,
-  runDevSeed,
-  loadRuns,
-  loadRunDetail,
-  loadCutover,
-  loadReconA,
-  loadLatestReconA,
-  rerunRecon,
-  loadBridge,
-  loadExceptions,
-  loadPreview,
-  loadBatches,
-  loadBatchQueue,
-  retryQueueItem,
-  takeSnapshot,
-  loadAudit,
-  loadWorkerHealth,
+const state = {
+  authConfig: null, // { modes, catalystLoginUrl, catalystLogoutUrl }
+  user: null, // { id, role, principal_type, branches, authMode, email? }
 };
 
-document.querySelectorAll('[data-action]').forEach((btn) => {
-  const fn = ACTIONS[btn.getAttribute('data-action')];
-  if (fn) btn.addEventListener('click', fn);
-});
+function hasRole(...roles) {
+  return Boolean(state.user) && roles.includes(state.user.role);
+}
+function isAdmin() {
+  return hasRole('admin');
+}
 
-updateAuthUi();
-refreshHealth();
-if (getToken()) loadOverview();
+async function loadAuthConfig() {
+  try {
+    state.authConfig = await api('/api/auth/config');
+  } catch {
+    state.authConfig = { modes: ['token'], catalystLoginUrl: null, catalystLogoutUrl: null };
+  }
+  return state.authConfig;
+}
+
+/** Resolves true/false; never throws. A missing/invalid session is simply "not signed
+ * in" — every route decides for itself whether that means "show #/login". */
+async function tryLoadMe() {
+  try {
+    state.user = await api('/api/auth/me');
+    return true;
+  } catch {
+    state.user = null;
+    return false;
+  }
+}
+
+function signOut() {
+  const wasCatalyst = state.user?.authMode === 'catalyst';
+  const logoutUrl = state.authConfig?.catalystLogoutUrl;
+  setToken('');
+  state.user = null;
+  renderNav();
+  if (wasCatalyst && logoutUrl) {
+    window.location.href = logoutUrl;
+  } else {
+    navigate('/login');
+  }
+}
+
+// ---------------------------------------------------------------- hash router
+
+const routeTable = [];
+
+/** pattern: '/branches/:code' style. opts.public === true skips the sign-in gate
+ * (only /login needs this). opts.roles restricts the route to those roles once
+ * signed in (a role mismatch redirects to /branches rather than 403ing silently). */
+function registerRoute(pattern, handler, opts = {}) {
+  const segments = pattern.split('/').filter(Boolean);
+  routeTable.push({ segments, handler, opts });
+}
+
+function matchRoute(pathSegments) {
+  for (const r of routeTable) {
+    if (r.segments.length !== pathSegments.length) continue;
+    const params = {};
+    let ok = true;
+    for (let i = 0; i < r.segments.length; i += 1) {
+      const seg = r.segments[i];
+      if (seg.startsWith(':')) params[seg.slice(1)] = decodeURIComponent(pathSegments[i]);
+      else if (seg !== pathSegments[i]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return { handler: r.handler, params, opts: r.opts };
+  }
+  return null;
+}
+
+function parseHash() {
+  const raw = location.hash.startsWith('#') ? location.hash.slice(1) : location.hash;
+  const qIdx = raw.indexOf('?');
+  const path = (qIdx === -1 ? raw : raw.slice(0, qIdx)) || '/';
+  const queryPart = qIdx === -1 ? '' : raw.slice(qIdx + 1);
+  const query = Object.fromEntries(new URLSearchParams(queryPart));
+  return { path, query };
+}
+
+function navigate(path, query) {
+  const q = query ? buildQueryString(query) : '';
+  location.hash = `#${path}${q ? `?${q}` : ''}`;
+}
+
+/** Replaces the current filter/sort/page state in the URL WITHOUT pushing a new
+ * history entry or re-triggering dispatch (views call this as filters change so
+ * reload/back restores exactly what was on screen). */
+function replaceQuery(path, query) {
+  const q = buildQueryString(query);
+  const newHash = `#${path}${q ? `?${q}` : ''}`;
+  history.replaceState(null, '', newHash);
+}
+
+function navItem(label, path, activePath) {
+  const active = activePath === path || activePath.startsWith(`${path}/`);
+  return el('button', { class: `navlink${active ? ' navlink-active' : ''}`, onclick: () => navigate(path) }, label);
+}
+
+function renderNav() {
+  const nav = document.getElementById('mainNav');
+  const loginBox = document.getElementById('loginBox');
+  if (!nav || !loginBox) return;
+  nav.innerHTML = '';
+  loginBox.innerHTML = '';
+  if (state.user) {
+    const { path } = parseHash();
+    nav.appendChild(navItem('Branches', '/branches', path));
+    nav.appendChild(navItem('Legacy console', '/legacy', path));
+    if (isAdmin()) {
+      nav.appendChild(navItem('Team', '/team', path));
+      nav.appendChild(navItem('Administration', '/admin/connections/books', path));
+    } else if (hasRole('approver', 'viewer', 'operator')) {
+      nav.appendChild(navItem('Team', '/team', path));
+    }
+    const label =
+      `${state.user.id} (${state.user.role}` +
+      `${state.user.principal_type === 'bot' ? ', bot' : ''}` +
+      `${state.user.email ? `, ${state.user.email}` : ''})`;
+    loginBox.appendChild(el('span', { class: 'whoami' }, label));
+    loginBox.appendChild(el('button', { onclick: signOut }, 'Sign out'));
+  } else {
+    loginBox.appendChild(el('span', { class: 'whoami' }, 'Not signed in'));
+  }
+}
+
+async function dispatch() {
+  const { path, query } = parseHash();
+  if (path === '/' || path === '') {
+    navigate(state.user ? '/branches' : '/login');
+    return;
+  }
+  const match = matchRoute(path.split('/').filter(Boolean));
+  const viewEl = document.getElementById('view');
+  if (!match) {
+    viewEl.innerHTML = '';
+    viewEl.appendChild(el('p', { class: 'muted' }, `No such view: ${path}`));
+    renderNav();
+    return;
+  }
+  if (!match.opts.public && !state.user) {
+    const ok = await tryLoadMe();
+    if (!ok) {
+      if (path !== '/login') navigate('/login');
+      renderNav();
+      return;
+    }
+  }
+  if (match.opts.roles && state.user && !match.opts.roles.includes(state.user.role)) {
+    // Not an outright 403 page: send them somewhere they can actually use.
+    navigate('/branches');
+    return;
+  }
+  renderNav();
+  viewEl.innerHTML = '';
+  try {
+    await match.handler(viewEl, match.params, query);
+  } catch (err) {
+    if (err.status === 401) {
+      state.user = null;
+      navigate('/login');
+      return;
+    }
+    showError(viewEl, err);
+  }
+}
+
+// ---------------------------------------------------------------- login view (core; not
+// split into views/*.js since it is tightly coupled to the auth state above)
+
+function renderLoginView(container) {
+  const card = el('section', { class: 'card' }, [el('h2', {}, 'Sign in')]);
+  const errorP = el('p', { class: 'muted error-text' }, '');
+
+  if (state.authConfig?.catalystLoginUrl) {
+    card.appendChild(
+      el('div', { class: 'controls' }, [
+        el(
+          'button',
+          {
+            class: 'primary',
+            onclick: () => {
+              window.location.href = state.authConfig.catalystLoginUrl;
+            },
+          },
+          'Sign in with Zoho (Catalyst)'
+        ),
+      ])
+    );
+    card.appendChild(el('p', { class: 'muted' }, 'or use a bearer token below:'));
+  }
+
+  const tokenInput = el('input', { id: 'tokenInput', type: 'password', autocomplete: 'off', placeholder: 'paste token' });
+  async function onTokenLogin() {
+    const t = tokenInput.value.trim();
+    if (!t) return;
+    setToken(t);
+    tokenInput.value = '';
+    const ok = await tryLoadMe();
+    if (!ok) {
+      setToken('');
+      errorP.textContent = 'That token was not accepted.';
+      return;
+    }
+    navigate('/branches');
+  }
+  tokenInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') onTokenLogin();
+  });
+
+  card.appendChild(
+    el('div', { class: 'controls' }, [
+      el('label', {}, ['Bearer token (bots / break-glass)', tokenInput]),
+      el('button', { onclick: onTokenLogin }, 'Sign in'),
+    ])
+  );
+  card.appendChild(errorP);
+  container.appendChild(card);
+}
+
+registerRoute('/login', renderLoginView, { public: true });
+
+// ---------------------------------------------------------------- public namespace
+
+window.App = {
+  // fetch helpers
+  api,
+  apiOptional,
+  downloadWithAuth,
+  // dom helpers
+  el,
+  statusSpan,
+  chip,
+  chipClass,
+  progressBar,
+  renderTable,
+  renderDataTable,
+  renderJson,
+  showError,
+  notAvailableNote,
+  debounce,
+  buildQueryString,
+  toast,
+  // auth / state
+  state,
+  hasRole,
+  isAdmin,
+  getToken,
+  setToken,
+  loadAuthConfig,
+  tryLoadMe,
+  signOut,
+  // router
+  registerRoute,
+  navigate,
+  replaceQuery,
+  parseHash,
+  renderNav,
+  dispatch,
+  // health
+  refreshHealth,
+  getLastHealth: () => lastHealth,
+};
+
+/** Called once, by boot.js, after every view script has registered its routes. */
+async function start() {
+  window.addEventListener('hashchange', dispatch);
+  await Promise.all([refreshHealth(), loadAuthConfig()]);
+  if (getToken()) await tryLoadMe();
+  await dispatch();
+}
+window.App.start = start;

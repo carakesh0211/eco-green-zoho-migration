@@ -9,151 +9,24 @@
 <body>
   <header class="topbar">
     <h1>Eco Green &rarr; Zoho Books Migration Console</h1>
-    <div id="loginBox" class="loginBox">
-      <input id="tokenInput" type="password" placeholder="Bearer token" autocomplete="off" />
-      <button id="loginBtn">Sign in</button>
-      <span id="whoami" class="whoami"></span>
-      <button id="logoutBtn" hidden>Sign out</button>
-    </div>
+    <nav id="mainNav" class="mainNav"></nav>
+    <div id="loginBox" class="loginBox"></div>
   </header>
 
   <div id="postingBanner" class="banner banner-danger">POSTING DISABLED &mdash; loading&hellip;</div>
   <div id="archiveDisabledNotice" class="banner banner-danger" hidden>Archive disabled (Development, Stratus not activated) &mdash; files are NOT being stored anywhere.</div>
-  <div id="authNotice" class="notice" hidden>Sign in with a bearer token to load data. Every number below links to the API call that produced it.</div>
+  <div id="toasts" class="toasts"></div>
 
   <main id="app">
-
-    <section class="card" id="sec-overview">
-      <h2>Overview <span id="syntheticBadge" class="badge badge-warn" hidden>SYNTHETIC DEMO DATA</span></h2>
-      <div class="controls">
-        <label>Branch <input id="overviewBranch" placeholder="PILOT01" /></label>
-        <button data-action="loadOverview">Refresh overview</button>
-        <button id="devSeedBtn" data-action="runDevSeed" hidden>Run synthetic demo seed (Development only)</button>
-        <span id="devSeedStatus" class="muted"></span>
-      </div>
-      <div id="overviewRuns" class="tablewrap"></div>
-      <div id="overviewBridge" class="tablewrap"></div>
-      <div id="overviewLayers" class="tablewrap"></div>
-      <div id="overviewBatches" class="tablewrap"></div>
-      <div id="overviewQueue" class="tablewrap"></div>
-      <div id="overviewExceptions" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-files">
-      <h2>1. Files &amp; validation</h2>
-      <div class="controls">
-        <label>Branch <input id="filesBranch" placeholder="PILOT01" /></label>
-        <button data-action="loadRuns">List runs</button>
-        <label>Run id <input id="filesRunId" placeholder="run-001" /></label>
-        <button data-action="loadRunDetail">Load run</button>
-      </div>
-      <div id="runsTable" class="tablewrap"></div>
-      <div id="runDetail" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-cutover">
-      <h2>2. Cutover matrix</h2>
-      <div class="controls">
-        <label>Branch <input id="cutoverBranch" placeholder="PILOT01 (blank = all in scope)" /></label>
-        <button data-action="loadCutover">Load cutover matrix</button>
-      </div>
-      <div id="cutoverTable" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-layerA">
-      <h2>3. Layer A &mdash; trial balance vs CSV</h2>
-      <div class="controls">
-        <label>Recon run id <input id="reconAId" placeholder="recA_..." /></label>
-        <button data-action="loadReconA">Load recon run</button>
-        <label>Run id <input id="rerunReconRunId" placeholder="run-001" /></label>
-        <button data-action="loadLatestReconA">Load latest Layer A for run</button>
-        <button data-action="rerunRecon">Rerun Layer A (operator)</button>
-      </div>
-      <div id="reconATable" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-bridge">
-      <h2>4. Bridge (Layer B)</h2>
-      <div class="controls">
-        <label>Run id <input id="bridgeRunId" placeholder="run-001" /></label>
-        <button data-action="loadBridge">Load bridge</button>
-      </div>
-      <div id="bridgeTable" class="tablewrap"></div>
-      <div id="bridgeVouchers" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-exceptions">
-      <h2>5. Overlaps &amp; Exceptions</h2>
-      <div class="controls">
-        <label>Branch <input id="excBranch" /></label>
-        <label>Category <input id="excCategory" placeholder="SMART_PHARMA_OVERLAP" /></label>
-        <label>Status <input id="excStatus" placeholder="OPEN" /></label>
-        <button data-action="loadExceptions">Load exceptions</button>
-      </div>
-      <div id="exceptionsTable" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-preview">
-      <h2>6. Preview</h2>
-      <div class="controls">
-        <label>Run id <input id="previewRunId" placeholder="run-001" /></label>
-        <button data-action="loadPreview">Load preview (MIGRATE by module)</button>
-      </div>
-      <div id="previewModules" class="tablewrap"></div>
-      <div id="previewVouchers" class="tablewrap"></div>
-      <div id="previewPayload" class="tablewrap"></div>
-    </section>
-
-    <section class="card" id="sec-approval">
-      <h2>7. Approval</h2>
-      <div class="controls">
-        <label>Branch <input id="batchesBranch" /></label>
-        <button data-action="loadBatches">Load batches</button>
-      </div>
-      <div id="batchesCards"></div>
-    </section>
-
-    <section class="card" id="sec-queue">
-      <h2>8. Queue &amp; Layer C</h2>
-      <div class="controls">
-        <label>Batch id <input id="queueBatchId" placeholder="batch_..." /></label>
-        <button data-action="loadBatchQueue">Load batch</button>
-      </div>
-      <div id="queueSummary" class="tablewrap"></div>
-      <div id="attemptsTable" class="tablewrap"></div>
-      <div class="controls">
-        <label>Queue item id <input id="retryItemId" /></label>
-        <label>Reason (required for DEAD_LETTER) <input id="retryReason" /></label>
-        <button data-action="retryQueueItem">Retry</button>
-      </div>
-    </section>
-
-    <section class="card" id="sec-balance">
-      <h2>9. Live Books balance bridge</h2>
-      <div id="balanceTable" class="tablewrap">Load a batch in section 8 to see its latest balance-bridge recon run.</div>
-      <div class="controls">
-        <label>Branch <input id="snapBranch" /></label>
-        <label>Kind
-          <select id="snapKind"><option>BASELINE</option><option>POST_RUN</option></select>
-        </label>
-        <button data-action="takeSnapshot">Take snapshot (operator, read-only against Books)</button>
-      </div>
-    </section>
-
-    <section class="card" id="sec-audit">
-      <h2>10. Audit &amp; worker health</h2>
-      <div class="controls">
-        <label>Entity type <input id="auditEntity" placeholder="migration_batches" /></label>
-        <label>Entity id <input id="auditId" /></label>
-        <button data-action="loadAudit">Load audit (admin/operator)</button>
-        <button data-action="loadWorkerHealth">Worker health</button>
-      </div>
-      <div id="auditTable" class="tablewrap"></div>
-      <div id="workerHealth" class="tablewrap"></div>
-    </section>
-
+    <div id="view"></div>
   </main>
 
   <script src="/app.js"></script>
+  <script src="/views/legacy.js"></script>
+  <script src="/views/branches.js"></script>
+  <script src="/views/branch-workspace.js"></script>
+  <script src="/views/team.js"></script>
+  <script src="/views/admin-books.js"></script>
+  <script src="/boot.js"></script>
 </body>
 </html>

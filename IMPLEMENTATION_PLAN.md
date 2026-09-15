@@ -66,7 +66,7 @@ module is finished, tested, or deployed unless the evidence column says so.
 | Catalyst Stratus/Data Store adapters (currently stubs) | A Catalyst project decision (D-1) is made and the target project/environment exists |
 | Real Eco Green CSV schema and control reports | Eco Green team supplies query inventory and signed control reports (D-4) |
 | Smart Pharma evidence feed beyond the synthetic fixture | Smart Pharma vendor supplies posting facts and stable references (D-5) |
-| 326-branch scale, volume/performance testing | Pilot branch(es) succeed end-to-end and finance signs off on the pilot pattern |
+| ~351-branch scale, volume/performance testing (see `docs/CAPACITY_REVIEW.md`) | Pilot branch(es) succeed end-to-end and finance signs off on the pilot pattern |
 | Full RBAC/user directory beyond the local hashed-token file | An identity provider or Catalyst Authentication integration is agreed |
 | Multi-branch/multi-worker horizontal scaling | Single-worker pilot throughput is proven insufficient |
 | Formal retention/backup/restore/RTO-RPO procedures | Retention and recovery targets are agreed (open in `PROJECT_CONTEXT.md`) |
@@ -180,7 +180,49 @@ secret scan against a deliberately seeded secret-like string. Evidence: `npm run
 check:secrets` output before any push. DoD: `fixtures:seed` and `pipeline:dry-run` both
 complete against `DATA_CONTRACT.md` §8 with the documented outcomes.
 
-## 7. Reuse matrix (RapGuru Tally tool → this pilot)
+**WS-D -- Branch Control Dashboard (§D).** Denormalised per-branch summary, server-side
+search/filter/sort/pagination, CSV export. Prereqs: WS1-WS9 (summary fields derive from
+their tables). Invariants: `branch_summaries` <= `EXPECTED_BRANCH_COUNT` rows in normal
+operation; every field reproducible from source tables; browser never receives more
+than one page. Tests: filter/sort/pagination correctness against a seeded set exceeding
+one ZCQL page; CSV export matches the filtered/sorted set. Evidence:
+`docs/CAPACITY_REVIEW.md` row projections; route tests for `/api/branches*`. DoD:
+dashboard renders the full ~351-branch scenario within the 300-row/2-page ZCQL budget
+with no client-side pagination fallback.
+
+**WS-U -- Team, assignments, and authentication (§U/§E).** `app_users` directory,
+`branch_period_assignments`, SoD checks, `AUTH_MODE` (token/Catalyst). Prereqs: WS1
+(store), WS6 (existing SoD pattern). Invariants: operator != approver per assignment;
+optimistic-lock `version` conflicts return 409; bot principals never authenticate via
+Catalyst; plaintext bot tokens returned exactly once. Tests: SoD violation rejected,
+stale-version write rejected, bot-cannot-hold-approver-role, mixed `AUTH_MODE` fallback.
+Evidence: `CONTRACTS.md` §U/§E route tests; audit rows for invite/rotate/reassign. DoD:
+no route allows an operator to also be recorded as approver on the same assignment,
+under either auth mode.
+
+**WS-N -- Zoho Books connection (§N).** `books_connections`/`books_locations`, OAuth
+connect flow, six independent controls. Prereqs: WS7 (existing Books adapter/guard).
+Invariants: `secret_ciphertext` only, never a plaintext secret in any response/log;
+connecting Books never sets `BOOKS_READ_AUTHORIZED` or `POSTING_ENABLED`; a live read is
+refused without `BOOKS_READ_AUTHORIZED=true`. Tests: OAuth state mismatch rejected; read
+attempted without authorization flag refused; disconnect preserves history. Evidence:
+`CONTRACTS.md` §N route tests; `SECURITY.md` secret-handling checklist. DoD: all six
+controls in `ARCHITECTURE.md` §7.3 are independently toggleable in tests, none implying
+another.
+
+**WS-C -- Capacity and archival planning (planning workstream, no code contract).**
+Produce `docs/CAPACITY_REVIEW.md`: row/scenario projections, Catalyst Development and
+Production plan limits, Stratus/Data Store placement decision, archival/purge strategy,
+Books API throughput estimate. Prereqs: none (uses the `PILOT01` fixture and published
+Catalyst/Books limits). Invariants: every number is either sourced from this repo's own
+fixture/observed limits or cited with a URL and access date; every place the review does
+not know a real number, it says so explicitly rather than guessing. Tests: n/a
+(documentation workstream). Evidence: `docs/CAPACITY_REVIEW.md` itself, cross-checked
+against `docs/CATALYST_REFERENCES.md`. DoD: the review's row projections are approved by
+the owner before any real (non-synthetic) ingestion begins ("APPROVAL REQUIRED" block,
+§8).
+
+## 7. Reuse matrix (RapGuru Tally tool → this pilot)## 7. Reuse matrix (RapGuru Tally tool → this pilot)
 
 | Component | Disposition | Notes |
 |---|---|---|
@@ -254,3 +296,14 @@ complete against `DATA_CONTRACT.md` §8 with the documented outcomes.
   - Live smoke (`POST /api/dev/archive-smoke`, admin + Development + `DEV_SEED_ENABLED`, synthetic CSV under branch `SMOKE01`): first run 6/7 — `put_different_bytes_rejected` returned `NO_ERROR_THROWN`. Root cause: the adapter's immutability scan assumed a Table-style `listPagedObjects` response (`objects[].object_key`, `more_records`/`next_token`) and sent `nextToken`; the real SDK takes `continuationToken` and returns `{ truncated, next_continuation_token, contents: StratusObject[] }` (key at `keyDetails.key`), so live Stratus looked empty and a different-bytes put was allowed. The fake mirrored the wrong guess, so the suite could not catch it.
   - Fix (commit `48ffc44`): adapter reads the verified contract, follows `next_continuation_token` while `truncated === 'true'`, and fails closed (`LIST_SHAPE_UNEXPECTED`) when `contents` is not an array; the fake now returns the exact real shape and rejects unknown option names; 4 regression tests (real-shape conflict, multi-page scan, fail-closed on the old shape, fake option guard). Suite **461/461**. Contract recorded in `docs/CATALYST_REFERENCES.md`.
   - Redeployed (`buildSha 8aab133`, health `archiveAdapter: stratus`, `archiveStatus: ENABLED`) and re-ran the live smoke: **7/7 PASS** (put, exists, get sha-verified, same-bytes idempotent, different-bytes rejected with `IMMUTABLE_CONFLICT`, original intact after conflict, unwritten uri absent) — run `smoke-95c3618a31e0` under `SMOKE01/`. Bucket listing (`Get_All_Objects`, prefix `SMOKE01/`) is the before/after proof: the pre-fix run `smoke-864d5454aa75` holds **two** objects (94-byte original plus the 65-byte different-bytes file that leaked through), the post-fix run `smoke-95c3618a31e0` holds exactly **one**. All three are synthetic and remain as evidence; delete only on owner instruction.
+- **2026-09-15 (increment 2 started)** -- Team-operable console workstreams
+  (WS-D/WS-U/WS-N/WS-C) started, implemented concurrently by other agents against
+  `CONTRACTS.md` §U/§D/§N/§E and the 5 new Data Store tables already defined in
+  `src/adapters/store/schema.sql` (`branch_summaries`, `app_users`,
+  `branch_period_assignments`, `books_connections`, `books_locations`; schema now 25
+  tables total). Branch-count scope corrected from the earlier approximately-326
+  estimate to approximately 351 everywhere across the documentation set
+  (`docs/CAPACITY_REVIEW.md` created for the resulting capacity/throughput analysis --
+  APPROVAL REQUIRED before any real ingestion). No increment-2 route or table is claimed
+  complete, tested end-to-end, or deployed by this entry alone -- verify against code on
+  merge.

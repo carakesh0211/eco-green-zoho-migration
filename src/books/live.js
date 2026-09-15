@@ -33,10 +33,20 @@ import { classifyResponse } from './classify.js';
 import { createLimiter, withRetry } from './limiter.js';
 import { getAccessToken } from './oauth.js';
 
-// TODO(verify-against-zoho-docs): module -> Books v3 endpoint segment mapping. Confirmed common
-// ones are listed; anything else falls back to `${module}s`, which is very likely wrong for some
-// modules (e.g. bills vs bill, creditnotes vs credit_note) — verify each against the current
-// https://www.zoho.com/books/api/v3/ reference before wiring real transform.js payloads through this.
+// VERIFIED(docs/ZOHO_BOOKS_API_REFERENCES.md#modules-used-by-srcbookslivejs-module_path, 2026-09-15):
+// module -> Books v3 endpoint segment mapping, checked against the official per-module doc pages
+// under https://www.zoho.com/books/api/v3/ (journals, bills, credit-notes, vendor-credits,
+// customer-payments, vendor-payments, bank-transactions all confirmed present in the v3 REST
+// nav) plus the plain `/expenses` path (module confirmed present in the same nav enumeration).
+// One bug fixed by this verification pass: `bank_transfer` previously mapped to `banktransfers`,
+// which is NOT a real Zoho Books v3 endpoint — the confirmed endpoint is `/banktransactions`
+// (Zoho's "Bank Transactions" module: deposit/refund/transfer_fund/card_payment/... transaction
+// types). NOTE: Zoho's "Bank Transactions" module is the bank-feed/reconciliation list, which may
+// not be a perfect semantic match for this repo's `bank_transfer` concept (an internal transfer
+// between two of our own GL bank accounts, see gl_effects.js/transform.js) — Zoho also exposes a
+// separate "Transfer Funds" action under Bank Accounts for that exact case. Left as `banktransactions`
+// here (the only real endpoint under that name) but flagged: confirm against a live sandbox org
+// before this path is used to actually post a bank_transfer record.
 const MODULE_PATH = Object.freeze({
   bill: 'bills',
   vendor_payment: 'vendorpayments',
@@ -44,7 +54,7 @@ const MODULE_PATH = Object.freeze({
   expense: 'expenses',
   credit_note: 'creditnotes',
   vendor_credit: 'vendorcredits',
-  bank_transfer: 'banktransfers',
+  bank_transfer: 'banktransactions',
   journal: 'journals',
 });
 
@@ -169,29 +179,44 @@ export function createLiveClient(config) {
   }
 
   return {
+    // VERIFIED(https://www.zoho.com/books/api/v3/organizations/, 2026-09-15): GET
+    // /organizations/{organization_id} returns { code, message, organization: {...} }.
     async getOrganization() {
       const json = await read(`/organizations/${config.organizationId}`);
       return json.organization ?? json;
     },
 
+    // VERIFIED(https://www.zoho.com/books/api/v3/locations/, 2026-09-15): GET /locations returns
+    // { code, message, locations: [...] }. Zoho Books v3 uses "Locations" terminology exclusively
+    // — there is no "Branches" endpoint in the current v3 REST reference (confirmed by enumerating
+    // the full nav of https://www.zoho.com/books/api/v3/ on the access date above).
     async getLocations() {
       const json = await read('/locations');
       return json.locations ?? [];
     },
 
     async getTrialBalance({ locationId, fromDate, toDate } = {}) {
-      // TODO(verify-against-zoho-docs): assumed endpoint GET /reports/trialbalance with
-      // location_id/from_date/to_date query params. Zoho's Reports API parameter names and
-      // response shape have changed across API versions/plans — confirm against the current
-      // https://www.zoho.com/books/api/v3/trialbalance/ reference before relying on this.
+      // UNVERIFIED (docs/ZOHO_BOOKS_API_REFERENCES.md#reports--trial-balance, 2026-09-15): the
+      // full nav of https://www.zoho.com/books/api/v3/ was enumerated on the access date above
+      // and contains NO "Reports"/"Trial Balance" entry at all in the current public v3 REST
+      // reference; a Zoho community post asking the same question has no visible answer. The path
+      // below (`/reports/trialbalance` with location_id/from_date/to_date) is the most defensible
+      // guess (matches the `reports/<name>` shape used by Zoho's other report-style endpoints
+      // referenced in third-party directories) but is NOT confirmed against an official page —
+      // do not rely on this for a real migration run without confirming against a live sandbox
+      // organisation first. `mock.js#getTrialBalance` (derived from stored double-entry effects)
+      // is the only trial-balance source this MVP actually depends on.
       return read('/reports/trialbalance', { location_id: locationId, from_date: fromDate, to_date: toDate });
     },
 
     async searchByMigrationTag({ module, sourceHash } = {}) {
-      // TODO(verify-against-zoho-docs): assumes the module's list endpoint supports filtering by
-      // a custom field via a `cf_migration_source_hash` query parameter. Zoho's custom-field
-      // search syntax/param naming varies by module and API version (some require
-      // `custom_field_filter` or a JSON-encoded filter) — confirm the exact mechanism for each
+      // UNVERIFIED (docs/ZOHO_BOOKS_API_REFERENCES.md#date-range-filters-and-custom-field-search,
+      // 2026-09-15): a Zoho community thread shows real callers filtering by custom field via
+      // `custom_field_startswith`/`custom_field_contains` query params, a different shape from
+      // the flat `cf_<fieldname>` equality filter assumed below; neither shape is confirmed
+      // end-to-end against an official page. `cf_migration_source_hash` (exact-match) is kept as
+      // the primary attempt (simpler, and the more commonly documented shape across Zoho's REST
+      // APIs for custom-field equality filtering) — confirm against a live sandbox org for each
       // module actually used by transform.js before relying on this for idempotency lookups.
       const path = `/${modulePath(module)}`;
       const json = await read(path, { cf_migration_source_hash: sourceHash });
@@ -199,8 +224,12 @@ export function createLiveClient(config) {
     },
 
     async listRecordsInWindow({ locationId, module, fromDate, toDate } = {}) {
-      // TODO(verify-against-zoho-docs): date range / location filter param names assumed
-      // (`location_id`, `date_start`, `date_end`); confirm per-module against current docs.
+      // UNVERIFIED (docs/ZOHO_BOOKS_API_REFERENCES.md#date-range-filters-and-custom-field-search,
+      // 2026-09-15): the Journals/Bills doc pages did not surface an explicit date-range query
+      // parameter section in this verification pass. `location_id`/`date_start`/`date_end` are
+      // kept as the assumed param names (consistent with the `location_id` field name VERIFIED
+      // on the Locations endpoint) — confirm per-module against a live sandbox org before relying
+      // on this for real windowed listing.
       const path = `/${modulePath(module)}`;
       const json = await read(path, { location_id: locationId, date_start: fromDate, date_end: toDate });
       return json[modulePath(module)] ?? [];

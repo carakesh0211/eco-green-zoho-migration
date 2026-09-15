@@ -86,7 +86,12 @@ function stripInlineComment(s) {
 const RULES = [
   {
     kind: 'ZOHO_OAUTH_TOKEN',
-    test: (line) => (line.match(/\b1000\.[0-9a-zA-Z]{10,}\.[0-9a-zA-Z]{10,}\b/g) ?? []),
+    // Two shapes seen in real Zoho OAuth material, both starting with the `1000.` client
+    // namespace prefix used across every Zoho DC: a two-dot refresh/grant-token shape
+    // (`1000.<20+ chars>.<20+ chars>`) and a single-segment client-id shape
+    // (`1000.<25+ chars>`, no second dot) — added for src/books/connection.js's
+    // BOOKS_CLIENT_ID / BOOKS_CLIENT_SECRET / stored refresh-token material.
+    test: (line) => (line.match(/\b1000\.[0-9a-zA-Z]{10,}\.[0-9a-zA-Z]{10,}\b|\b1000\.[0-9a-zA-Z]{25,}\b(?!\.)/g) ?? []),
   },
   {
     kind: 'GITHUB_TOKEN',

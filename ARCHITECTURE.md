@@ -109,6 +109,11 @@ Money is stored as 2-decimal-place TEXT and computed in integer paise (`src/core
 Every table needing a composite unique key carries a synthetic pipe-joined `uk` TEXT
 column with a single-column `UNIQUE` constraint (see §5, Data Store limits).
 
+Increment 2 (§7) adds five tables -- `branch_summaries`, `app_users`,
+`branch_period_assignments`, `books_connections`, `books_locations` -- bringing the
+schema to **25 tables total**. Status: in progress -- verify against code on merge
+against `src/adapters/store/schema.sql` before relying on this count.
+
 ## 5. State machines (`src/core/states.js`)
 
 ```text
@@ -169,3 +174,102 @@ read-then-write and the store reports `claimSemantics: 'BEST_EFFORT'`. Consequen
   matching `WORKER.STOP`, within `WORKER_LEASE_MS`) exists — best-effort mutual exclusion, documented as
   such. The deployed dashboard runs with `WORKER_MODE=disabled`.
 - `/api/health` exposes `claimSemantics` and lists `BEST_EFFORT_CLAIMS` in `postingBlockedBy`.
+
+
+## 7. Team-operable console (increment 2)
+
+Status: **in progress -- verify against code on merge.** This section describes the
+design/contract for the increment-2 build other agents are implementing concurrently
+against `CONTRACTS.md` §U/§D/§N/§E and the schema already added to
+`src/adapters/store/schema.sql`; it is not evidence that any increment-2 route or table
+is complete, tested, or deployed.
+
+### 7.1 Branch Control Dashboard
+
+Backed by a denormalised `branch_summaries` table: one row per branch, 27 columns (kept
+<= 30 so a single Catalyst ZCQL `SELECT` never needs column chunking -- the 30-select-
+column cap is documented in `docs/CATALYST_REFERENCES.md`), refreshed from the
+transactional tables (`extraction_runs`, `recon_runs`, `exceptions`,
+`migration_batches`, `queue_items`, ...) rather than queried live. All server-side
+search, filter, sort, and pagination over this table live in `src/core/branch_list.js`;
+the browser never sees more than one page. At the configured `EXPECTED_BRANCH_COUNT`
+(~351, `PROJECT_CONTEXT.md`), the whole summary table fits in <= 2 ZCQL pages (the
+300-row-per-query cap from §6); the dashboard fetches those <=2 pages server-side,
+applies filter/sort/pagination in-process, and returns one page to the client. CSV
+export of the filtered/sorted result set is generated server-side, never assembled
+client-side from multiple page fetches.
+
+The branch workspace (single-branch drilldown) reuses the existing Layer A/B/C,
+cutover, and exception views already described in §§3-5 -- it does not introduce a
+parallel data model, only a branch-scoped lens over the same tables.
+
+### 7.2 Team directory and assignments
+
+`app_users` is the operable team directory; the config-file user list
+(`config/users.json`) remains the bootstrap/fallback, not replaced. Humans authenticate
+via Catalyst Authentication (§7.4); bots keep hashed bearer tokens (`token_sha256`),
+never a Catalyst session. Roles: `admin`, `operator`, `approver`, `viewer` (auditor).
+
+`branch_period_assignments` tracks who works which `(branch_code, period,
+transaction_class)`: `assigned_operator`, `assigned_approver`, `status`,
+`priority_level` (named `priority_level` rather than `priority` because `priority` is a
+reserved Catalyst Data Store column name -- the API/UI may still expose it as
+`priority`), `assigned_at`, `due_at`, `version` (optimistic lock), `assigned_by`,
+`reassignment_reason`, and a synthetic `uk` (`branch_code|period|transaction_class`) for
+uniqueness.
+
+Segregation-of-duties rules, enforced in `src/core/assignments.js`:
+
+- Operator != approver on the same assignment.
+- A preparer cannot approve their own batch (existing §B rule, unchanged).
+- The assigned operator on a `branch_period_assignments` row cannot also be its
+  assigned approver.
+
+Every write to `branch_period_assignments` is optimistically locked on `version`; a
+stale write returns `409 VERSION_CONFLICT` rather than silently overwriting a concurrent
+reassignment. Server-side branch scope is enforced on every route touching assignments
+or the dashboard, exactly as in §H's existing `scopeBranch` middleware -- covered by a
+scope-matrix test, not by UI-only filtering.
+
+### 7.3 Zoho Books connection state
+
+`books_connections` is a singleton row (`id='default'`) recording connection status,
+organisation, region, and token health; `books_locations` mirrors the last-synchronised
+Books locations. Secrets (OAuth client secret, refresh token) are stored **only** as
+`secret_ciphertext` -- AES-256-GCM under `BOOKS_SECRET_KEY` -- and are never returned by
+any API response or written to logs.
+
+Connecting Books to the console is deliberately decoupled from posting: none of the six
+controls below imply another. They are independent and all must hold before a live post
+can occur:
+
+1. **Books connected** -- an OAuth connection exists and `books_connections.status =
+   CONNECTED`.
+2. **Correct organisation verified** -- an operator has confirmed `org_id`/`org_name`
+   matches the intended Eco Green organisation (not merely "some org the credential can
+   see").
+3. **Locations synchronised/mapped** -- `books_locations` has been refreshed and each
+   in-scope branch has a `zoho_location_id` mapping.
+4. **Read-only reconciliation access approved** -- `BOOKS_READ_AUTHORIZED=true`; without
+   it, no live Books read (baseline, trial balance, drilldown) is permitted even though
+   the connection exists.
+5. **Batch financially approved** -- the existing per-batch approval gate (§B),
+   unchanged.
+6. **Production posting explicitly enabled** -- the existing four-gate
+   `assertPostingAllowed()` guard (`DEPLOYMENT.md` §5, `SECURITY.md` §3):
+   `POSTING_ENABLED=true`, a non-empty `POSTING_AUTHORIZATION_REF`, an allowlisted
+   `organizationId`, and the `live` driver, set through controlled deployment
+   configuration, never through an API route.
+
+Connecting Books (control 1) never advances controls 4-6; each is checked independently
+at the point of use.
+
+### 7.4 Authentication
+
+`AUTH_MODE` selects one or both of `token` (existing hashed-bearer-token auth,
+unchanged, still how bots authenticate) and `catalyst` (Catalyst Authentication for
+human sessions), e.g. `AUTH_MODE=token,catalyst` while migrating from one to the other.
+New routes: `GET /api/auth/me` (current principal, redacted), `GET /api/auth/config`
+(which mode(s) are active, login/logout URLs, never secrets), `GET /auth/login` /
+`GET /auth/logout` (Catalyst session bridge). See `CONTRACTS.md` §E for the terse route
+contract.

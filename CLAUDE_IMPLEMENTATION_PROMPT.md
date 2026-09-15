@@ -22,7 +22,7 @@ Optimize for a same-day pilot, subject to available credentials, representative 
 10. A minimal control console for file status, branch cutover readiness, reconciliation, exceptions, approval, queue results, and audit evidence.
 11. One minimal Hermes-connected bot, initially read-oriented with only narrowly governed actions.
 
-Do not describe this rapid pilot as full production readiness for all 326 branches. Do not weaken accounting, duplicate-prevention, live-target, approval, security, or audit controls to meet the timeline.
+Do not describe this rapid pilot as full production readiness for all approximately 351 branches. Do not weaken accounting, duplicate-prevention, live-target, approval, security, or audit controls to meet the timeline.
 
 ## Updated architecture
 

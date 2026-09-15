@@ -235,3 +235,91 @@ Same auth + roles as the console; a bot user is `role: 'operator'` at most, neve
 `seed-fixtures.js` copies `fixtures/synthetic/*` into `INBOX_LOCAL_PATH` and loads `config/cutover-matrix.json`, `config/mapping-rules.json`, `config/users.json` (dev tokens printed ONCE to stdout, not stored plaintext).
 `run-pipeline.js --branch --run [--dry-run]` runs `worker.runOnce` end-to-end with mock Books and prints a compact report (files, Layer A, dispositions, Layer B, preview count, exceptions). `--dry-run` is the only mode; posting requires the guard in §Z regardless.
 `check-secrets.js` scans the tree for token/secret patterns and real-looking GSTIN/PAN/phone/email, exits non-zero on hit (used before any push).
+
+---
+
+## Increment 2 additions -- §U, §D, §N, §E
+
+Status: **in progress -- verify against code on merge.** Implemented concurrently by
+other agents against these contracts; cross-check against the actual route/module
+source before relying on any behaviour described below.
+
+## §U  Team & assignments -- `src/core/assignments.js`
+```js
+export async function listUsers(ctx, { role, status, branch } = {})
+export async function inviteUser(ctx, { email, displayName, role, branches, principalType = 'human', createdBy })
+export async function updateUser(ctx, { id, patch, expectedVersion })   // optimistic lock; 409 VERSION_CONFLICT on mismatch
+export async function rotateBotToken(ctx, { id })                       // bot principals only; returns the plaintext token ONCE, stores token_sha256
+export async function upsertAssignment(ctx, { branchCode, period, transactionClass = '*', assignedOperator, assignedApprover, priorityLevel = 'NORMAL', dueAt, assignedBy, reassignmentReason, expectedVersion })
+export function assertSoD({ assignedOperator, assignedApprover })       // throws SOD_VIOLATION if operator === approver
+```
+Routes: `/api/admin/users*` (admin only), `/api/assignments*` (admin creates/reassigns;
+operator/approver see only their own branch scope, enforced by `scopeBranch`).
+Invariants: operator != approver on the same `branch_period_assignments` row
+(`SOD_VIOLATION`, distinct from the existing batch-approval SoD in §B); every write is
+optimistic-locked on `version`; `uk = branch_code|period|transaction_class` prevents
+duplicate assignment rows; a bot's plaintext token is returned exactly once
+(invite/rotate response), never retrievable again -- only `token_sha256` is stored.
+Errors: `SOD_VIOLATION`, `VERSION_CONFLICT` (409, stale `version`), `USER_NOT_FOUND`,
+`INVALID_ROLE`, `BOT_CANNOT_HOLD_ROLE` (bot principal requesting `approver`/`admin`).
+
+## §D  Branch dashboard -- `src/core/branch_summary.js`, `src/core/branch_list.js`
+```js
+// branch_summary.js
+export async function refreshBranchSummary(ctx, { branchCode })   // recomputes one row from transactional tables; upsert by branch_code
+export async function refreshAllBranchSummaries(ctx, {})          // bounded batch refresh; used by the dev seed and by a scheduled job
+
+// branch_list.js
+export async function listBranchSummaries(ctx, { filter, sort, page, pageSize })
+//   filter: { readinessStatus?, receiptStatus?, layerAStatus?, overlapStatus?, hasOpenExceptions?, q? (branch_code/name substring) }
+//   fetches <=2 ZCQL pages (300 rows each) up to EXPECTED_BRANCH_COUNT, applies filter/sort/pagination server-side, returns one page
+export async function exportBranchSummariesCsv(ctx, { filter, sort })   // same filter/sort, streams CSV; generated server-side, never client-assembled
+```
+Routes: `GET /api/branches` (paginated/filtered/sorted list), `GET /api/branches/:code`
+(workspace -- reuses §M/§K/§Y read routes scoped to one branch),
+`GET /api/branches/export.csv`, `POST /api/dev/seed-branches` (Development only, same
+gating as `POST /api/dev/seed`).
+Invariants: `branch_summaries` never exceeds `EXPECTED_BRANCH_COUNT` rows in normal
+operation (dev seed only creates synthetic rows up to that count, `is_synthetic=1`); the
+browser never receives more than one page regardless of total row count; every summary
+field is reproducible from the transactional tables it derives from (no field is
+hand-editable).
+Errors: `INVALID_FILTER`, `INVALID_SORT_FIELD`, `PAGE_OUT_OF_RANGE`.
+
+## §N  Books connection -- `src/books/connection.js`
+```js
+export async function getConnectionState(ctx)                      // redacted: never returns secret_ciphertext or raw tokens
+export async function startOAuthConnect(ctx, { initiatedBy })       // -> { authorizationUrl, oauth_state_sha256 }
+export async function completeOAuthConnect(ctx, { code, state })    // verifies state, exchanges code, encrypts + stores tokens, status -> CONNECTED
+export async function verifyOrganization(ctx, { orgId })            // sets org_id/org_name once operator confirms; independent of connection
+export async function syncLocations(ctx)                            // refreshes books_locations; sets locations_synced_at
+export async function disconnect(ctx, { actor, reason })            // status -> DISCONNECTED; does not delete history
+```
+Routes: `/api/admin/books/*` -- `GET status`, `GET connect` (redirect to Zoho consent),
+`GET callback` (`<appsail-url>/api/admin/books/callback`, registered with the Zoho API
+console client), `POST verify-organization`, `POST sync-locations`, `POST disconnect`.
+Admin role only.
+Invariants: `secret_ciphertext` is AES-256-GCM under `BOOKS_SECRET_KEY`; no route or log
+ever emits a decrypted secret; connecting Books (control 1, `ARCHITECTURE.md` §7.3)
+never sets `BOOKS_READ_AUTHORIZED` or `POSTING_ENABLED` -- those remain independent,
+operator-set configuration. A live Books read of any kind (baseline, trial balance,
+drilldown) is refused unless `BOOKS_READ_AUTHORIZED=true`, checked in addition to the
+existing `assertPostingAllowed()` gate for writes.
+Errors: `OAUTH_STATE_MISMATCH`, `BOOKS_NOT_CONNECTED`, `READ_NOT_AUTHORIZED`
+(`BOOKS_READ_AUTHORIZED` false), `ORG_MISMATCH`.
+
+## §E  Authentication -- `src/server/auth.js` (extended)
+```js
+export function resolveAuthModes()                       // parses AUTH_MODE ('token' | 'catalyst' | 'token,catalyst'); defaults to 'token'
+export async function authenticate(req, { modes })        // tries each configured mode in order; first success wins
+```
+Routes: `GET /api/auth/me` (current principal: id, role, branches, principal_type --
+redacted, no token/session internals), `GET /api/auth/config` (which mode(s) are active
++ login/logout URLs; no secrets), `GET /auth/login` / `GET /auth/logout` (Catalyst
+session bridge, present only when `catalyst` is an active mode).
+Invariants: a bot principal can never authenticate via the `catalyst` mode (human-only);
+`token` mode is unchanged from the existing hashed-bearer-token behaviour (§H) and keeps
+working standalone during any migration to `catalyst`; `AUTH_MODE` is deployment
+configuration, not a per-request choice.
+Errors: `AUTH_MODE_MISCONFIGURED` (empty/invalid value), `UNAUTHENTICATED` (401, no mode
+matched), `CATALYST_SESSION_INVALID`.

@@ -143,3 +143,147 @@ pre.json {
 
 .kv { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0; font-size: 13px; }
 .kv b { color: var(--muted); font-weight: 600; margin-right: 4px; }
+
+/* ---------------------------------------------------------------- nav / topbar */
+
+.mainNav { display: flex; flex-wrap: wrap; gap: 4px; }
+.navlink {
+  border: 1px solid transparent;
+  background: none;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.navlink:hover { background: #e2e6ea; }
+.navlink-active { background: var(--link); color: #fff; }
+.navlink-active:hover { background: #14498f; }
+
+.error-text { color: var(--danger); }
+
+/* ---------------------------------------------------------------- toasts */
+
+.toasts {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 360px;
+}
+.toast {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: #fff;
+  background: #333;
+}
+.toast-error { background: var(--danger); }
+.toast-success { background: var(--ok); }
+.toast-info { background: #33475b; }
+
+/* ---------------------------------------------------------------- chips */
+
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  vertical-align: middle;
+  border: 1px solid transparent;
+}
+.chip-big { font-size: 13px; padding: 4px 12px; }
+.chip-green { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.chip-red { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.chip-amber { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.chip-grey { background: #eef1f4; color: var(--muted); border-color: var(--border); }
+
+.chip-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.chip-btn-active { outline: 2px solid var(--link); }
+
+/* ---------------------------------------------------------------- progress bar
+   (built from <div> segments — CSP forbids the inline `style` attribute a percentage
+   width would otherwise need) */
+
+.progressbar-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.progressbar { display: flex; gap: 1px; }
+.progressbar .seg { width: 8px; height: 10px; background: var(--border); border-radius: 1px; }
+.progressbar .seg.filled { background: var(--ok); }
+.progressbar-label { font-size: 12px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- data table (Branch
+   Control Dashboard and other wide/dense tables) */
+
+.dashboard-header { font-size: 13px; }
+.filter-bar { align-items: flex-end; }
+.data-table-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+table.data-table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+table.data-table th, table.data-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+table.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  color: var(--muted);
+  font-weight: 600;
+  z-index: 1;
+  border-bottom: 2px solid var(--border);
+}
+table.data-table tbody tr:nth-child(even) { background: #f2f4f6; }
+table.data-table tbody tr.clickable-row { cursor: pointer; }
+table.data-table tbody tr.clickable-row:hover { background: #e6edf5; }
+.th-sort { white-space: nowrap; font-weight: 600; color: var(--muted); }
+
+.pagination-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 13px; }
+.pagination-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------------------------------------------------------------- branch workspace tabs */
+
+.tab-strip { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
+.locked-field { font-size: 13px; color: var(--muted); }
+.locked-field b { color: var(--text); }
+
+/* ---------------------------------------------------------------- modals (token reveal,
+   reassign, history drawer) */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.modal-box {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 16px 20px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.modal-wide { max-width: 720px; }
+.token-reveal { white-space: pre-wrap; word-break: break-all; }
+
+/* ---------------------------------------------------------------- admin: connections
+   controls checklist */
+
+.controls-checklist { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.control-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.control-row-bad { color: var(--danger); }
+.control-label { min-width: 220px; font-weight: 600; }

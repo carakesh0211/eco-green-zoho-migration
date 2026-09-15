@@ -13,7 +13,16 @@ import { createReadRouter } from './routes/read.js';
 import { createMutateRouter } from './routes/mutate.js';
 import { createDevRouter } from './routes/dev.js';
 import { createAgentRouter, minimalResponseMiddleware } from './routes/agent.js';
-import { isPostingEnabled, postingBlockedReasons } from '../books/guard.js';
+import { createBranchesRouter } from './routes/branches.js';
+import { createAdminRouter } from './routes/admin.js';
+import { createAdminBooksRouter } from './routes/admin_books.js';
+import { createAuthRouter } from './routes/auth.js';
+import { resolveDirectoryUser } from './auth.js';
+import { createCatalystSessionAuth, composeAuthenticate } from './auth_catalyst.js';
+import { currentApp as runtimeCurrentApp } from './catalyst_runtime.js';
+import { refreshBranchSummary } from '../core/branch_summary.js';
+import { createBooksConnection } from '../books/connection.js';
+import { isPostingEnabled, postingBlockedReasons, loadBooksConfig } from '../books/guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -46,6 +55,12 @@ try {
  * @param {string} [opts.archiveAdapter] - defaults to env ARCHIVE_ADAPTER / 'local'.
  * @param {string} [opts.inboxAdapter] - defaults to env INBOX_ADAPTER / 'local'.
  * @param {boolean} [opts.devSeedEnabled] - defaults to env DEV_SEED_ENABLED === 'true'.
+ * @param {string} [opts.authMode] - 'token' | 'catalyst' | 'token,catalyst' (env AUTH_MODE, default
+ *   'token'). With 'catalyst', requests without a Bearer header are authenticated through the
+ *   Catalyst session (src/server/auth_catalyst.js) and mapped to an ACTIVE app_users row.
+ * @param {object} [opts.booksConnection] - src/books/connection.js instance; built here when absent.
+ * @param {object} [opts.sessionAuth] - createCatalystSessionAuth() result; built here when absent
+ *   and authMode includes 'catalyst'.
  */
 export function createApp({
   store,
@@ -59,9 +74,26 @@ export function createApp({
   archiveAdapter = process.env.ARCHIVE_ADAPTER ?? 'local',
   inboxAdapter = process.env.INBOX_ADAPTER ?? 'local',
   devSeedEnabled = process.env.DEV_SEED_ENABLED === 'true',
+  authMode = process.env.AUTH_MODE ?? 'token',
+  booksConnection,
+  sessionAuth,
 }) {
   const app = express();
-  const auth = createAuth({ users, audit });
+  // Bearer tokens resolve against the config users first, then the app_users directory
+  // (bots / break-glass). Humans normally arrive via the Catalyst session instead.
+  const auth = createAuth({ users, audit, store });
+  const modes = String(authMode).split(',').map((s) => s.trim()).filter(Boolean);
+  if (modes.includes('catalyst')) {
+    sessionAuth = sessionAuth ?? createCatalystSessionAuth({
+      store, audit, currentApp: runtime?.currentApp ?? runtimeCurrentApp, resolveDirectoryUser,
+    });
+    // Compose BEFORE any router captures auth.authenticate(): Bearer header -> bearer path
+    // (byte-for-byte the previous behaviour), otherwise -> Catalyst session path.
+    const bearerAuthenticate = auth.authenticate;
+    auth.authenticate = () => composeAuthenticate(bearerAuthenticate, sessionAuth.authenticateSession);
+  }
+  booksConnection = booksConnection ?? createBooksConnection({ store, audit, config: deps.books?.config ?? loadBooksConfig() });
+  const branchSummaryHook = { refreshBranchSummary: (ctx, { branchCode }) => refreshBranchSummary(ctx.store ?? store, branchCode) };
 
   app.disable('x-powered-by');
 
@@ -71,7 +103,11 @@ export function createApp({
         useDefaults: false,
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
+          // static.zohocdn.com serves the Catalyst Web SDK bundle (catalystWebSDK.js);
+          // `/__catalyst/sdk/init.js` is same-origin and already covered by 'self'.
+          // See docs/CATALYST_AUTH.md §6 — no 'unsafe-inline' added; both are external
+          // <script src> includes.
+          scriptSrc: ["'self'", 'https://static.zohocdn.com'],
           styleSrc: ["'self'"],
           imgSrc: ["'self'", 'data:'],
           connectSrc: ["'self'"],
@@ -79,6 +115,9 @@ export function createApp({
           baseUri: ["'self'"],
           formAction: ["'self'"],
           frameAncestors: ["'none'"],
+          // accounts.zohoportal.in is the auth_domain reported by this AppSail origin's own
+          // /__catalyst/sdk/init.js (verified live 2026-09-15, docs/CATALYST_AUTH.md §0).
+          frameSrc: ["'self'", 'https://accounts.zohoportal.in'],
         },
       },
     })
@@ -142,6 +181,12 @@ export function createApp({
   app.use('/api', createReadRouter({ store, deps, auth }));
   app.use('/api', createMutateRouter({ store, audit, deps, auth }));
   app.use('/api', createDevRouter({ store, audit, auth, deps: devDeps, environment, devSeedEnabled, runtime }));
+  // Increment 2 (team-operable console): dashboard, team & assignments, Books connection.
+  app.use('/api', createBranchesRouter({ store, audit, auth }));
+  app.use('/api', createAdminRouter({ store, audit, auth, users, deps: { branchSummary: branchSummaryHook } }));
+  app.use('/api', createAdminBooksRouter({ connection: booksConnection, auth }));
+  // Serves both /api/auth/* and the non-API /auth/login|logout redirects.
+  app.use(createAuthRouter({ auth, sessionAuth, environment }));
 
   app.use(express.static(PUBLIC_DIR));
 

@@ -15,8 +15,10 @@ import express from 'express';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { newId, newCorrelationId, nowIso } from '../../core/ids.js';
+import { newId, newCorrelationId, nowIso, addDays } from '../../core/ids.js';
 import { sha256Bytes } from '../../core/hash.js';
+import { refreshBranchSummary } from '../../core/branch_summary.js';
+import { formatMoney } from '../../core/money.js';
 import { ingestRun } from '../../core/ingest.js';
 import { summariseRun } from '../../core/summarise.js';
 import { reconcileLayerA } from '../../core/recon_a.js';
@@ -637,9 +639,277 @@ export async function runArchiveSmoke({ archive, audit, correlationId, actor = '
   return report;
 }
 
+// ---------------------------------------------------------------- branch dashboard seed
+//
+// Populates `branch_summaries` (src/adapters/store/schema.sql, "increment 2") for the
+// Branch Control Dashboard: PILOT01's row is REAL data (computed via
+// refreshBranchSummary from the transactional tables), plus deterministic synthetic
+// rows EG-0002..EG-<expectedCount> so the dashboard can be exercised at realistic scale
+// (~351 branches by default) without generating any synthetic transactions/vouchers —
+// only the denormalised summary row itself. Idempotent: an existing branch_summaries
+// row for a synthetic code is never touched again (its statuses are stable across
+// reruns because they come from a PRNG seeded by the code, not by call time), so
+// reruns are pure no-ops for codes already seeded and only fill in newly-added ones
+// when `expectedCount` grows between calls (resumable).
+
+const SYNTHETIC_LIVE_START_DATES = Object.freeze(['2026-06-01', '2026-08-01', '2026-10-01', null]);
+const SYNTHETIC_OPERATORS = Object.freeze(['synthetic-operator-1', 'synthetic-operator-2', 'synthetic-operator-3', 'synthetic-operator-4', 'synthetic-operator-5']);
+const SYNTHETIC_APPROVERS = Object.freeze(['synthetic-approver-1', 'synthetic-approver-2', 'synthetic-approver-3']);
+
+/** Realistic readiness-status distribution for the synthetic population, as cumulative
+ * upper bounds over a [0,1) draw. */
+const READINESS_DISTRIBUTION = Object.freeze([
+  ['NOT_STARTED', 0.40],
+  ['IN_PROGRESS', 0.75],
+  ['BLOCKED', 0.85],
+  ['READY', 0.95],
+  ['MIGRATED', 1.00],
+]);
+
+/** FNV-1a string hash -> 32-bit unsigned seed (deterministic per branch code). */
+function seedFromString(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** mulberry32 PRNG: deterministic, fast, good-enough distribution for synthetic demo
+ * data (not cryptographic). Returns a function -> float in [0, 1). */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pick(rng, options) {
+  return options[Math.floor(rng() * options.length) % options.length];
+}
+
+function randInt(rng, min, max) {
+  return min + Math.floor(rng() * (max - min + 1));
+}
+
+function pickReadiness(rng) {
+  const r = rng();
+  for (const [status, upperBound] of READINESS_DISTRIBUTION) {
+    if (r < upperBound) return status;
+  }
+  return READINESS_DISTRIBUTION[READINESS_DISTRIBUTION.length - 1][0];
+}
+
+/**
+ * buildSyntheticBranchSummary(code, now) -> a full 27-column branch_summaries row.
+ * Deterministic: every field is derived from `code` via a code-seeded PRNG (`now` only
+ * stamps created_at/updated_at), so a rerun that re-derives the SAME code produces a
+ * byte-identical row (the seed route never overwrites an existing row, but this
+ * determinism is what makes "skip if it already exists" safe rather than merely
+ * convenient).
+ */
+export function buildSyntheticBranchSummary(code, now = nowIso()) {
+  const n = code.slice(3); // 'EG-0002' -> '0002'
+  const rng = mulberry32(seedFromString(code));
+  const readiness = pickReadiness(rng);
+  const liveStart = pick(rng, SYNTHETIC_LIVE_START_DATES);
+
+  let receipt_status;
+  let layer_a_status;
+  let mapping_status;
+  let overlap_status;
+  let batch_approval_status;
+  let layer_c_status = 'NOT_RUN';
+  let balance_bridge_status = 'NOT_RUN';
+  let total_count = 0;
+  let migrated_count = 0;
+  let open_exception_count = 0;
+  let open_exception_impact = '0.00';
+  let assigned_operator = null;
+  let assigned_approver = null;
+  let last_activity_at = null;
+
+  switch (readiness) {
+    case 'NOT_STARTED':
+      receipt_status = 'NOT_RECEIVED';
+      layer_a_status = 'NOT_RUN';
+      mapping_status = 'NOT_STARTED';
+      overlap_status = 'NOT_ASSESSED';
+      batch_approval_status = 'NONE';
+      break;
+    case 'IN_PROGRESS':
+      receipt_status = pick(rng, ['PARTIAL', 'RECEIVED']);
+      layer_a_status = pick(rng, ['NOT_RUN', 'PASS']);
+      mapping_status = pick(rng, ['NOT_STARTED', 'DRAFT']);
+      overlap_status = pick(rng, ['NOT_ASSESSED', 'CLEAR']);
+      batch_approval_status = pick(rng, ['NONE', 'DRAFT', 'READY_FOR_APPROVAL']);
+      total_count = randInt(rng, 20, 300);
+      migrated_count = randInt(rng, 0, Math.floor(total_count * 0.6));
+      open_exception_count = randInt(rng, 0, 3);
+      assigned_operator = pick(rng, SYNTHETIC_OPERATORS);
+      assigned_approver = pick(rng, SYNTHETIC_APPROVERS);
+      last_activity_at = now;
+      break;
+    case 'BLOCKED':
+      receipt_status = pick(rng, ['RECEIVED', 'VALIDATION_FAILED']);
+      layer_a_status = 'FAIL';
+      mapping_status = pick(rng, ['DRAFT', 'APPROVED']);
+      overlap_status = pick(rng, ['NOT_ASSESSED', 'CLEAR', 'OVERLAP_FOUND']);
+      batch_approval_status = pick(rng, ['NONE', 'DRAFT']);
+      total_count = randInt(rng, 20, 300);
+      migrated_count = randInt(rng, 0, Math.floor(total_count * 0.3));
+      open_exception_count = randInt(rng, 1, 8);
+      open_exception_impact = formatMoney(BigInt(randInt(rng, 5_000, 500_000)));
+      assigned_operator = pick(rng, SYNTHETIC_OPERATORS);
+      assigned_approver = pick(rng, SYNTHETIC_APPROVERS);
+      last_activity_at = now;
+      break;
+    case 'READY':
+      receipt_status = 'RECEIVED';
+      layer_a_status = 'PASS';
+      mapping_status = 'APPROVED';
+      overlap_status = 'CLEAR';
+      batch_approval_status = 'APPROVED';
+      total_count = randInt(rng, 20, 300);
+      migrated_count = 0;
+      assigned_operator = pick(rng, SYNTHETIC_OPERATORS);
+      assigned_approver = pick(rng, SYNTHETIC_APPROVERS);
+      last_activity_at = now;
+      break;
+    case 'MIGRATED':
+    default:
+      receipt_status = 'RECEIVED';
+      layer_a_status = 'PASS';
+      mapping_status = 'APPROVED';
+      overlap_status = 'CLEAR';
+      batch_approval_status = 'APPROVED';
+      total_count = randInt(rng, 20, 300);
+      migrated_count = total_count;
+      layer_c_status = 'PASS';
+      balance_bridge_status = pick(rng, ['PASS', 'NOT_RUN']);
+      assigned_operator = pick(rng, SYNTHETIC_OPERATORS);
+      assigned_approver = pick(rng, SYNTHETIC_APPROVERS);
+      last_activity_at = now;
+      break;
+  }
+
+  const migration_progress_pct = total_count > 0 ? Math.round((migrated_count / total_count) * 100) : 0;
+
+  return {
+    branch_code: code,
+    branch_name: `[SYNTHETIC] Eco Green Branch ${n}`,
+    zoho_location_id: null,
+    zoho_location_name: null,
+    assigned_operator,
+    assigned_approver,
+    live_start_date: liveStart,
+    migration_from_date: '2026-04-01',
+    migration_to_date: liveStart ? addDays(liveStart, -1) : null,
+    receipt_status,
+    layer_a_status,
+    mapping_status,
+    overlap_status,
+    open_exception_count,
+    open_exception_impact,
+    batch_approval_status,
+    migrated_count,
+    total_count,
+    migration_progress_pct,
+    layer_c_status,
+    balance_bridge_status,
+    last_activity_at,
+    readiness_status: readiness,
+    is_synthetic: 1,
+    summary_version: 1,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+/**
+ * runSeedBranches(ctx, { expectedCount, now }) -> { outcome, created, existing, expectedCount }
+ *   ctx: { store, audit, correlationId }. `expectedCount` is REQUIRED here (the
+ *   `EXPECTED_BRANCH_COUNT` env default is read only at the route layer, per the task
+ *   note, so this function stays testable with small counts and never silently
+ *   defaults to 351 on its own).
+ * Ensures branch_summaries has exactly one row for PILOT01 (real data, recomputed
+ * every call via refreshBranchSummary) plus synthetic rows EG-0002..EG-<expectedCount>
+ * (zero-padded to 4 digits), skipping any synthetic code that already has a row.
+ * outcome: SEEDED (first-ever run: every row created fresh), RESUMED (some codes were
+ * already seeded and this call filled in the rest — e.g. expectedCount grew), or
+ * ALREADY_SEEDED (nothing new to create).
+ */
+export async function runSeedBranches(ctx, { expectedCount, now = nowIso() } = {}) {
+  if (!Number.isInteger(expectedCount) || expectedCount < 1) {
+    throw new TypeError('runSeedBranches requires an integer expectedCount >= 1');
+  }
+  const { store, audit, correlationId = newCorrelationId() } = ctx;
+  const actor = 'dev:seed-branches';
+
+  const pilotCode = 'PILOT01';
+  const pilotBranchExists = Boolean(await store.findOne('branches', { branch_code: pilotCode }));
+  if (!pilotBranchExists) {
+    await store.insert('branches', {
+      branch_code: pilotCode,
+      branch_name: `Pilot branch ${pilotCode}`,
+      zoho_location_id: 'LOC-PILOT01',
+      status: 'ACTIVE',
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  const pilotExistedBefore = Boolean(await store.get('branch_summaries', pilotCode));
+  await refreshBranchSummary(store, pilotCode, { now });
+
+  const toInsert = [];
+  let syntheticExisting = 0;
+  for (let n = 2; n <= expectedCount; n += 1) {
+    const code = `EG-${String(n).padStart(4, '0')}`;
+    // eslint-disable-next-line no-await-in-loop
+    const already = await store.get('branch_summaries', code);
+    if (already) {
+      syntheticExisting += 1;
+      continue;
+    }
+    toInsert.push(buildSyntheticBranchSummary(code, now));
+  }
+
+  const CHUNK = 100;
+  for (let i = 0; i < toInsert.length; i += CHUNK) {
+    // eslint-disable-next-line no-await-in-loop
+    await store.insertMany('branch_summaries', toInsert.slice(i, i + CHUNK));
+  }
+
+  const created = (pilotExistedBefore ? 0 : 1) + toInsert.length;
+  const existing = (pilotExistedBefore ? 1 : 0) + syntheticExisting;
+
+  let outcome;
+  if (created === 0) outcome = 'ALREADY_SEEDED';
+  else if (existing > 0) outcome = 'RESUMED';
+  else outcome = 'SEEDED';
+
+  const result = { outcome, created, existing, expectedCount };
+  await audit.emit({
+    actor,
+    actorRole: 'admin',
+    action: 'DEV.SEED_BRANCHES',
+    entityType: 'branch_summaries',
+    entityId: null,
+    after: result,
+    reason: '[SYNTHETIC DEMO] branch dashboard seed (real PILOT01 + synthetic EG-* rows)',
+    correlationId,
+  });
+  return result;
+}
+
 export function createDevRouter({ store, audit, auth, deps = {}, environment, devSeedEnabled, runtime }) {
   const router = express.Router();
   const jobs = new Map(); // jobId -> progress object
+  let lastSeedBranchesResult = null; // last POST /api/dev/seed-branches outcome, for the status route
   let latestJobId = null;
 
   function seedIsAllowed() {
@@ -664,6 +934,42 @@ export function createDevRouter({ store, audit, auth, deps = {}, environment, de
       if (!deps.archive) return res.status(501).json({ error: 'NOT_IMPLEMENTED', message: 'no archive adapter configured' });
       const report = await runArchiveSmoke({ archive: deps.archive, audit, correlationId: req.correlationId, actor: req.user.id });
       res.status(report.ok ? 200 : 500).json(report);
+    })
+  );
+
+  // Development-only, admin-only seed of the Branch Control Dashboard's branch_summaries
+  // table (real PILOT01 + synthetic EG-0002..EG-<EXPECTED_BRANCH_COUNT>). Same gate as
+  // /dev/seed and /dev/archive-smoke. Cheap DB-only work (a handful of queries + one
+  // insertMany per 100 rows), so — unlike /dev/seed's full pipeline replay — it runs
+  // synchronously inside the request rather than being detached in the background.
+  router.post(
+    '/dev/seed-branches',
+    auth.authenticate(),
+    auth.requireCorrelationId(),
+    auth.requireRole('admin'),
+    wrap(async (req, res) => {
+      if (environment === 'Production' || !seedIsAllowed()) {
+        return auth.deny(req, res, {
+          status: 403, error: 'DEV_SEED_DISABLED', reason: `DEV_SEED_DISABLED:environment=${environment}`,
+          message: 'The branch seed endpoint is only available in a Development environment with DEV_SEED_ENABLED=true.',
+        });
+      }
+      const expectedCount = Number(process.env.EXPECTED_BRANCH_COUNT ?? 351);
+      const result = await runSeedBranches({ store, audit, correlationId: req.correlationId }, { expectedCount });
+      lastSeedBranchesResult = { ...result, at: nowIso() };
+      res.json(lastSeedBranchesResult);
+    })
+  );
+
+  router.get(
+    '/dev/seed-branches/status',
+    auth.authenticate(),
+    auth.requireRole('admin'),
+    wrap(async (req, res) => {
+      if (!lastSeedBranchesResult) {
+        return res.status(404).json({ error: 'NOT_FOUND', message: 'No branch seed run yet (POST /api/dev/seed-branches first).' });
+      }
+      res.json(lastSeedBranchesResult);
     })
   );
 

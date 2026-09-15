@@ -98,15 +98,88 @@ export function effectiveRoleForReads(user) {
   return isBotUser(user) ? 'operator' : user.role;
 }
 
-export function createAuth({ users = [], audit }) {
+const DIRECTORY_CACHE_TTL_MS = 15_000;
+
+/** Normalise an app_users row (from the store) into the same principal shape used
+ *  for config users, plus `email`/`source` so callers can tell the two apart. Never
+ *  includes token_sha256 — that field must never leave this module in a response. */
+function normalizeDirectoryRow(row) {
+  let branches = [];
+  try {
+    const parsed = JSON.parse(row.branches_json ?? '[]');
+    if (Array.isArray(parsed)) branches = parsed.map(String);
+  } catch {
+    branches = [];
+  }
+  return {
+    id: row.id,
+    role: row.role,
+    principal_type: row.principal_type,
+    branches,
+    email: row.email ?? null,
+    source: 'directory',
+  };
+}
+
+/**
+ * Pure helper: resolve an ACTIVE directory (app_users) principal by email. Used by
+ * another agent's Catalyst-session auth — keep this signature exactly as-is.
+ * Returns the normalised user (see normalizeDirectoryRow) or null.
+ */
+export async function resolveDirectoryUser(store, { email }) {
+  if (!store || !email) return null;
+  const row = await store.findOne('app_users', { email, status: 'ACTIVE' });
+  if (!row) return null;
+  return normalizeDirectoryRow(row);
+}
+
+export function createAuth({ users = [], audit, store }) {
   // Fail closed: an invalid principal list is a startup error, never a silent downgrade.
   const table = normalizeUsers(users);
+
+  // ---- store-backed directory (app_users) token resolution, cached 15s ----------
+  // Bot tokens can be rotated at runtime (POST /api/admin/users/:id/rotate-token), so
+  // every request re-checking the store would be correct but wasteful; a short cache
+  // trades a few seconds of staleness (an old token keeps working briefly after
+  // rotation) for avoiding a query per request. invalidateUserCache() lets a write
+  // (or a test) force an immediate re-read.
+  let directoryCache = null; // { at: number, rows: Array<app_users row> }
+
+  function invalidateUserCache() {
+    directoryCache = null;
+  }
+
+  async function loadActiveDirectoryRows() {
+    if (!store) return [];
+    const now = Date.now();
+    if (directoryCache && now - directoryCache.at < DIRECTORY_CACHE_TTL_MS) {
+      return directoryCache.rows;
+    }
+    const rows = await store.find('app_users', { status: 'ACTIVE' });
+    directoryCache = { at: now, rows };
+    return rows;
+  }
 
   function findUserByToken(token) {
     const h = hashToken(token);
     for (const u of table) {
       if (u.token_sha256 && safeEqualHex(h, u.token_sha256)) {
         return { id: u.id, role: u.role, principal_type: u.principal_type, branches: u.branches };
+      }
+    }
+    return null;
+  }
+
+  /** Store-backed counterpart to findUserByToken(); only ever consulted when the token
+   *  didn't match a config user. Constant-time compare, same as the config path. */
+  async function findDirectoryUserByToken(token) {
+    if (!store) return null;
+    const h = hashToken(token);
+    const rows = await loadActiveDirectoryRows();
+    for (const row of rows) {
+      const rowHash = String(row.token_sha256 ?? '').toLowerCase();
+      if (rowHash && safeEqualHex(h, rowHash)) {
+        return normalizeDirectoryRow(row);
       }
     }
     return null;
@@ -148,7 +221,8 @@ export function createAuth({ users = [], audit }) {
         return deny(req, res, { status: 401, error: 'UNAUTHORIZED', reason: 'MISSING_BEARER_TOKEN', actor: 'anonymous' });
       }
       const token = m[1].trim();
-      const user = findUserByToken(token);
+      let user = findUserByToken(token);
+      if (!user) user = await findDirectoryUserByToken(token);
       if (!user) {
         return deny(req, res, { status: 401, error: 'UNAUTHORIZED', reason: 'INVALID_TOKEN', actor: tokenActorHash(token) });
       }
@@ -204,5 +278,56 @@ export function createAuth({ users = [], audit }) {
     };
   }
 
-  return { authenticate, requireRole, scopeBranch, requireCorrelationId, branchAllowed, deny, findUserByToken };
+  /** 403 for bot/agent principals. Team management (users, branch-period assignments)
+   *  is a human-only surface — no route on it is in the §G bot allowlist. */
+  function requireHuman() {
+    return async (req, res, next) => {
+      if (!req.user) return deny(req, res, { status: 401, error: 'UNAUTHORIZED', reason: 'NO_USER' });
+      if (isBotUser(req.user)) {
+        return deny(req, res, {
+          status: 403,
+          error: 'FORBIDDEN',
+          reason: 'HUMAN_ONLY',
+          message: 'Bot/agent tokens may not use this route',
+        });
+      }
+      next();
+    };
+  }
+
+  /** Middleware form of branchAllowed() for routes whose branch code is not a simple
+   *  route/query param (e.g. it must be looked up from a row first). `getBranchCode`
+   *  may be sync or async and receives `req`; a falsy result skips the check (same
+   *  "no branch, no scoping" convention as scopeBranch()). */
+  function requireScope(getBranchCode) {
+    return async (req, res, next) => {
+      let branchCode;
+      try {
+        branchCode = await getBranchCode(req);
+      } catch (err) {
+        return next(err);
+      }
+      if (!branchCode) return next();
+      if (branchAllowed(req.user, branchCode)) return next();
+      return deny(req, res, {
+        status: 403,
+        error: 'FORBIDDEN',
+        reason: `BRANCH_SCOPE:${branchCode}`,
+        message: 'Branch not in your scope',
+      });
+    };
+  }
+
+  return {
+    authenticate,
+    requireRole,
+    scopeBranch,
+    requireCorrelationId,
+    requireHuman,
+    requireScope,
+    branchAllowed,
+    deny,
+    findUserByToken,
+    invalidateUserCache,
+  };
 }

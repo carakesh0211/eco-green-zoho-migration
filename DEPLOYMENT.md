@@ -71,6 +71,25 @@ whoever owns the Catalyst project, never an automated script action here.
 | UAT / test | Data Store or sqlite | WorkDrive (once credentialed) | Stratus | mock, or live read-only against `UT_Test` only if separately authorized | Empty, or `UT_Test` only | Disabled |
 | Production | Data Store | WorkDrive | Stratus | live | Eco Green org only, added after §5 gates pass | Disabled until §5 is satisfied |
 
+### 4a. Increment-2 environment variables
+
+Status: in progress -- verify against code on merge. These extend the matrix above; none
+of them is populated in any committed file.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `EXPECTED_BRANCH_COUNT` | Configurable branch-count expectation used to seed/paginate the Branch Control Dashboard (`ARCHITECTURE.md` §7.1); never hard-coded in logic | `351` |
+| `AUTH_MODE` | `token` \| `catalyst` \| `token,catalyst` -- which authentication mode(s) are active (`CONTRACTS.md` §E) | `token` |
+| `CATALYST_AUTH_LOGIN_URL` | Catalyst-hosted login page URL, surfaced by `GET /api/auth/config` when `catalyst` mode is active | (empty) |
+| `CATALYST_AUTH_LOGOUT_URL` | Catalyst-hosted logout URL, same surfacing | (empty) |
+| `BOOKS_CLIENT_ID` | Zoho API console client ID for Books OAuth (`src/books/connection.js`) | (empty) |
+| `BOOKS_CLIENT_SECRET` | Zoho API console client secret -- stored only as ciphertext once exchanged; never logged | (empty) |
+| `BOOKS_SECRET_KEY` | AES-256-GCM key encrypting `books_connections.secret_ciphertext` | (empty; required before connecting) |
+| `BOOKS_READ_AUTHORIZED` | Independent gate for any live Books **read** (baseline, TB, drilldown) -- connecting Books does not imply this | `false` |
+| `BOOKS_REDIRECT_URI` | OAuth callback URL registered with the Zoho API console client (`<appsail-url>/api/admin/books/callback`) | (empty) |
+| `BOOKS_REGION` | Zoho data-center region for the Books org (`in`, `com`, `eu`, ...) | (empty) |
+| `BOOKS_ORGANIZATION_ID` | Already present in `.env.example` for the existing Books driver; listed here because the increment-2 connection UI reads/displays it | (empty) |
+
 No environment beyond local dev exists today. `UT_Test` is a free-plan sandbox org the
 connected credential can already reach; it is explicitly **not** the Eco Green org and
 must never receive anything resembling real Eco Green data (`IMPLEMENTATION_PLAN.md` D-8).
@@ -110,6 +129,28 @@ Platform behaviours learned the hard way (all observed on CLI 1.27.2):
   AppSail IDs; env variables for AppSail go through `app-config.json` at deploy time or the console.
 - The service listens on `X_ZOHO_CATALYST_LISTEN_PORT` (9000); requests time out at 30 s, so the seed job
   is detached from its request.
+
+## 4d. Manual Catalyst configuration still required (increment 2)
+
+Status: **to be finalised by the lead after deployment.** These are one-time,
+console/API actions no script in this repository performs automatically:
+
+1. Create the 5 increment-2 Data Store tables (`branch_summaries`, `app_users`,
+   `branch_period_assignments`, `books_connections`, `books_locations`) in Development,
+   via the generated column bodies (the same `--emit-columns` generator pattern used for
+   the original 20 tables, `IMPLEMENTATION_PLAN.md` §11).
+2. Enable Catalyst Authentication for the project and add the team's Zoho accounts as
+   authorized users.
+3. Set the increment-2 AppSail environment variables/secrets (§4c's
+   `var/appsail-env.local.json` pattern) -- see the table in §4a.
+4. Register the Zoho API console client (self-client or server-based) for Books OAuth,
+   with callback URL `<appsail-url>/api/admin/books/callback`.
+5. Rotate the Development bearer tokens -- the ones already printed to stdout during
+   earlier fixture seeding are considered exposed (`SECURITY.md` §1, token rotation
+   policy).
+
+None of the above is scripted; each is a manual console/API action by whoever holds
+Catalyst project ownership.
 
 ## 5. Production posting enablement procedure
 
