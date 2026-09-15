@@ -364,3 +364,16 @@ test('createAssignment: optional branchSummary refresh hook is invoked when pres
     await store.close();
   }
 });
+
+test('createAssignment: a throwing branch-summary refresh hook never fails the committed write', async () => {
+  const { store, ctx } = await makeCtx({ deps: { branchSummary: { refreshBranchSummary: async () => { throw new Error('Branch not found: EG-0002'); } } } });
+  try {
+    const row = await createAssignment(ctx, {
+      branchCode: 'PILOT01', period: '2026-05', assignedOperator: 'op-alice', assignedApprover: 'ap-bob', assignedBy: 'admin-zed',
+    });
+    assert.equal(row.status, 'ASSIGNED');
+    assert.equal((await store.find('branch_period_assignments', { branch_code: 'PILOT01', period: '2026-05' })).length, 1);
+  } finally {
+    await store.close();
+  }
+});

@@ -295,7 +295,11 @@ export function createCatalystFake() {
       });
     }
 
-    const offset = offsetRaw ? Number(offsetRaw) : 0;
+    // Real ZCQL OFFSET is 1-based (live, 2026-09-15): OFFSET n starts AT row n, so it skips
+    // n-1 rows; OFFSET 0 behaves like OFFSET 1. Modelled exactly so a 0-based caller pays
+    // for the mistake here instead of on live (see catalyst.js buildSelectSql).
+    const offsetZcql = offsetRaw ? Number(offsetRaw) : 0;
+    const offset = Math.max(0, offsetZcql - 1);
     const limit = limitRaw ? Number(limitRaw) : undefined;
     // Live Catalyst does NOT guarantee a stable order across LIMIT/OFFSET pages when the
     // ORDER BY is absent or not total (observed 2026-09-15: duplicate + missing rows in a

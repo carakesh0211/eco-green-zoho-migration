@@ -97,6 +97,12 @@ function mapReceiptStatus(latestRun, filesOfLatestRun) {
  * columns, plain object; caller decides whether/how to persist it). Throws
  * BranchNotFoundError if `branches` has no row for branchCode.
  */
+/** Most recent '*'-class assignment for the branch (drives assigned_operator/approver). */
+async function latestWholeBranchAssignment(store, branchCode) {
+  const rows = await store.find('branch_period_assignments', { branch_code: branchCode, transaction_class: '*' }, { orderBy: 'period DESC' });
+  return rows[0] ?? null;
+}
+
 export async function computeBranchSummary(store, branchCode, { now = nowIso() } = {}) {
   const branch = await store.findOne('branches', { branch_code: branchCode });
   if (!branch) throw new BranchNotFoundError(branchCode);
@@ -227,8 +233,24 @@ export async function computeBranchSummary(store, branchCode, { now = nowIso() }
  * bumping summary_version on every update (starts at 1 on first insert).
  */
 export async function refreshBranchSummary(store, branchCode, { now = nowIso() } = {}) {
-  const computed = await computeBranchSummary(store, branchCode, { now });
   const existing = await store.get('branch_summaries', branchCode);
+  let computed;
+  try {
+    computed = await computeBranchSummary(store, branchCode, { now });
+  } catch (err) {
+    // A summary-only branch (the synthetic EG-* rows have no `branches` row) keeps its
+    // seeded statuses; only the assignment-derived columns are re-derived. Anything
+    // else (unknown branch, store failure) still propagates.
+    if (!(err instanceof BranchNotFoundError) || !existing) throw err;
+    const assignment = await latestWholeBranchAssignment(store, branchCode);
+    return store.update('branch_summaries', branchCode, {
+      assigned_operator: assignment?.assigned_operator ?? existing.assigned_operator ?? null,
+      assigned_approver: assignment?.assigned_approver ?? existing.assigned_approver ?? null,
+      last_activity_at: assignment ? now : existing.last_activity_at,
+      summary_version: existing.summary_version + 1,
+      updated_at: now,
+    });
+  }
   if (!existing) {
     return store.insert('branch_summaries', { ...computed, summary_version: 1, created_at: now, updated_at: now });
   }

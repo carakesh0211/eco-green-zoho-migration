@@ -13,6 +13,7 @@
 // the static config or the `app_users` directory table — it must return a normalised
 // { id, role, branches, principal_type } or null.
 import { nowIso, uk } from './ids.js';
+import { log } from './log.js';
 import { assertTransition, IllegalTransitionError } from './states.js';
 
 export const PRIORITIES = Object.freeze(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
@@ -91,8 +92,14 @@ function nowFn(ctx) {
  *  to run. Purely optional: absent in every test/ctx that doesn't wire it up. */
 async function maybeRefreshBranchSummary(ctx, branchCode) {
   const fn = ctx.deps?.branchSummary?.refreshBranchSummary;
-  if (typeof fn === 'function') {
+  if (typeof fn !== 'function') return;
+  try {
     await fn(ctx, { branchCode });
+  } catch (err) {
+    // The dashboard summary is a derived cache: its refresh must never fail the
+    // assignment write that already committed (OBSERVED LIVE 2026-09-15: a synthetic
+    // branch with no `branches` row turned POST /api/assignments into a 500).
+    log('warn', 'branch_summary_refresh_failed', { branchCode, error: String(err?.message ?? err), correlationId: ctx.correlationId });
   }
 }
 
@@ -375,9 +382,9 @@ export async function workload(store, users = []) {
 }
 
 export async function history(store, id) {
-  return store.find(
-    'audit_events',
-    { entity_type: 'branch_period_assignment', entity_id: String(id) },
-    { orderBy: 'created_at DESC' }
-  );
+  const rows = await store.find('audit_events', { entity_type: 'branch_period_assignment', entity_id: String(id) }, { orderBy: 'created_at DESC' });
+  // created_at has millisecond resolution, so consecutive events tie; break ties on the
+  // append-only id (sqlite autoincrement / Catalyst ROWID, both monotonic) so "newest first"
+  // is deterministic.
+  return rows.sort((x, y) => (x.created_at === y.created_at ? Number(y.id) - Number(x.id) : x.created_at < y.created_at ? 1 : -1));
 }

@@ -134,7 +134,12 @@ export async function openStore({ app, transport } = {}) {
     if (orderTerms.length) sql += ` ORDER BY ${orderTerms.join(', ')}`;
 
     if (Number.isInteger(limit)) sql += ` LIMIT ${limit}`;
-    if (Number.isInteger(offset)) sql += ` OFFSET ${offset}`;
+    // ZCQL OFFSET is 1-BASED (OBSERVED LIVE 2026-09-15 with ORDER BY ROWID: `OFFSET 0` and
+    // `OFFSET 1` both start at row 1; `OFFSET 3` starts AT the 3rd row). The Store contract
+    // is 0-based ("skip n rows", like sqlite), so translate: skip n -> ZCQL OFFSET n+1.
+    // Without this, every page after the first repeated the previous page's last row
+    // (the live 352-row read of a 351-row table: EG-0158 twice).
+    if (Number.isInteger(offset) && offset > 0) sql += ` OFFSET ${offset + 1}`;
     return sql;
   }
 

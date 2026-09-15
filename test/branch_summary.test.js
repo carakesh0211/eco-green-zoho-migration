@@ -306,3 +306,26 @@ test('refreshBranchSummary: inserts at version 1, then bumps summary_version on 
   assert.equal(stored.summary_version, 2);
   await store.close();
 });
+
+test('refreshBranchSummary: a summary-only (synthetic) branch keeps its seeded statuses and re-derives only the assignment columns', async () => {
+  const store = await openStore();
+  const now = nowIso();
+  await store.insert('branch_summaries', {
+    branch_code: 'EG-0002', branch_name: '[SYNTHETIC] Eco Green Branch 0002', receipt_status: 'RECEIVED', layer_a_status: 'PASS',
+    mapping_status: 'DRAFT', overlap_status: 'CLEAR', open_exception_count: 3, open_exception_impact: '120.00', batch_approval_status: 'DRAFT',
+    migrated_count: 0, total_count: 40, migration_progress_pct: 0, layer_c_status: 'NOT_RUN', balance_bridge_status: 'NOT_RUN',
+    readiness_status: 'IN_PROGRESS', is_synthetic: 1, summary_version: 1, created_at: now, updated_at: now,
+  });
+  await store.insert('branch_period_assignments', {
+    branch_code: 'EG-0002', period: '2026-04', transaction_class: '*', assigned_operator: 'op-x', assigned_approver: 'ap-y', status: 'ASSIGNED',
+    priority_level: 'NORMAL', assigned_at: now, version: 1, assigned_by: 'admin', uk: 'EG-0002|2026-04|*', created_at: now, updated_at: now,
+  });
+  const row = await refreshBranchSummary(store, 'EG-0002', { now: NOW });
+  assert.equal(row.assigned_operator, 'op-x');
+  assert.equal(row.assigned_approver, 'ap-y');
+  assert.equal(row.summary_version, 2);
+  assert.equal(row.readiness_status, 'IN_PROGRESS', 'seeded statuses untouched');
+  assert.equal(row.open_exception_count, 3);
+  await assert.rejects(() => refreshBranchSummary(store, 'NOPE', { now: NOW }), BranchNotFoundError, 'a branch with neither row still fails');
+  await store.close();
+});
