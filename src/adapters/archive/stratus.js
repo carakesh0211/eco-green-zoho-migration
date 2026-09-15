@@ -14,13 +14,18 @@
 // original porting note). Object key is capped at 255 chars by the Catalyst API (see
 // docs/CATALYST_REFERENCES.md) -> KEY_TOO_LONG if exceeded.
 //
-// ASSUMPTIONS (docs/CATALYST_REFERENCES.md has no confirmed field names for
-// `IStratusObjects`/`listPagedObjects`'s resolved value — the typings only name the
-// return type, not its shape): a paged listing resolves to
-// `{ objects: [{ object_key }], more_records, next_token }`, mirroring the
-// Table.getPagedRows() pagination shape (`more_records`/`next_token`) used elsewhere in
-// this SDK. If real Stratus differs (e.g. `data` instead of `objects`, or `key` instead of
-// `object_key`), the immutability-conflict scan below also tries those field names.
+// Listing contract (verified against zcatalyst-sdk-node 3.4.0 `lib/utils/pojo/stratus.d.ts`
+// and `lib/stratus/bucket.js`, and against live Development Stratus on 2026-09-15):
+//   bucket.listPagedObjects({ prefix?, continuationToken?, maxKeys?, folderListing?, orderBy? })
+//     -> { key_count, max_keys?, truncated: 'true'|'false', next_continuation_token?, contents: StratusObject[] }
+// where bucket.js wraps every raw `{ key, size, ... }` entry as `new StratusObject(bucket, details)`,
+// so the key is read from `entry.keyDetails.key` (raw `entry.key` is accepted as well).
+// An earlier revision guessed a Table.getPagedRows-like shape (`objects`/`object_key`/
+// `more_records`/`next_token`). Live Stratus returned none of those fields, so the
+// immutability scan saw an empty listing and let a different-bytes put through
+// (caught by POST /api/dev/archive-smoke, step `put_different_bytes_rejected`). The
+// scan below therefore fails closed: a page without a `contents` array is treated as an
+// unreadable listing (LIST_SHAPE_UNEXPECTED), never as "nothing archived yet".
 import { sha256Bytes } from '../../core/hash.js';
 import { ImmutableConflictError, ArchiveShaMismatchError, InvalidArchiveUriError } from './local.js';
 
@@ -44,6 +49,14 @@ export class ArchiveIntegrityError extends Error {
     super(`Downloaded bytes do not match the sha256 embedded in the archive key: ${uri}`);
     this.code = 'ARCHIVE_INTEGRITY';
     this.uri = uri;
+  }
+}
+
+export class ListShapeUnexpectedError extends Error {
+  constructor(prefix, page) {
+    super(`Stratus listPagedObjects(${prefix}) returned no 'contents' array — refusing to treat an unreadable listing as empty (keys: ${Object.keys(page ?? {}).join(',') || 'none'})`);
+    this.code = 'LIST_SHAPE_UNEXPECTED';
+    this.prefix = prefix;
   }
 }
 
@@ -116,13 +129,15 @@ export async function openArchive({ app, transport, bucketName } = {}) {
       // (branch, run, fileName) -> conflict. Same sha -> idempotent no-op below, since the
       // key is content-addressed (identical key implies identical bytes by construction).
       const runPrefix = `${branchCode}/${runId}/`;
-      let nextToken;
+      let continuationToken;
       do {
-        const page = await bucket.listPagedObjects({ prefix: runPrefix, nextToken });
-        const entries = page?.objects ?? page?.data ?? [];
-        for (const entry of entries) {
-          const objectKey = entry.object_key ?? entry.key ?? entry.Key;
-          if (!objectKey) continue;
+        const page = await bucket.listPagedObjects(
+          continuationToken ? { prefix: runPrefix, continuationToken } : { prefix: runPrefix }
+        );
+        if (!Array.isArray(page?.contents)) throw new ListShapeUnexpectedError(runPrefix, page);
+        for (const entry of page.contents) {
+          const objectKey = entry?.keyDetails?.key ?? entry?.key;
+          if (typeof objectKey !== 'string' || !objectKey.startsWith(runPrefix)) continue;
           const rel = objectKey.slice(runPrefix.length);
           const slashIdx = rel.indexOf('/');
           if (slashIdx === -1) continue;
@@ -131,8 +146,8 @@ export async function openArchive({ app, transport, bucketName } = {}) {
           if (existingFileName !== fileName) continue;
           if (existingSha !== sha) throw new ImmutableConflictError(uri);
         }
-        nextToken = page?.more_records ? page.next_token : undefined;
-      } while (nextToken);
+        continuationToken = String(page.truncated) === 'true' ? page.next_continuation_token : undefined;
+      } while (continuationToken);
 
       const alreadyThere = await bucket.headObject(key);
       if (alreadyThere) return uri; // idempotent no-op: identical bytes already archived

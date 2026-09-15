@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openArchive as openStratusArchive, KeyTooLongError, ArchiveIntegrityError } from '../src/adapters/archive/stratus.js';
+import { openArchive as openStratusArchive, KeyTooLongError, ArchiveIntegrityError, ListShapeUnexpectedError } from '../src/adapters/archive/stratus.js';
 import { openArchive as openDispatchArchive } from '../src/adapters/archive/index.js';
 import { createStratusFake } from '../src/adapters/archive/stratus_fake.js';
 import { ImmutableConflictError, ArchiveShaMismatchError } from '../src/adapters/archive/local.js';
@@ -122,4 +122,81 @@ test('archive/index: dispatches to the stratus adapter with an injected fake tra
   const sha256 = sha256Bytes(SAMPLE);
   const uri = await archive.put({ runId: 'run-001', branchCode: 'PILOT01', fileName: 'dispatch.csv', bytes: SAMPLE, sha256 });
   assert.equal(await archive.exists(uri), true);
+});
+
+// --- listPagedObjects contract (regression for the live miss found by POST /api/dev/archive-smoke) ---
+// A transport that answers with the exact shape live Stratus returned on 2026-09-15:
+// StratusObject-wrapped entries under `contents`, `truncated` as a string, and a
+// `next_continuation_token` only while truncated. It records the options it was called with.
+function liveShapedTransport({ keys, pageSize = 1000 }) {
+  const calls = [];
+  const bucket = {
+    async listPagedObjects(options = {}) {
+      calls.push({ ...options });
+      const matching = keys.filter((k) => k.startsWith(options.prefix ?? '')).sort();
+      const start = options.continuationToken ? Number(options.continuationToken) : 0;
+      const page = matching.slice(start, start + pageSize);
+      const truncated = start + pageSize < matching.length;
+      const out = { key_count: page.length, max_keys: pageSize, truncated: String(truncated), contents: page.map((key) => ({ keyDetails: { key, size: 1 } })) };
+      if (truncated) out.next_continuation_token = String(start + pageSize);
+      return out;
+    },
+    async headObject() { return false; },
+    async putObject() { return true; },
+    async getObject() { throw new Error('not used'); },
+  };
+  return { app: { stratus: () => ({ bucket: () => bucket }) }, calls };
+}
+
+test('archive/stratus: conflict scan reads the real SDK page shape (keyDetails.key under contents) and sends continuationToken, not nextToken', async () => {
+  const bytesA = Buffer.from('live shape A\n');
+  const bytesB = Buffer.from('live shape B, different\n');
+  const existing = `PILOT01/run-live/${sha256Bytes(bytesA)}/f.csv`;
+  const t = liveShapedTransport({ keys: [existing, 'PILOT01/run-other/deadbeef/f.csv'] });
+  const a = await openStratusArchive({ app: t.app, bucketName: BUCKET });
+
+  await assert.rejects(
+    () => a.put({ runId: 'run-live', branchCode: 'PILOT01', fileName: 'f.csv', bytes: bytesB, sha256: sha256Bytes(bytesB) }),
+    ImmutableConflictError
+  );
+  assert.equal(t.calls.length, 1);
+  assert.deepEqual(Object.keys(t.calls[0]).sort(), ['prefix'], 'first page must be requested with prefix only');
+  assert.equal(t.calls[0].prefix, 'PILOT01/run-live/');
+});
+
+test('archive/stratus: conflict scan follows next_continuation_token across truncated pages', async () => {
+  const bytesNew = Buffer.from('page three\n');
+  const conflicting = `PILOT01/run-paged/${sha256Bytes(Buffer.from('older bytes\n'))}/f.csv`;
+  const keys = ['PILOT01/run-paged/aaaa/x.csv', 'PILOT01/run-paged/bbbb/y.csv', conflicting]; // conflict lands on page 3 of 3
+  const t = liveShapedTransport({ keys, pageSize: 1 });
+  const a = await openStratusArchive({ app: t.app, bucketName: BUCKET });
+
+  await assert.rejects(
+    () => a.put({ runId: 'run-paged', branchCode: 'PILOT01', fileName: 'f.csv', bytes: bytesNew, sha256: sha256Bytes(bytesNew) }),
+    ImmutableConflictError
+  );
+  assert.equal(t.calls.length, 3, 'all three pages must be scanned before the verdict');
+  assert.equal(t.calls[1].continuationToken, '1');
+  assert.equal(t.calls[2].continuationToken, '2');
+});
+
+test('archive/stratus: a listing without a contents array fails closed (LIST_SHAPE_UNEXPECTED), never as "nothing archived"', async () => {
+  const bucket = {
+    async listPagedObjects() { return { objects: [], more_records: false }; }, // the shape the adapter once assumed
+    async headObject() { return false; },
+    async putObject() { throw new Error('putObject must not be reached'); },
+  };
+  const a = await openStratusArchive({ app: { stratus: () => ({ bucket: () => bucket }) }, bucketName: BUCKET });
+  await assert.rejects(
+    () => a.put({ runId: 'run-x', branchCode: 'PILOT01', fileName: 'f.csv', bytes: SAMPLE, sha256: sha256Bytes(SAMPLE) }),
+    ListShapeUnexpectedError
+  );
+});
+
+test('archive/stratus_fake: rejects option names the real SDK does not accept (guards against contract drift)', async () => {
+  const fake = createStratusFake();
+  const bucket = fake.app.stratus().bucket(BUCKET);
+  await assert.rejects(() => bucket.listPagedObjects({ prefix: 'x/', nextToken: '1' }), { code: 'INVALID_OPTION' });
+  const page = await bucket.listPagedObjects({ prefix: 'x/' });
+  assert.deepEqual(page, { key_count: 0, max_keys: 1000, truncated: 'false', contents: [] });
 });

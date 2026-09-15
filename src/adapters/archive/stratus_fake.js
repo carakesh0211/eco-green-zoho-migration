@@ -1,8 +1,9 @@
 // In-memory, Catalyst-shaped fake of the Stratus SDK surface the archive adapter uses:
 // `app.stratus().bucket(name)` -> putObject/getObject/headObject/listPagedObjects. Used
 // only in tests (offline, no network) — see test/archive_stratus.test.js. Mirrors
-// src/adapters/archive/stratus.js's documented assumptions (bucket.d.ts / index.d.ts,
-// zcatalyst-sdk-node 3.4.0) plus versioning, since Stratus buckets keep object versions.
+// the zcatalyst-sdk-node 3.4.0 typings (bucket.d.ts, utils/pojo/stratus.d.ts) plus
+// versioning, since Stratus buckets keep object versions. The listPagedObjects shape was
+// re-checked against live Development Stratus on 2026-09-15 (see stratus.js header).
 import { Readable } from 'node:stream';
 
 function fakeError(code, message) {
@@ -46,14 +47,34 @@ function makeBucketApi(name, objects) {
       if (!exists && throwErr) throw fakeError('OBJECT_NOT_FOUND', `Object not found: ${key}`);
       return exists;
     },
-    async listPagedObjects({ prefix = '', maxKeys = 1000, nextToken } = {}) {
+    // Mirrors IStratusPagedObjectOptions -> IStratusObjects exactly (lib/utils/pojo/stratus.d.ts).
+    // Unknown option names throw so a caller drifting from the real contract (as
+    // stratus.js once did with `nextToken`) fails here instead of silently on live Stratus.
+    async listPagedObjects(options = {}) {
+      const allowed = new Set(['prefix', 'continuationToken', 'maxKeys', 'folderListing', 'orderBy']);
+      for (const name of Object.keys(options)) {
+        if (!allowed.has(name)) throw fakeError('INVALID_OPTION', `listPagedObjects: unknown option '${name}' (real SDK accepts ${[...allowed].join(', ')})`);
+      }
+      const { prefix = '', continuationToken, maxKeys, orderBy = 'asc' } = options;
+      if (!['asc', 'desc'].includes(orderBy)) throw fakeError('INVALID_OPTION', 'Invalid value for orderBy. Use "asc" or "desc".');
       const allKeys = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort();
-      const start = nextToken ? Number(nextToken) : 0;
+      if (orderBy === 'desc') allKeys.reverse();
+      const start = continuationToken ? Number(continuationToken) : 0;
       const max = Number(maxKeys) || 1000;
       const page = allKeys.slice(start, start + max);
-      const more = start + max < allKeys.length;
-      const result = { objects: page.map((k) => ({ object_key: k })), more_records: more };
-      if (more) result.next_token = String(start + max);
+      const truncated = start + max < allKeys.length;
+      const result = {
+        key_count: page.length,
+        max_keys: max,
+        truncated: String(truncated),
+        // bucket.js wraps each raw entry as a StratusObject: the details live under keyDetails.
+        contents: page.map((k) => {
+          const entry = objects.get(k);
+          const latest = entry.versions[entry.versions.length - 1];
+          return { keyDetails: { key: k, size: latest.bytes.length, version_id: latest.versionId, content_type: latest.contentType ?? 'application/octet-stream', last_modified: latest.createdAt } };
+        }),
+      };
+      if (truncated) result.next_continuation_token = String(start + max);
       return result;
     },
     // --- test-only introspection, not part of the real SDK surface ---
