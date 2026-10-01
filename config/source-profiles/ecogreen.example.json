@@ -1,0 +1,40 @@
+{
+  "profile_version": "v1",
+  "branch_code": "PILOT01",
+  "from_date": "2026-04-01",
+  "to_date": "2026-05-31",
+  "tb_file": "tb.csv",
+  "in_scope_prefixes": {
+    "J": "JOURNAL",
+    "211": "JOURNAL",
+    "213": "JOURNAL",
+    "P": "PAYMENT",
+    "R": "RECEIPT",
+    "Q": "PAYMENT",
+    "H": "RECEIPT",
+    "X": "CONTRA",
+    "Y": "CONTRA",
+    "F": "CONTRA",
+    "W": "CONTRA",
+    "E": "SETTLEMENT"
+  },
+  "excluded_prefixes": ["A", "L", "U", "N", "G", "S", "T", "I", "K"],
+  "hold_prefixes": ["JT"],
+  "cash_accounts": ["CASH", "CASHC", "PET"],
+  "party_controls": [
+    {
+      "control": "CTRL-AP",
+      "name": "Accounts Payable (supplier control)",
+      "party_type": "VENDOR",
+      "party_prefixes": ["V"],
+      "tb_groups": ["Supplier Balance"]
+    },
+    {
+      "control": "CTRL-AR",
+      "name": "Accounts Receivable (customer control)",
+      "party_type": "CUSTOMER",
+      "party_prefixes": ["H"],
+      "tb_groups": ["Customer Balance", "Branch Balance"]
+    }
+  ]
+}
