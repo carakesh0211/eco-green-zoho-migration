@@ -368,7 +368,24 @@ export function normaliseEcoGreen({ files, profile, now }) {
 
   const transactionsCsv = toCsv(TRANSACTIONS_COLUMNS, txnRows);
   const trialBalanceCsv = toCsv(TRIAL_BALANCE_COLUMNS, tbRows);
-  const ALLOC_COLUMNS = ['voucher_id', 'voucher_date', 'source_table', 'party_code', 'party_type', 'invoice_ref', 'amount'];
+  // Each allocation row says "document voucher_id set amount against invoice_ref". For the
+  // later apply-credit step the row also carries which side it is (a negative amount is the
+  // credit being consumed, a positive one the outstanding being cleared), the referenced
+  // document's prefix, and whether that document is one of the vouchers in this run.
+  const emittedByRef = new Map(); // year/prefix/srno -> [voucher_id]
+  for (const id of voucherIds) {
+    const k = id.split('/').slice(1).join('/');
+    emittedByRef.set(k, [...(emittedByRef.get(k) ?? []), id]);
+  }
+  for (const a of allocations) {
+    const parts = a.invoice_ref.split('/');
+    const hits = emittedByRef.get(parts.slice(1).join('/')) ?? [];
+    a.ref_prefix = parts[2] ?? '';
+    a.side = a.amount.startsWith('-') ? 'CREDIT' : 'OUTSTANDING';
+    a.ref_in_run = hits.length === 1 ? 'YES' : hits.length > 1 ? 'AMBIGUOUS' : 'NO';
+    a.ref_voucher_id = hits.length === 1 ? hits[0] : '';
+  }
+  const ALLOC_COLUMNS = ['voucher_id', 'voucher_date', 'source_table', 'party_code', 'party_type', 'invoice_ref', 'ref_prefix', 'side', 'amount', 'ref_in_run', 'ref_voucher_id'];
   const allocationsCsv = toCsv(ALLOC_COLUMNS, allocations.map((a) => ALLOC_COLUMNS.map((c) => a[c])));
 
   const inputHashes = Object.keys(files).sort().map((n) => `${n}:${sha256Bytes(Buffer.isBuffer(files[n]) ? files[n] : Buffer.from(String(files[n]), 'utf8'))}`);
@@ -411,6 +428,7 @@ export function normaliseEcoGreen({ files, profile, now }) {
       debit_total: formatMoney(debitTotal), credit_total: formatMoney(creditTotal),
       by_type: Object.fromEntries(Object.entries(byType).map(([k, v]) => [k, { vouchers: v.vouchers, lines: v.lines, debit_total: formatMoney(v.debitPaise) }])),
       allocations: allocations.length, trial_balance_ledgers: tbRows.length,
+      allocations_by_ref: summariseAllocations(allocations),
     },
     bridge,
     exclusions,
@@ -419,6 +437,16 @@ export function normaliseEcoGreen({ files, profile, now }) {
   };
 
   return { manifest, transactionsCsv, trialBalanceCsv, allocationsCsv, report };
+}
+
+function summariseAllocations(allocations) {
+  const out = {};
+  for (const a of allocations) {
+    const k = `${a.source_table}|${a.ref_prefix}|${a.side}|${a.ref_in_run}`;
+    out[k] ??= { source_table: a.source_table, ref_prefix: a.ref_prefix, side: a.side, ref_in_run: a.ref_in_run, rows: 0, paise: 0n };
+    out[k].rows += 1; out[k].paise += parseMoney(a.amount);
+  }
+  return Object.keys(out).sort().map((k) => { const { paise, ...rest } = out[k]; return { ...rest, amount: formatMoney(paise) }; });
 }
 
 function csvField(value) {

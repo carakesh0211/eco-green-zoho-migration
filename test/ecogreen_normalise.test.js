@@ -392,7 +392,9 @@ test('supplier payments: party lines per invoice row, one credit line per opposi
   assert.deepEqual(alloc[0], {
     voucher_id: 'PILOT01/26/P/5', voucher_date: '2026-04-10', source_table: 'supp_pay_det',
     party_code: 'V90001', party_type: 'VENDOR', invoice_ref: 'PILOT01/26/PI/101', amount: '1000.00',
+    ref_prefix: 'PI', side: 'OUTSTANDING', ref_in_run: 'NO', ref_voucher_id: '',
   });
+  assert.equal(alloc[2].side, 'CREDIT', 'a negative row is the credit being consumed');
   assert.equal(alloc[2].amount, '-200.00');
   assert.equal(alloc[2].party_code, 'V90002');
   assert.equal(res.report.output.allocations, 6);
@@ -538,8 +540,8 @@ test('settlements: set_det produces allocation evidence only, never ledger lines
   assert.equal(res.report.output.vouchers, 0);
   const alloc = rowsOf(res.allocationsCsv);
   assert.deepEqual(alloc, [
-    { voucher_id: 'PILOT01/26/E/1', voucher_date: '2026-04-12', source_table: 'set_det', party_code: 'H90001', party_type: 'CUSTOMER', invoice_ref: 'PILOT01/26/SI/201', amount: '75.00' },
-    { voucher_id: 'PILOT01/26/E/1', voucher_date: '2026-04-12', source_table: 'set_det', party_code: 'H90002', party_type: 'CUSTOMER', invoice_ref: 'PILOT01/26/SI/202', amount: '25.00' },
+    { voucher_id: 'PILOT01/26/E/1', voucher_date: '2026-04-12', source_table: 'set_det', party_code: 'H90001', party_type: 'CUSTOMER', invoice_ref: 'PILOT01/26/SI/201', amount: '75.00', ref_prefix: 'SI', side: 'OUTSTANDING', ref_in_run: 'NO', ref_voucher_id: '' },
+    { voucher_id: 'PILOT01/26/E/1', voucher_date: '2026-04-12', source_table: 'set_det', party_code: 'H90002', party_type: 'CUSTOMER', invoice_ref: 'PILOT01/26/SI/202', amount: '25.00', ref_prefix: 'SI', side: 'OUTSTANDING', ref_in_run: 'NO', ref_voucher_id: '' },
   ]);
   assert.deepEqual(bridgeOf(res, 'set_det.csv'), { table: 'set_det.csv', source_rows: 2, emitted_rows: 2, excluded_rows: 0, ties: true });
 });
@@ -913,3 +915,26 @@ test('CLI: usage error exits 2; a normalisation error exits 1 with its code; suc
   assert.equal(unsafe.status, 1);
   assert.match(unsafe.stderr, /refusing to write normalised extracts/);
 }));
+
+test('settlements: a credit row that refers to a journal in this run is linked to that voucher', () => {
+  const res = run({
+    'tb.csv': standardTb(),
+    'jv_det.csv': jv([
+      { n_srno: '7', n_seq: '1', c_act_code: 'BANK01', n_debit: '100.00' },
+      { n_srno: '7', n_seq: '2', c_act_code: 'H90001', n_credit: '100.00' },
+    ]),
+    'set_det.csv': st([
+      { n_srno: '1', c_inv_prefix: 'J', n_inv_no: '7', n_amount: '-100.00' },
+      { n_srno: '1', c_inv_prefix: 'SI', n_inv_no: '201', n_amount: '100.00' },
+    ]),
+  });
+  const alloc = rowsOf(res.allocationsCsv);
+  assert.deepEqual(alloc.map((a) => [a.ref_prefix, a.side, a.ref_in_run, a.ref_voucher_id]), [
+    ['J', 'CREDIT', 'YES', 'PILOT01/26/J/7'],
+    ['SI', 'OUTSTANDING', 'NO', ''],
+  ]);
+  assert.deepEqual(res.report.output.allocations_by_ref, [
+    { source_table: 'set_det', ref_prefix: 'J', side: 'CREDIT', ref_in_run: 'YES', rows: 1, amount: '-100.00' },
+    { source_table: 'set_det', ref_prefix: 'SI', side: 'OUTSTANDING', ref_in_run: 'NO', rows: 1, amount: '100.00' },
+  ]);
+});

@@ -110,3 +110,24 @@ A `SETTLEMENT` prefix found inside `jv_det` is currently counted under `UNKNOWN_
 Real extracts, profiles that name real branches, and normalised output are client financial data.
 They live only under the gitignored `var/` directory and are never committed. Tests and examples
 use synthetic values only (branch `PILOT01`, invented party and account codes).
+
+## Settlements drive the set-off (owner decision, 2026-10-02)
+
+A settlement (`E`) passes no ledger entry of its own, but it is the record of which credit
+(receipt, journal, credit note, advance) was set off against which outstanding document.
+That set-off must be reproduced in Zoho Books by applying the credit to the bill or invoice,
+so `allocations.csv` is a required input of the apply-credit step, not optional evidence.
+
+Each allocation row carries:
+
+| column | meaning |
+|---|---|
+| `side` | `CREDIT` when the amount is negative (the credit being consumed), `OUTSTANDING` when positive (the document being cleared) |
+| `ref_prefix` | prefix of the referenced document |
+| `ref_in_run` | `YES` when the referenced document is one of the vouchers in this run, `NO` when it is not (already in Books, or dated outside the window), `AMBIGUOUS` when more than one voucher matches |
+| `ref_voucher_id` | the matching voucher when `ref_in_run` is `YES` |
+
+`normalisation_report.json` summarises these under `output.allocations_by_ref`.
+
+The cut-off date is inclusive: a branch migrated on a given date includes documents dated
+that day (day end).
