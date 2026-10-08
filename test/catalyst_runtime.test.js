@@ -199,3 +199,21 @@ test('a module exposing neither initialize() nor default.initialize() fails loud
     process.env.STORE_ADAPTER = prev;
   }
 });
+
+test('userScopedApp(req) initialises a SEPARATE user-scoped app once per request (getCurrentUser must not use the admin credential)', async () => {
+  // Regression for the live sign-in failure of 2026-10-08: zcatalyst-sdk-node 3.4.0 treats an
+  // explicit scope as strict (switchUser() is a no-op), so getCurrentUser() on the admin app
+  // was sent with the admin credential and every hosted-login session came back as
+  // NO_CATALYST_SESSION. The resolver now reads the user through a { scope: 'user' } app.
+  const calls = [];
+  const runtime = createCatalystRuntime({ sdkLoader: async () => ({ initialize: (req, opts) => { calls.push(opts); return { marker: opts?.scope ?? 'none', req }; } }) });
+  const req = { headers: {} };
+  const a = await runtime.userScopedApp(req);
+  const b = await runtime.userScopedApp(req);
+  assert.equal(a, b, 'memoised per request');
+  assert.equal(a.marker, 'user');
+  assert.deepEqual(calls, [{ scope: 'user' }]);
+  const other = await runtime.userScopedApp({ headers: {} });
+  assert.notEqual(other, a, 'a different request gets its own app');
+  await assert.rejects(() => runtime.userScopedApp(null), /needs the request/);
+});

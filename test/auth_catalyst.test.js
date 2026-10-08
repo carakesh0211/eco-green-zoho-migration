@@ -295,3 +295,29 @@ test('GET /auth/logout -> 404 AUTH_MODE_NOT_ENABLED when unconfigured, 302 when 
     }
   }
 });
+
+test('resolveSession reads the end user through userApp (user-scoped) when provided, never through the admin currentApp', async () => {
+  const { createCatalystSessionAuth } = await import('../src/server/auth_catalyst.js');
+  const { openStore } = await import('../src/adapters/store/memory.js');
+  const { createAudit } = await import('../src/core/audit.js');
+  const store = await openStore();
+  const audit = createAudit(store);
+  let adminCalls = 0;
+  const adminApp = { userManagement: () => ({ getCurrentUser: async () => { adminCalls += 1; throw new Error('admin credential cannot read the end user'); } }) };
+  const userApp = { userManagement: () => ({ getCurrentUser: async () => ({ email_id: 'session.user@example.invalid', user_id: 'u-1', first_name: 'Session', last_name: 'User' }) }) };
+  const logs = [];
+  const sessionAuth = createCatalystSessionAuth({
+    store, audit, currentApp: async () => adminApp, userApp: async (req) => { assert.ok(req, 'request is passed through'); return userApp; },
+    resolveDirectoryUser: async () => null, environment: 'Development', logger: (level, msg, fields) => logs.push({ level, msg, fields }),
+  });
+  const session = await sessionAuth.resolveSession({ headers: {}, path: '/api/auth/me' });
+  assert.deepEqual(session, { email: 'session.user@example.invalid', catalystUserId: 'u-1', displayName: 'Session User', firstName: 'Session', lastName: 'User' });
+  assert.equal(adminCalls, 0);
+  // and a throwing user app is logged (reason, no stack) instead of vanishing silently
+  const failing = createCatalystSessionAuth({
+    store, audit, currentApp: async () => adminApp, userApp: async () => ({ userManagement: () => ({ getCurrentUser: async () => { throw new Error('no user credentials present'); } }) }),
+    resolveDirectoryUser: async () => null, environment: 'Development', logger: (level, msg, fields) => logs.push({ level, msg, fields }),
+  });
+  assert.equal(await failing.resolveSession({ headers: {}, path: '/api/auth/me' }), null);
+  assert.ok(logs.some((l) => l.msg === 'catalyst_session_unresolved' && /no user credentials/.test(l.fields.reason)));
+});

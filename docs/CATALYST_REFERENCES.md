@@ -49,3 +49,10 @@ against the installed SDK package itself.
 - Maximum object size and per-project bucket count (not stated on the pages fetched).
 - Whether `putObject` on a versioned bucket returns the new `versionId` synchronously (typings return `boolean`).
 - Modular `@zcatalyst/*` SDK API surface (0.0.x; not adopted).
+
+## Authentication (verified live 2026-10-08)
+
+| Item | Fact | Source |
+|---|---|---|
+| `initialize(req, { scope })` is **strict** | In `zcatalyst-sdk-node` 3.4.0 an explicit scope makes `CatalystCredential.switchUser()` a no-op (`strictScope = true`). `userManagement().getCurrentUser()` marks its request `user: 'user'`, but on an app initialised with `{ scope: 'admin' }` it is sent with the ADMIN credential and never resolves the browser session. Observed live: a successful hosted login still returned `NO_CATALYST_SESSION` from `/api/auth/me`, while the AppSail access log showed the end-user `zuid`/`user_id` on every request. Fix: `src/server/catalyst_runtime.js#userScopedApp(req)` initialises a second per-request app with `{ scope: 'user' }` and `auth_catalyst.js#resolveSession` reads the user through it; the admin app stays for Data Store/Stratus. | package `lib/utils/credential.js` (`CatalystCredential` constructor + `switchUser`), `lib/user-management/user-management.js#getCurrentUser`, `lib/catalyst-namespace.js#initialize`; AppSail access/application logs via Catalyst MCP `Get_Logs` (2026-10-08) |
+| Hosted Authentication | Enabled on EcoGreenMigration (Development) through the console wizard; `GET …/__catalyst/auth/config.json` on the AppSail origin echoes the branding; the sign-in form is Zoho's portal frame `accounts/p/<zaid>/signin` and the first sign-in of an existing Zoho account uses that account's existing password (no set-password step). | console + in-app browser, 2026-10-08 |

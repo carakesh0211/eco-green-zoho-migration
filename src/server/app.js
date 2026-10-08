@@ -88,6 +88,9 @@ export function createApp({
   if (modes.includes('catalyst')) {
     sessionAuth = sessionAuth ?? createCatalystSessionAuth({
       store, audit, currentApp: runtime?.currentApp ?? runtimeCurrentApp, resolveDirectoryUser, environment,
+      // user-scoped per-request app for getCurrentUser() (catalyst_runtime.js#userScopedApp);
+      // absent when no runtime is wired (tests / sqlite deployments) -> currentApp fallback.
+      userApp: runtime?.userScopedApp,
     });
     // Compose BEFORE any router captures auth.authenticate(): Bearer header -> bearer path
     // (byte-for-byte the previous behaviour), otherwise -> Catalyst session path.

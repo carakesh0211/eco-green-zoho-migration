@@ -9,6 +9,7 @@
 // with no matching ACTIVE/INVITED app_users row is refused, never silently granted a role.
 import { createHash } from 'node:crypto';
 import { newCorrelationId, nowIso } from '../core/ids.js';
+import { log } from '../core/log.js';
 
 const LAST_LOGIN_DEDUPE_MS = 10 * 60 * 1000; // "at most once per 10 min per user"
 
@@ -91,7 +92,7 @@ function stripEmail(row) {
  *    (including undefined, i.e. a caller that hasn't wired this yet) disables it.
  * Returns { resolveSession, authenticateSession, deny }.
  */
-export function createCatalystSessionAuth({ store, audit, currentApp, resolveDirectoryUser, clock = () => new Date(), environment }) {
+export function createCatalystSessionAuth({ store, audit, currentApp, userApp, resolveDirectoryUser, clock = () => new Date(), environment, logger = log }) {
   // userId -> epoch ms of the last last_login_at write. Process-local, best-effort —
   // exactly what "cheap dedupe in memory" calls for; a restart or a second AppSail
   // instance simply re-writes once more, which is harmless.
@@ -138,10 +139,17 @@ export function createCatalystSessionAuth({ store, audit, currentApp, resolveDir
    */
   async function resolveSession(req) {
     try {
-      const app = await currentApp(req);
+      // The end user must be read through a USER-scoped app: the admin-scoped request app
+      // sends getCurrentUser() with the admin credential and never sees the browser
+      // session (see catalyst_runtime.js#userScopedApp). `currentApp` remains the
+      // fallback for callers/tests that inject a single fake app.
+      const app = userApp ? await userApp(req) : await currentApp(req);
       if (!app || typeof app.userManagement !== 'function') return null;
       const user = await app.userManagement().getCurrentUser();
-      if (!user || !user.email_id) return null;
+      if (!user || !user.email_id) {
+        logger('debug', 'catalyst_session_empty', { path: req.originalUrl || req.path });
+        return null;
+      }
       const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email_id;
       return {
         email: user.email_id,
@@ -150,7 +158,10 @@ export function createCatalystSessionAuth({ store, audit, currentApp, resolveDir
         firstName: user.first_name ?? null,
         lastName: user.last_name ?? null,
       };
-    } catch {
+    } catch (err) {
+      // An unauthenticated request lands here by design (the SDK throws). Log the
+      // reason so a mis-wired session never again fails silently as NO_CATALYST_SESSION.
+      logger('debug', 'catalyst_session_unresolved', { path: req.originalUrl || req.path, reason: String(err?.message ?? err).slice(0, 200) });
       return null;
     }
   }

@@ -99,8 +99,30 @@ export function createCatalystRuntime({ sdkLoader } = {}) {
     return als.run({ app }, fn);
   }
 
-  return { middleware, currentApp, runWithApp };
+  return { middleware, currentApp, runWithApp, userScopedApp };
 }
+
+/**
+ * userScopedApp(req) -> Promise<CatalystApp>
+ * A SECOND per-request app initialised with `{ scope: 'user' }`, for reading the signed-in
+ * END USER. The admin-scoped app above cannot do this: in zcatalyst-sdk-node 3.4.0 an
+ * explicit scope is "strict" — `CatalystCredential.switchUser()` is a no-op — so
+ * `userManagement().getCurrentUser()` on the admin app is sent with the ADMIN credential
+ * and never resolves the browser session (observed live 2026-10-08: a signed-in hosted
+ * login still got NO_CATALYST_SESSION). Memoised on the request object; rejects (so the
+ * caller can treat it as "no session") when the request carries no user credential.
+ */
+export async function userScopedApp(req) {
+  if (!req || typeof req !== 'object') throw new CatalystRuntimeError('userScopedApp() needs the request');
+  if (!req[USER_APP]) {
+    req[USER_APP] = loadSdk().then((sdk) => {
+      if (typeof sdk.initialize !== 'function') throw new CatalystRuntimeError('Catalyst SDK has no initialize()');
+      return sdk.initialize(req, { scope: 'user' });
+    });
+  }
+  return req[USER_APP];
+}
+const USER_APP = Symbol('catalystUserScopedApp');
 
 /**
  * Returns the Catalyst app for the current AsyncLocalStorage context (set by
