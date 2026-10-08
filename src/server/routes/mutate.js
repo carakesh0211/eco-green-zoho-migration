@@ -8,9 +8,33 @@
 // audits per its own CONTRACTS.md entry — never both, to avoid double audit rows).
 import express from 'express';
 import { assertTransition, BATCH_TRANSITIONS, QUEUE_TRANSITIONS } from '../../core/states.js';
-import { nowIso } from '../../core/ids.js';
+import { nowIso, uk, isIsoDate } from '../../core/ids.js';
+import { refreshBranchSummary } from '../../core/branch_summary.js';
 import * as exceptionsModule from '../../core/exceptions.js';
 import { isBotUser, botMayPerform } from './agent.js';
+
+const MAPPING_RULE_TYPES = ['MODULE_ROUTE', 'LEDGER_ACCOUNT', 'PARTY', 'PAYMENT_MODE', 'TAX'];
+const MAPPING_UPSERT_MAX_ROWS = 5000;
+
+function nonEmpty(v) {
+  return v !== null && v !== undefined && String(v).trim() !== '';
+}
+
+/** -> message naming the first invalid row index, or null when every row is valid. */
+function validateMappingRows(rows) {
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i];
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return `row ${i}: must be an object`;
+    if (!MAPPING_RULE_TYPES.includes(r.rule_type)) {
+      return `row ${i}: rule_type must be one of ${MAPPING_RULE_TYPES.join(', ')}`;
+    }
+    for (const f of ['source_key', 'target_value', 'mapping_version']) {
+      if (!nonEmpty(r[f])) return `row ${i}: ${f} is required`;
+    }
+    if (!isIsoDate(r.effective_from)) return `row ${i}: effective_from must be a valid YYYY-MM-DD date`;
+  }
+  return null;
+}
 
 function wrap(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -62,6 +86,39 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
         runId: run.id,
         tolerance: req.body?.tolerance ?? '0.00',
       });
+      res.json(result);
+    })
+  );
+
+  // ---- re-run the transform for a run (e.g. after mapping rules were approved) ----
+  router.post(
+    '/runs/:id/retransform',
+    auth.authenticate(),
+    auth.requireCorrelationId(),
+    botGate('retransform'),
+    auth.requireRole('operator', 'admin'),
+    wrap(async (req, res) => {
+      const run = await store.get('extraction_runs', req.params.id);
+      if (!run) return res.status(404).json({ error: 'NOT_FOUND' });
+      if (!auth.branchAllowed(req.user, run.branch_code)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${run.branch_code}` });
+      }
+      if (!deps.transform) return notImplemented(res, 'transform');
+      let result;
+      try {
+        result = await deps.transform.retransformRun(ctxFor(req), { runId: run.id });
+      } catch (err) {
+        if (err?.code === 'NOT_FOUND') return res.status(404).json({ error: err.code, message: err.message });
+        if (err?.code === 'INVALID_RUN_STATE' || err?.code === 'BATCH_IN_PROGRESS') {
+          return res.status(409).json({ error: err.code, message: err.message });
+        }
+        throw err;
+      }
+      try {
+        await refreshBranchSummary(store, run.branch_code);
+      } catch {
+        // best effort: the summary is a derived view and can be refreshed later
+      }
       res.json(result);
     })
   );
@@ -137,20 +194,41 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
     })
   );
 
-  // ---- mapping rules upsert (DRAFT) ----
+  // ---- mapping rules upsert (always DRAFT; approval is a separate step) ----
   router.post(
     '/mappings',
     auth.authenticate(),
     auth.requireCorrelationId(),
     botGate('mappings_upsert'),
-    auth.requireRole('admin'),
+    auth.requireRole('operator', 'admin'),
     wrap(async (req, res) => {
       const rows = Array.isArray(req.body) ? req.body : req.body?.rows;
       if (!Array.isArray(rows) || rows.length === 0) {
         return res.status(400).json({ error: 'BAD_REQUEST', message: 'Body must be an array of rows or { rows: [...] }' });
       }
+      if (rows.length > MAPPING_UPSERT_MAX_ROWS) {
+        return res.status(413).json({
+          error: 'PAYLOAD_TOO_LARGE',
+          message: `At most ${MAPPING_UPSERT_MAX_ROWS} mapping rows per request (got ${rows.length})`,
+        });
+      }
+      const invalid = validateMappingRows(rows);
+      if (invalid) return res.status(400).json({ error: 'BAD_REQUEST', message: invalid });
       if (!deps.mapping) return notImplemented(res, 'mapping');
-      const result = await deps.mapping.loadMappingRules({ store }, rows);
+
+      // Force DRAFT regardless of caller/role; skip rows that would change nothing for an
+      // already-APPROVED rule (same uk, same target_value) so a re-upload never demotes it.
+      const toLoad = [];
+      let unchanged = 0;
+      for (const r of rows) {
+        const existing = await store.findOne('mapping_rules', { uk: uk(r.rule_type, r.source_key, r.mapping_version) });
+        if (existing && existing.status === 'APPROVED' && String(existing.target_value) === String(r.target_value)) {
+          unchanged += 1;
+          continue;
+        }
+        toLoad.push({ ...r, status: 'DRAFT', approved_by: null, approved_at: null });
+      }
+      const result = toLoad.length ? await deps.mapping.loadMappingRules({ store }, toLoad) : [];
       await audit.emit({
         actor: req.user.id,
         actorRole: req.user.role,
@@ -158,11 +236,102 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
         entityType: 'mapping_rules',
         entityId: null,
         before: null,
-        after: { count: result.length },
+        after: { count: result.length, upserted: result.length, unchanged },
         reason: req.body?.reason ?? null,
         correlationId: req.correlationId,
       });
-      res.json({ mappings: result });
+      res.json({ mappings: result, upserted: result.length, unchanged });
+    })
+  );
+
+  // ---- mapping rules bulk approve (by ids or by filter; DRAFT rows only) ----
+  router.post(
+    '/mappings/approve',
+    auth.authenticate(),
+    auth.requireCorrelationId(),
+    botGate('mappings_approve'),
+    auth.requireRole('approver', 'admin'),
+    wrap(async (req, res) => {
+      const { ids, filter } = req.body ?? {};
+      const hasIds = ids !== undefined && ids !== null;
+      const hasFilter = filter !== undefined && filter !== null;
+      if (hasIds === hasFilter) {
+        return res.status(400).json({ error: 'BAD_REQUEST', message: 'Provide exactly one of ids or filter' });
+      }
+      let candidates = [];
+      if (hasIds) {
+        if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => Number.isInteger(i))) {
+          return res.status(400).json({ error: 'BAD_REQUEST', message: 'ids must be a non-empty array of integers' });
+        }
+        const seen = new Set();
+        for (const id of ids) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const row = await store.get('mapping_rules', id);
+          if (row && row.status === 'DRAFT') candidates.push(row);
+        }
+      } else {
+        if (typeof filter !== 'object' || Array.isArray(filter)) {
+          return res.status(400).json({ error: 'BAD_REQUEST', message: 'filter must be an object' });
+        }
+        const where = { status: 'DRAFT' };
+        for (const k of ['rule_type', 'mapping_version', 'source_key']) {
+          if (filter[k] !== undefined && filter[k] !== null && filter[k] !== '') where[k] = filter[k];
+        }
+        candidates = await store.find('mapping_rules', where);
+      }
+      const now = nowIso();
+      const approvedIds = [];
+      for (const row of candidates) {
+        await store.update('mapping_rules', row.id, {
+          status: 'APPROVED',
+          approved_by: req.user.id,
+          approved_at: now,
+          updated_at: now,
+        });
+        approvedIds.push(row.id);
+      }
+      await audit.emit({
+        actor: req.user.id,
+        actorRole: req.user.role,
+        action: 'MAPPING.APPROVE_BULK',
+        entityType: 'mapping_rules',
+        entityId: null,
+        before: null,
+        after: { count: approvedIds.length, ids: approvedIds },
+        reason: req.body?.reason ?? null,
+        correlationId: req.correlationId,
+      });
+      res.json({ approved: approvedIds.length, ids: approvedIds });
+    })
+  );
+
+  // ---- mapping rule retire (DRAFT | APPROVED -> RETIRED) ----
+  router.post(
+    '/mappings/:id/retire',
+    auth.authenticate(),
+    auth.requireCorrelationId(),
+    botGate('mappings_retire'),
+    auth.requireRole('approver', 'admin'),
+    wrap(async (req, res) => {
+      const row = await store.get('mapping_rules', Number(req.params.id));
+      if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
+      if (row.status === 'RETIRED') {
+        return res.status(409).json({ error: 'ALREADY_RETIRED', message: 'Mapping rule is already RETIRED' });
+      }
+      const updated = await store.update('mapping_rules', row.id, { status: 'RETIRED', updated_at: nowIso() });
+      await audit.emit({
+        actor: req.user.id,
+        actorRole: req.user.role,
+        action: 'MAPPING.RETIRE',
+        entityType: 'mapping_rules',
+        entityId: row.id,
+        before: row,
+        after: updated,
+        reason: req.body?.reason ?? null,
+        correlationId: req.correlationId,
+      });
+      res.json(updated);
     })
   );
 

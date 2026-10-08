@@ -262,6 +262,52 @@ export function createReadRouter({ store, deps = {}, auth }) {
     })
   );
 
+  // ---- mapping rules (any authenticated role; not branch-scoped) ----
+  function parseMeta(row) {
+    let meta = null;
+    if (row.target_meta) {
+      try {
+        meta = JSON.parse(row.target_meta);
+      } catch {
+        meta = null;
+      }
+    }
+    return { ...row, target_meta: meta };
+  }
+
+  const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+  router.get(
+    '/mappings/summary',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const rows = await store.find('mapping_rules', {});
+      const counts = new Map();
+      for (const r of rows) {
+        const key = `${r.rule_type}|${r.status}`;
+        const entry = counts.get(key) ?? { rule_type: r.rule_type, status: r.status, count: 0 };
+        entry.count += 1;
+        counts.set(key, entry);
+      }
+      const summary = [...counts.values()].sort((a, b) => cmp(a.rule_type, b.rule_type) || cmp(a.status, b.status));
+      res.json({ summary });
+    })
+  );
+
+  router.get(
+    '/mappings',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const where = {};
+      for (const k of ['rule_type', 'status', 'mapping_version', 'source_key']) {
+        if (typeof req.query[k] === 'string' && req.query[k] !== '') where[k] = req.query[k];
+      }
+      const rows = await store.find('mapping_rules', where);
+      rows.sort((a, b) => cmp(a.rule_type, b.rule_type) || cmp(a.source_key, b.source_key));
+      res.json({ mappings: rows.map(parseMeta) });
+    })
+  );
+
   router.get(
     '/worker/health',
     auth.authenticate(),

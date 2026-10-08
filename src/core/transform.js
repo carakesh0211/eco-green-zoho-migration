@@ -5,7 +5,7 @@
 import { parseMoney, formatMoney } from './money.js';
 import { hashCanonical } from './hash.js';
 import { uk, nowIso } from './ids.js';
-import { assertTransition, RUN_TRANSITIONS } from './states.js';
+import { assertTransition, RUN_TRANSITIONS, BATCH_STATES } from './states.js';
 import { resolveRule } from './mapping.js';
 
 export class UnmappedEntityError extends Error {
@@ -35,6 +35,21 @@ export class InvalidRouteError extends Error {
     this.reason = reason;
   }
 }
+
+/** mapping_rules.target_meta is a JSON string in store rows, but callers/tests may pass an object. */
+function parseMeta(rule) {
+  const raw = rule?.target_meta;
+  if (raw === null || raw === undefined || raw === '') return {};
+  if (typeof raw === 'object') return Array.isArray(raw) ? {} : raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const CONTROL_ACCOUNT_TYPES = new Set(['accounts_receivable', 'accounts_payable']);
 
 function lineAmount(line) {
   const d = parseMoney(line.debit);
@@ -205,11 +220,29 @@ export function buildPayload({ module, voucher, lines = [], rules = [], resolve 
         }
         warnings.push('JOURNAL_FALLBACK_RULE');
       }
+      // Every voucher of this source posts as a journal. A line that touches a receivable /
+      // payable sub-account must carry the party as the Books contact on that line; parties
+      // that live in Books as GL accounts (PARTY target_meta.kind === 'account') instead
+      // replace the ledger account on the line.
+      const addWarning = (w) => { if (!warnings.includes(w)) warnings.push(w); };
       const lineItems = lines.map(l => {
-        const account = requireRule('LEDGER_ACCOUNT', l.ledger_code).target_value;
         const d = parseMoney(l.debit);
         const c = parseMoney(l.credit);
-        return d !== 0n ? { account, debit: formatMoney(d) } : { account, credit: formatMoney(c) };
+        const side = d !== 0n ? { debit: formatMoney(d) } : { credit: formatMoney(c) };
+        const partyCode = l.party_code === null || l.party_code === undefined ? '' : String(l.party_code).trim();
+        if (partyCode) {
+          const partyRule = requireRule('PARTY', partyCode);
+          const meta = parseMeta(partyRule);
+          if (meta.kind === 'account') {
+            addWarning('PARTY_POSTED_TO_ACCOUNT');
+            return { account: partyRule.target_value, ...side };
+          }
+          const account = requireRule('LEDGER_ACCOUNT', l.ledger_code).target_value;
+          return { account, contact: partyRule.target_value, contact_type: meta.contact_type ?? null, ...side };
+        }
+        const ledgerRule = requireRule('LEDGER_ACCOUNT', l.ledger_code);
+        if (CONTROL_ACCOUNT_TYPES.has(parseMeta(ledgerRule).account_type)) addWarning('CONTROL_LINE_WITHOUT_PARTY');
+        return { account: ledgerRule.target_value, ...side };
       });
       const notes = voucher.narration || lines?.[0]?.narration || '';
       const base = baseFields(voucher, lines, warnings);
@@ -310,6 +343,14 @@ export async function transformRun(ctx, { runId, transformationVersion = 'tx_v1'
         mapping_version: routeRule.mapping_version, transformation_version: transformationVersion,
         warnings_json: JSON.stringify(payload.warnings ?? []), uk: payloadUk, created_at: now,
       });
+    } else if (existing.payload_hash !== payloadHash) {
+      // Same voucher/version key but the mapping rules changed underneath it (e.g. a rule
+      // was corrected in place): refresh the stored preview so it matches the stamped hash.
+      await store.update('preview_payloads', existing.id, {
+        target_module: routeRule.target_value, payload_json: JSON.stringify(payload), payload_hash: payloadHash,
+        human_summary: humanSummary(routeRule.target_value, payload),
+        warnings_json: JSON.stringify(payload.warnings ?? []),
+      });
     }
     await store.update('vouchers', voucher.id, {
       target_module: routeRule.target_value, target_payload_hash: payloadHash,
@@ -328,4 +369,69 @@ export async function transformRun(ctx, { runId, transformationVersion = 'tx_v1'
   });
 
   return { runId, status: 'TRANSFORMED', mappingVersion, transformationVersion };
+}
+
+const RETRANSFORM_RUN_STATES = new Set(['CLASSIFIED', 'TRANSFORMED', 'READY_FOR_APPROVAL']);
+const RETRANSFORM_BATCH_STATES = new Set([BATCH_STATES.DRAFT, BATCH_STATES.REJECTED, BATCH_STATES.APPROVAL_INVALIDATED]);
+
+function codedError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
+/**
+ * Re-run the transform after mapping rules changed. Vouchers BLOCKED for UNMAPPED_ENTITY
+ * are put back to MIGRATE (their open UNMAPPED_ENTITY exceptions resolved first; a
+ * still-unmapped voucher is re-blocked by transformRun, and exceptions.raise() reopens the
+ * RESOLVED exception on the same dedupeKey), the run is stepped back to CLASSIFIED and
+ * transformRun is executed again. Refused while any batch of the run is past DRAFT.
+ */
+export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v1' }) {
+  const { store, audit } = ctx;
+  const now = ctx.now ? ctx.now() : nowIso();
+  const { resolve: resolveException } = await import('./exceptions.js');
+
+  const run = await store.get('extraction_runs', runId);
+  if (!run) throw codedError('NOT_FOUND', `Run not found: ${runId}`);
+  if (!RETRANSFORM_RUN_STATES.has(run.status)) {
+    throw codedError('INVALID_RUN_STATE', `Cannot re-transform a run in status ${run.status}`);
+  }
+  const batches = await store.find('migration_batches', { run_id: runId });
+  const busy = batches.find(b => !RETRANSFORM_BATCH_STATES.has(b.status));
+  if (busy) {
+    throw codedError('BATCH_IN_PROGRESS', `Batch ${busy.id} is ${busy.status}; re-transform needs every batch DRAFT, REJECTED or APPROVAL_INVALIDATED`);
+  }
+
+  const blocked = await store.find('vouchers', {
+    extraction_run_id: runId, disposition: 'BLOCKED', disposition_reason: 'UNMAPPED_ENTITY',
+  });
+  for (const voucher of blocked) {
+    await store.update('vouchers', voucher.id, {
+      disposition: 'MIGRATE', disposition_reason: null, disposition_by: ctx.actor ?? 'worker',
+      disposition_at: now, target_module: null, target_payload_hash: null,
+    });
+    const excs = await store.find('exceptions', { voucher_id: voucher.id, category: 'UNMAPPED_ENTITY' });
+    for (const exc of excs) {
+      if (exc.status !== 'OPEN' && exc.status !== 'ASSIGNED') continue;
+      await resolveException(ctx, {
+        id: exc.id, status: 'RESOLVED', rootCause: 'Re-transformed after mapping change', actor: ctx.actor ?? 'worker',
+      });
+    }
+  }
+
+  if (run.status !== 'CLASSIFIED') {
+    assertTransition(RUN_TRANSITIONS, 'run', run.status, 'CLASSIFIED');
+    await store.update('extraction_runs', runId, { status: 'CLASSIFIED', updated_at: now });
+  }
+  await audit.emit({
+    actor: ctx.actor ?? 'worker', action: 'TRANSFORM.RERUN', entityType: 'extraction_run', entityId: runId,
+    after: { reset: blocked.length }, correlationId: ctx.correlationId, branchCode: run.branch_code,
+  });
+
+  const result = await transformRun(ctx, { runId, transformationVersion });
+  const stillBlocked = (await store.find('vouchers', {
+    extraction_run_id: runId, disposition: 'BLOCKED', disposition_reason: 'UNMAPPED_ENTITY',
+  })).length;
+  return { ...result, reset: blocked.length, stillBlocked };
 }

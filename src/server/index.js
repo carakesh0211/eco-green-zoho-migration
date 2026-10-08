@@ -111,13 +111,14 @@ async function tryImport(specifier) {
 }
 
 export async function buildDeps({ store, audit }) {
-  const [recon_a, cutover, mapping, batch, worker, recon_c] = await Promise.all([
+  const [recon_a, cutover, mapping, batch, worker, recon_c, transform] = await Promise.all([
     tryImport('../core/recon_a.js'),
     tryImport('../core/cutover.js'),
     tryImport('../core/mapping.js'),
     tryImport('../core/batch.js'),
     tryImport('../worker/index.js'),
     tryImport('../core/recon_c.js'),
+    tryImport('../core/transform.js'),
   ]);
 
   const booksConfig = loadBooksConfig();
@@ -128,7 +129,7 @@ export async function buildDeps({ store, audit }) {
     log('error', 'books_client_init_failed', { error: String(err?.message ?? err) });
   }
 
-  return { recon_a, cutover, mapping, batch, worker, recon_c, books };
+  return { recon_a, cutover, mapping, batch, worker, recon_c, transform, books };
 }
 
 async function main() {

@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'server', 'public');
 const read = (rel) => readFileSync(join(PUBLIC_DIR, rel), 'utf8');
 
-const NEW_VIEWS = ['views/overview.js', 'views/exceptions.js', 'views/settings.js'];
+const NEW_VIEWS = ['views/overview.js', 'views/exceptions.js', 'views/settings.js', 'views/mapping.js'];
 
 describe('console UI v2 shell', () => {
   test('index.html has the sidebar shell ids app.js depends on', () => {
@@ -40,7 +40,7 @@ describe('console UI v2 shell', () => {
 
   test('nav exposes Overview, Branches, Exceptions, Team, Settings and drops the legacy entry', () => {
     const js = read('app.js');
-    for (const p of ['/overview', '/branches', '/exceptions', '/team', '/settings']) {
+    for (const p of ['/overview', '/branches', '/exceptions', '/mapping', '/team', '/settings']) {
       assert.match(js, new RegExp(`navItem\\('[A-Za-z ]+', '${p}'`), `nav should link ${p}`);
     }
     assert.doesNotMatch(js, /navItem\('Legacy console'/);
@@ -60,6 +60,18 @@ describe('console UI v2 shell', () => {
     for (const rel of ['app.js', ...NEW_VIEWS]) {
       assert.doesNotMatch(read(rel), /user\??\.email|\.email\b/, `${rel} must not read an email field`);
     }
+  });
+
+  test('Mapping view registers its route, is nav-linked after Exceptions, and only POSTs the documented endpoints', () => {
+    const src = read('views/mapping.js');
+    assert.match(src, /registerRoute\('\/mapping'/);
+    const js = read('app.js');
+    assert.ok(js.indexOf("navItem('Mapping', '/mapping'") > js.indexOf("navItem('Exceptions', '/exceptions'"), 'Mapping nav item follows Exceptions');
+    for (const ep of ['/api/mappings/summary', '/api/mappings/approve', '/api/exceptions?category=UNMAPPED_ENTITY&status=OPEN']) {
+      assert.ok(src.includes(ep), `mapping.js should call ${ep}`);
+    }
+    assert.match(read('views/branch-workspace.js'), /\/retransform/);
+    assert.match(read('views/branch-workspace.js'), /navigate\('\/mapping'\)/);
   });
 
   test('Settings reuses the Books connection view through a shared render function', () => {

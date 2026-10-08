@@ -10,7 +10,7 @@
 'use strict';
 
 (function () {
-  const { api, el, chip, showError, navigate, toast } = window.App;
+  const { api, el, chip, showError, navigate, toast, hasRole } = window.App;
   const legacy = window.Views.legacy;
 
   // ---------------------------------------------------------------- step state rules
@@ -204,13 +204,54 @@
 
   // ---------------------------------------------------------------- data helpers
 
-  async function fetchLatestRunId(branch) {
+  /** The newest run row (id + status) for the branch, or null. Step 3 uses the status to
+   * decide whether "Re-apply mapping" makes sense. */
+  async function fetchLatestRun(branch) {
     try {
       const { runs } = await api(`/api/runs?branch=${encodeURIComponent(branch)}`);
-      return runs?.[0]?.id ?? null; // /api/runs already orders by created_at DESC
+      return runs?.[0] ?? null;
     } catch {
       return null;
     }
+  }
+
+  // Run states in which re-applying the mapping is offered (the server re-checks).
+  const RETRANSFORM_STATES = new Set(['CLASSIFIED', 'TRANSFORMED', 'READY_FOR_APPROVAL']);
+
+  /** Small confirm dialog (same markup as the other views' modals). */
+  function confirmModal({ title, intro, submitLabel, onConfirm }) {
+    const previouslyFocused = document.activeElement;
+    const overlay = el('div', { class: 'modal-overlay' });
+    const errorP = el('p', { class: 'muted error-text', role: 'alert' }, '');
+    const submit = el('button', { type: 'button', class: 'primary' }, submitLabel);
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+    };
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+    }
+    document.addEventListener('keydown', onKey);
+    submit.addEventListener('click', async () => {
+      errorP.textContent = '';
+      submit.disabled = true;
+      try {
+        await onConfirm(close, (msg) => { errorP.textContent = msg; });
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    overlay.appendChild(
+      el('div', { class: 'modal-box', role: 'dialog', 'aria-modal': 'true', 'aria-label': title }, [
+        el('h3', {}, title),
+        el('p', { class: 'muted' }, intro),
+        errorP,
+        el('div', { class: 'controls' }, [submit, el('button', { type: 'button', onclick: close }, 'Cancel')]),
+      ])
+    );
+    document.body.appendChild(overlay);
+    submit.focus();
   }
 
   async function fetchLatestBatchId(branch) {
@@ -264,9 +305,9 @@
     headerHost.appendChild(el('p', { class: 'muted' }, 'Loading branch…'));
 
     let branchRow = null;
-    const [summaryResult, latestRunId, latestBatchId, postingDisabled] = await Promise.all([
+    const [summaryResult, initialRun, latestBatchId, postingDisabled] = await Promise.all([
       api(`/api/branches/${encodeURIComponent(branch)}`).then((row) => ({ row }), (err) => ({ err })),
-      fetchLatestRunId(branch),
+      fetchLatestRun(branch),
       fetchLatestBatchId(branch),
       isPostingDisabled(),
     ]);
@@ -282,6 +323,9 @@
     } else {
       branchRow = summaryResult.row;
     }
+
+    let latestRun = initialRun; // { id, status, ... } | null — refreshed after a re-apply
+    const latestRunId = initialRun?.id ?? null; // /api/runs orders newest first
 
     // Tracks the batch the operator wants shown in the posting step — starts as the
     // latest batch for the branch, but the Approve step's "View queue" can reassign it
@@ -505,12 +549,65 @@
           ])
         );
       }
+      if (s.id === 'scope') head.appendChild(scopeActions());
       head.appendChild(
         el('div', { class: 'chips-row' }, [
           el('span', { class: 'muted' }, 'Technical status: '),
           ...s.chips.map((c) => chip(c.status, c.label)),
         ])
       );
+    }
+
+    // ---- step 3 extras: jump to the Mapping screen, re-apply mapping to the latest run ----
+    function scopeActions() {
+      const row = el('div', { class: 'actions' }, [
+        el('button', { type: 'button', class: 'linklike', onclick: () => navigate('/mapping') }, 'Open mapping'),
+      ]);
+      if (hasRole('operator', 'admin') && latestRun && RETRANSFORM_STATES.has(latestRun.status)) {
+        row.appendChild(
+          el('button', { type: 'button', onclick: () => reapplyMappingModal(latestRun) }, 'Re-apply mapping to the latest run')
+        );
+      }
+      return row;
+    }
+
+    function reapplyMappingModal(run) {
+      confirmModal({
+        title: 'Re-apply mapping',
+        intro: `This re-checks the vouchers in the latest run for branch ${branch} against the approved mapping rules. Vouchers that were blocked by a missing rule are retried. Nothing is posted to Zoho Books.`,
+        submitLabel: 'Re-apply mapping',
+        onConfirm: async (close, fail) => {
+          try {
+            const out = await api(`/api/runs/${encodeURIComponent(run.id)}/retransform`, { method: 'POST' });
+            toast(`Mapping re-applied: ${n(out?.reset)} vouchers reset, ${n(out?.stillBlocked)} still blocked`, 'success');
+            close();
+            await reloadWorkspace();
+          } catch (err) {
+            // 409 = INVALID_RUN_STATE / BATCH_IN_PROGRESS: show the server's own message when
+            // it sent one, otherwise a plain-language version of the code.
+            const code = err.body?.error;
+            const msg = err.status === 409
+              ? (err.body?.message
+                || (code === 'BATCH_IN_PROGRESS'
+                  ? 'A batch for this branch is already in progress, so the mapping cannot be re-applied now.'
+                  : 'The latest run is not in a state where the mapping can be re-applied.'))
+              : err.message;
+            toast(msg, 'error');
+            fail(msg);
+          }
+        },
+      });
+    }
+
+    /** Re-read the branch summary and latest run, then redraw header, KPIs and steps. */
+    async function reloadWorkspace() {
+      const [summary, run] = await Promise.all([
+        api(`/api/branches/${encodeURIComponent(branch)}`).catch(() => null),
+        fetchLatestRun(branch),
+      ]);
+      if (summary) branchRow = summary;
+      latestRun = run;
+      refreshAll();
     }
 
     function selectStep(id) {

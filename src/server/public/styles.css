@@ -407,3 +407,8 @@ details.collapsible.card > summary { padding: 0; }
 }
 main#app { width: 100%; min-width: 0; }
 .two-col > *, .side-rail > * { min-width: 0; }
+
+/* ---------------------------------------------------------------- mapping view
+   Action buttons in table cells and in the step-3 action row. */
+.mapping-view .actions, .step-panel .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 8px; }
+.mapping-view td .actions { margin: 0; }

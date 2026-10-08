@@ -303,3 +303,89 @@ describe('InvalidRouteError carries a usable diagnostic (regression)', () => {
     assert.doesNotMatch(e.message, /undefined/);
   });
 });
+
+describe('journal party / contact handling', () => {
+  const jv = () => voucher({ source_transaction_type: 'JOURNAL', source_document_no: 'JNL-P1', party_code: null, tax_bucket: null });
+  const rulesWith = (...extra) => [...BASE_RULES, ...extra];
+
+  test('party line with a contact rule (object meta) carries contact + contact_type', () => {
+    const rules = rulesWith(
+      approvedRule({ rule_type: 'LEDGER_ACCOUNT', source_key: 'LEDG-AR', target_value: 'ACC-AR', target_meta: { account_type: 'accounts_receivable' } }),
+      approvedRule({ rule_type: 'PARTY', source_key: 'CUST-1', target_value: 'CONTACT-C1', target_meta: { kind: 'contact', contact_type: 'customer' } }),
+    );
+    const lines = [
+      { ledger_code: 'LEDG-AR', debit: '500.00', credit: '0.00', party_code: 'CUST-1' },
+      { ledger_code: 'LEDG-SALES', debit: '0.00', credit: '500.00' },
+    ];
+    const payload = buildPayload({ module: 'journal', voucher: jv(), lines, rules });
+    assert.deepEqual(payload.line_items, [
+      { account: 'ACC-AR', contact: 'CONTACT-C1', contact_type: 'customer', debit: '500.00' },
+      { account: 'ACC-SALES', credit: '500.00' },
+    ]);
+    assert.equal(payload.warnings, undefined);
+  });
+
+  test('party line with a contact rule (JSON-string meta) carries contact + contact_type', () => {
+    const rules = rulesWith(
+      approvedRule({ rule_type: 'PARTY', source_key: 'VEND-1', target_value: 'CONTACT-V1', target_meta: JSON.stringify({ contact_type: 'vendor' }) }),
+    );
+    const lines = [
+      { ledger_code: 'LEDG-EXP', debit: '90.00', credit: '0.00' },
+      { ledger_code: 'LEDG-CASH', debit: '0.00', credit: '90.00', party_code: 'VEND-1' },
+    ];
+    const payload = buildPayload({ module: 'journal', voucher: jv(), lines, rules });
+    assert.deepEqual(payload.line_items[1], { account: 'ACC-CASH', contact: 'CONTACT-V1', contact_type: 'vendor', credit: '90.00' });
+  });
+
+  test('unparseable / missing meta degrades to contact_type null', () => {
+    const rules = rulesWith(
+      approvedRule({ rule_type: 'PARTY', source_key: 'P-BAD', target_value: 'CONTACT-X', target_meta: '{not json' }),
+    );
+    const lines = [{ ledger_code: 'LEDG-EXP', debit: '10.00', credit: '0.00', party_code: 'P-BAD' }, { ledger_code: 'LEDG-CASH', debit: '0.00', credit: '10.00' }];
+    const payload = buildPayload({ module: 'journal', voucher: jv(), lines, rules });
+    assert.deepEqual(payload.line_items[0], { account: 'ACC-EXP', contact: 'CONTACT-X', contact_type: null, debit: '10.00' });
+  });
+
+  test("PARTY rule kind 'account' replaces the ledger account and warns once", () => {
+    const rules = rulesWith(
+      approvedRule({ rule_type: 'PARTY', source_key: 'ACCT-PARTY', target_value: 'ACC-PARTY-GL', target_meta: JSON.stringify({ kind: 'account' }) }),
+    );
+    const lines = [
+      { ledger_code: 'LEDG-EXP', debit: '40.00', credit: '0.00', party_code: 'ACCT-PARTY' },
+      { ledger_code: 'LEDG-EXP2', debit: '60.00', credit: '0.00', party_code: 'ACCT-PARTY' },
+      { ledger_code: 'LEDG-CASH', debit: '0.00', credit: '100.00' },
+    ];
+    const payload = buildPayload({ module: 'journal', voucher: jv(), lines, rules });
+    assert.deepEqual(payload.line_items, [
+      { account: 'ACC-PARTY-GL', debit: '40.00' },
+      { account: 'ACC-PARTY-GL', debit: '60.00' },
+      { account: 'ACC-CASH', credit: '100.00' },
+    ]);
+    assert.deepEqual(payload.warnings, ['PARTY_POSTED_TO_ACCOUNT']);
+  });
+
+  test('control (receivable/payable) account line without a party warns once', () => {
+    const rules = rulesWith(
+      approvedRule({ rule_type: 'LEDGER_ACCOUNT', source_key: 'LEDG-AR', target_value: 'ACC-AR', target_meta: JSON.stringify({ account_type: 'accounts_receivable' }) }),
+      approvedRule({ rule_type: 'LEDGER_ACCOUNT', source_key: 'LEDG-AP', target_value: 'ACC-AP', target_meta: { account_type: 'accounts_payable' } }),
+    );
+    const lines = [
+      { ledger_code: 'LEDG-AR', debit: '70.00', credit: '0.00' },
+      { ledger_code: 'LEDG-AP', debit: '0.00', credit: '70.00' },
+    ];
+    const payload = buildPayload({ module: 'journal', voucher: jv(), lines, rules });
+    assert.deepEqual(payload.line_items, [{ account: 'ACC-AR', debit: '70.00' }, { account: 'ACC-AP', credit: '70.00' }]);
+    assert.deepEqual(payload.warnings, ['CONTROL_LINE_WITHOUT_PARTY']);
+  });
+
+  test('missing PARTY rule on a line -> UnmappedEntityError', () => {
+    const lines = [
+      { ledger_code: 'LEDG-EXP', debit: '10.00', credit: '0.00', party_code: 'NOBODY' },
+      { ledger_code: 'LEDG-CASH', debit: '0.00', credit: '10.00' },
+    ];
+    assert.throws(
+      () => buildPayload({ module: 'journal', voucher: jv(), lines, rules: BASE_RULES }),
+      (err) => err instanceof UnmappedEntityError && err.ruleType === 'PARTY' && err.sourceKey === 'NOBODY',
+    );
+  });
+});

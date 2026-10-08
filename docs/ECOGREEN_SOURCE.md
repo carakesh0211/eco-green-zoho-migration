@@ -194,3 +194,85 @@ is supplied. `report.unbalanced_vouchers` lists documents split between pushers.
 **Books structure (owner decision).** Books carries one sub-account per Eco Green control ledger under Accounts
 Receivable or Accounts Payable, with the party as the contact. The emitted `ledger_code` therefore stays the Eco Green
 control code and the party is carried in `party_code` and `party_name`; no per-party ledger is created.
+
+## Building the Books mapping
+
+`scripts/build-mapping.js` proposes the mapping rules (`MODULE_ROUTE`, `LEDGER_ACCOUNT`, `PARTY`) for a normalised run
+from Books reference data. The matching lives in `src/core/mapping_proposals.js` (pure functions, no store, no I/O).
+
+```
+node scripts/build-mapping.js --run <normalised-run-folder> --books-ref <folder with accounts.json + contacts.json> \
+  --org <books org id> --out <folder> [--mapping-version map_test_v1] [--effective-from 2026-04-01] \
+  [--threshold 0.8] [--decided-on 2026-10-08]
+```
+
+**Inputs.** The run folder supplies `transactions.csv` and `trial_balance.csv` (and `manifest.json` for the run id in the
+report). Ledger names come from the trial balance, falling back to the transactions. Only ledgers that appear in the
+transactions are mapped (`usage_count` = transaction lines using the ledger); the report counts the trial-balance-only
+ledgers. Parties come from the transactions (`party_code`, `party_name`, usage, the distinct ledgers they sit under).
+Voucher types are the distinct `voucher_type` values. The Books reference data is projected from the Books API outside
+the app: `accounts.json` (`account_id, account_name, account_code, account_type, parent_account_id, parent_account_name,
+depth, is_active, is_system_account`) and `contacts.json` (`contact_id, contact_name, company_name, contact_type,
+customer_sub_type, status, gst_no, vendor_name`).
+
+**Name matching.** Books account codes are a different numbering from the source ledger codes, so accounts are matched by
+**name only**, never by `account_code`. Names are normalised first: upper-case; abbreviations expanded before
+punctuation is stripped (`CGSTTDS`/`SGSTTDS`/`IGSTTDS` to `CGST TDS` etc., `FY-2025-2026`/`FY-25-26` to `FY 25 26`,
+`RECD` to `RECEIVED`, `CHQ` to `CHEQUE`, `AGST`/`AGT` to `AGAINST`, `R&M`, `P&S`, `S&D`, `R&T`, standalone `HO` to
+`HEAD OFFICE`, `A/C` to `ACCOUNT`); then every non-alphanumeric run becomes one space. Digit runs (bank account numbers)
+are kept. The similarity of two normalised names is `0.6 * Dice(character bigrams, spaces removed) + 0.4 * token Jaccard`.
+The candidate pool holds only active Books accounts whose name does not contain `DO NOT USE` / `DO_NOT_USE`.
+
+**Statuses.**
+
+| status | meaning | rule produced |
+|---|---|---|
+| `EXACT` | exactly one pool entry has the same normalised name (score 1) | yes |
+| `AMBIGUOUS` | several pool entries have the same normalised name; all listed, none chosen | no |
+| `FUZZY` | no exact match, best score at least the threshold (default 0.8) and at least 0.05 ahead of the runner-up | yes |
+| `REVIEW` | best score at least 0.5 but not a safe pick, or the proposed Books account is a group header | no |
+| `NONE` | nothing scores 0.5 | no |
+| `ACCOUNT` | (parties only) the party is itself a GL account in Books | yes |
+
+A proposal that lands on a Books account that has child accounts (an upper-case `SUNDRY DEBTORS` header over
+`Sundry Debtors-Corporate`, say) is downgraded to `REVIEW` with the note "Books account is a group header; choose a
+sub-account". Nothing is proposed against inactive or `DO NOT USE` accounts.
+
+**Parties.** A party is first checked against the active, non-placeholder accounts: if its code equals a Books
+`account_code` (case-insensitive) or its normalised name equals an account's normalised name, and exactly one account
+matches, the party maps to that **account** (`ACCOUNT`, `target_meta.kind` is `account`). These are the payment clearing
+accounts whose Books code is the source party code; the transform posts such a party on the line instead of the ledger
+account. If several accounts match the party is `AMBIGUOUS` (kind `account`). Otherwise the party is matched against
+active contacts by normalised `contact_name` with the same `EXACT` / `AMBIGUOUS` / `FUZZY` / `REVIEW` / `NONE` rules; the
+row carries `kind` `contact` and the target's `contact_type`.
+
+**Outputs** (in `--out`):
+
+- `mapping-rules.json`: an array of rule rows for `POST /api/mappings`. Every row is `DRAFT`, `effective_to` null,
+  `approved_by` null; `target_meta` is an object (the API stringifies it). `MODULE_ROUTE` has one row per voucher type with
+  target `journal`; every type except `JOURNAL` carries the owner-decision note the transform requires for a journal
+  fallback (dated by `--decided-on`, default today). `LEDGER_ACCOUNT` rows exist for `EXACT` / `FUZZY` accounts and carry
+  `account_name`, `account_type`, `parent_account_name`, `books_org_id` and the `match` (status, score, source name,
+  usage). `PARTY` rows exist for `EXACT` / `FUZZY` / `ACCOUNT` parties and carry `kind`, the target name and type,
+  `books_org_id` and the `match`.
+- `review-accounts.csv` and `review-contacts.csv`: the review sheets, columns `source_key, source_name, usage_count,
+  status, [kind, contact_type (contacts only),] proposed_target_id, proposed_target_name, target_type, target_parent,
+  score, candidate_2, candidate_3, note, reviewer_decision, reviewer_target_id`. The last two are left blank for the
+  reviewer. Where no target is proposed (`REVIEW`, `AMBIGUOUS`, `NONE`) the proposed columns show the best candidate for
+  the reviewer, and the status says it was not proposed. Candidates read `name [id] score`.
+- `mapping-report.json`: run id, `books_org_id`, mapping version, counts by status for accounts and contacts, rule
+  counts, the module routes and `generated_at`. Counts only, no names.
+
+The sheets carry real ledger, party and Books names, so inside this repository the output may only go under `var/`.
+
+**Loading and approval.** The rules are uploaded as `DRAFT` with `POST /api/mappings`, never approved by the script. The
+reviewer works through the sheets, fixes the non-proposed rows (and anything wrongly proposed) and approves the rules in
+the console (Mapping screen). Nothing posts until the rules it needs are `APPROVED`.
+
+**Target ids are per Books organisation.** `account_id` and `contact_id` belong to one Books organisation. A mapping built
+against the testing organisation is not valid for the live organisation: rebuild it from the live organisation's
+reference data (a new `--org` and a new `--mapping-version`) and re-review it. `books_org_id` is kept in each rule's
+`target_meta` so the origin is never in doubt.
+
+**Books `account_code` is not the source ledger code.** It is never used to match a ledger. The one use of
+`account_code` is the party-as-account check above, where Books holds a clearing account coded with the source party code.

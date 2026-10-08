@@ -356,6 +356,7 @@ const DEFAULT_TITLES = {
   overview: 'Overview',
   branches: 'Branches',
   exceptions: 'Exceptions',
+  mapping: 'Mapping',
   team: 'Team',
   settings: 'Settings',
   legacy: 'Legacy console',
@@ -538,6 +539,7 @@ function renderNav() {
     nav.appendChild(navItem('Overview', '/overview', path));
     nav.appendChild(navItem('Branches', '/branches', path));
     nav.appendChild(navItem('Exceptions', '/exceptions', path, { countId: 'navCountExceptions' }));
+    nav.appendChild(navItem('Mapping', '/mapping', path));
     nav.appendChild(el('div', { class: 'navsection' }, 'Manage'));
     // Same visibility rule as before: every signed-in role may open Team (non-admins get
     // the read-only view); Settings (Books connection, system status) is admin-only.

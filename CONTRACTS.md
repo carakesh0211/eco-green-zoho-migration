@@ -156,11 +156,22 @@ export async function transformRun(ctx, { runId, transformationVersion = 'tx_v1'
 //     expense {account, paid_through, amount, date, vendor?, location_id, custom_fields}
 //     credit_note / vendor_credit {contact, date, line_items, location_id, custom_fields}
 //     bank_transfer {from_account, to_account, amount, date, reference, location_id, custom_fields}
-//     journal {date, line_items[{account, debit|credit}], reference_number, notes, location_id, custom_fields}
+//     journal {date, line_items[{account, debit|credit, contact?, contact_type?}], reference_number, notes, location_id, custom_fields}
+//       Every voucher of this source posts as a journal. A line with party_code needs an APPROVED PARTY rule and carries
+//       contact = rule.target_value, contact_type = target_meta.contact_type ?? null (target_meta is a JSON string in store
+//       rows; objects also accepted). PARTY target_meta.kind === 'account' means the party lives in Books as a GL account:
+//       the line is {account: rule.target_value, debit|credit} (no contact) and warning PARTY_POSTED_TO_ACCOUNT is added once.
+//       A line without a party whose LEDGER_ACCOUNT target_meta.account_type is accounts_receivable|accounts_payable adds
+//       warning CONTROL_LINE_WITHOUT_PARTY once. Warnings land in payload.warnings.
 //   Every payload carries custom_fields.cf_migration_source_hash = source_transaction_hash (stable migration tag for Layer C).
 //   Missing LEDGER_ACCOUNT / PARTY / PAYMENT_MODE rule -> exception UNMAPPED_ENTITY (P1), voucher BLOCKED, no payload.
 //   Writes preview_payloads (payload_hash = hashCanonical(payload)), sets vouchers.target_module/_payload_hash/mapping_version/transformation_version.
 //   run -> TRANSFORMED. Re-running with same versions is idempotent (uk).
+export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v1' })
+//   After mapping rules change: run must be CLASSIFIED|TRANSFORMED|READY_FOR_APPROVAL (else INVALID_RUN_STATE; unknown run NOT_FOUND)
+//   and every batch of the run DRAFT|REJECTED|APPROVAL_INVALIDATED (else BATCH_IN_PROGRESS). Resets BLOCKED/UNMAPPED_ENTITY vouchers
+//   to MIGRATE (resolving their OPEN/ASSIGNED UNMAPPED_ENTITY exceptions; transformRun re-blocks + reopens any still unmapped),
+//   steps the run back to CLASSIFIED, audits TRANSFORM.RERUN, runs transformRun. -> {...transformResult, reset, stillBlocked}.
 export function humanSummary(module, payload) // one line, e.g. "bill V-PARTY-007 2026-04-03 ₹12,340.00 (2 lines)"
 ```
 
