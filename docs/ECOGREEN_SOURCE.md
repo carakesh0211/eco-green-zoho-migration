@@ -131,3 +131,66 @@ Each allocation row carries:
 
 The cut-off date is inclusive: a branch migrated on a given date includes documents dated
 that day (day end).
+
+## Ledger-table format (second delivery format)
+
+From 2026-10-07 a branch may arrive as three files instead of raw table dumps. Set
+`"format": "ledger-table"` in the profile (template: `config/source-profiles/ecogreen-ledger-table.example.json`);
+`scripts/normalise-ecogreen.js` dispatches on it, and the module is `src/sources/ecogreen/ledger_table.js`
+(`.xlsx` is read by the dependency-free `src/sources/ecogreen/xlsx.js`; `.csv` is accepted too, and the
+format is recognised from the bytes, not the file name).
+
+| Profile field | File |
+| --- | --- |
+| `ledger_file` (default `ledger.xlsx`) | One table of every transaction of the period, one row per account line: `c_br_code`, `c_year`, `c_prefix`, `d_date`, `n_tran_no`, `c_act_code`, `act_name`, `Debit`, `Credit` (negative), `c_opp_act_code`, `opp_act_name`, plus the helper columns below |
+| `closing_tb_file` (default `closing_tb.xlsx`, required) | Trial balance report as at the cut-off: opening, transactions and closing per account |
+| `opening_tb_file` (default `opening_tb.xlsx`, optional) | The same report as at 31 March, used only to check the year-end carry-forward |
+
+Both reports have a few title rows, then the `Act Code` header row (`Description`, `Op.Debit`, `Op.Credit`,
+`Tran. Debit`, `Tran. Credit`, `Cl.Debit`, `Cl.Credit`, ...), group-heading and total rows with no Act Code
+(ignored), and account rows. Repeated Act Codes are summed.
+
+**Helper columns.** `To be pushed by` says who posts the document: rows equal to `pushed_by_value` (default
+`ZOHO`, case, spacing and punctuation ignored) are migrated by us; rows pushed by another party
+(Smartpharma) are already or will be in Books and are not emitted. `Status` is, for a party line, the name
+of the control ledger the party belongs to. A party code that is not an account in the trial balance is posted to the
+trial-balance ledger whose `Description` matches `Status` (case and punctuation ignored); `party_code`
+and `party_name` (`act_name`) are kept on the line. `control_aliases` in the profile maps a `Status` name the
+trial balance does not carry to a ledger code. An unresolved `Status` keeps the raw code on the line and is listed
+in `report.unknown_controls`.
+
+**Vouchers.** A document is `c_year/c_prefix/n_tran_no`; `c_br_code` is ignored, so the lines of one document that
+carry different branch codes (for example `0` and the branch) join into one voucher. The voucher type comes from
+`prefix_types`. Net amount per line is `Debit + Credit`, positive is a debit line, negative a credit line. Lines of one
+document with different dates take the earliest.
+
+**Excel date damage and the repair rule.** The extractor writes `dd/mm/yy` text, but opening the file in Excel turns
+some of it into real dates with day and month swapped (9 April read as 4 September). Text dates are parsed as
+`dd/mm/yy` and never changed. Date-typed cells are read as they are; if that leaves any date-typed cell outside the
+profile window and reading every one of them with day and month swapped puts all of them inside, the swapped reading is
+used for all date-typed cells. Otherwise nothing is changed. The outcome is `report.date_repair`
+(`swapped_day_month`, and the counts of cells outside the window under each reading).
+
+**Trial balance emitted to the contract.** Because Smartpharma's documents are already in Books, each ledger is built
+as: opening = Eco Green opening plus the other pusher's movement (what Books holds before our documents), period debit
+and credit = the gross sides of our emitted lines (Layer A compares gross sides, not the net), closing = the Eco Green
+closing. Opening plus our period then equals the Eco Green closing whenever the whole population ties, so Layer A can
+pass; any gap shows up as a Layer A failure on that ledger.
+
+**`trial_balance_components.csv`** is the proof behind that construction: per ledger the signed (debit positive)
+`opening`, `movement_other_pusher`, `movement_ours`, `closing`, the report's own `closing_report_movement`, `difference`
+(opening + both movements - closing), `in_trial_balance` and `ties` (`YES` only when the difference is nil and the
+report movement equals the table movement). `report.trial_balance_ties` summarises it and lists failing ledgers.
+
+**Exclusions and the bridge.** Every ledger row is emitted or excluded under exactly one reason: `FOOTER` (no prefix
+or no transaction number: totals and trailing rows), `PUSHED_BY_OTHER`, `PUSHED_BY_UNKNOWN` (blank pusher),
+`UNKNOWN_PREFIX` (not in `prefix_types`), `BAD_DATE`, `OUT_OF_WINDOW` and `ZERO_AMOUNT`. `report.bridge` ties when
+source rows equal emitted plus excluded rows; `report.exclusions` gives rows, documents and gross amount per prefix and
+reason. Rows pushed by us but excluded still count in the ledger movement above, so they surface as tie or Layer A
+differences rather than disappearing. `report.opening_differences` lists ledgers whose 31 March closing differs from the
+1 April opening (year-end closing of income and expense accounts is expected there); it is empty when no opening file
+is supplied. `report.unbalanced_vouchers` lists documents split between pushers.
+
+**Books structure (owner decision).** Books carries one sub-account per Eco Green control ledger under Accounts
+Receivable or Accounts Payable, with the party as the contact. The emitted `ledger_code` therefore stays the Eco Green
+control code and the party is carried in `party_code` and `party_name`; no per-party ledger is created.

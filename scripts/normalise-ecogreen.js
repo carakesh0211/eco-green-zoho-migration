@@ -11,6 +11,7 @@ import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normaliseEcoGreen } from '../src/sources/ecogreen/normalise.js';
+import { normaliseLedgerTable } from '../src/sources/ecogreen/ledger_table.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -37,14 +38,18 @@ export async function runNormalise({ inDir, profilePath, outRoot, now }) {
   const profile = JSON.parse(await readFile(profilePath, 'utf8'));
   const files = {};
   for (const entry of await readdir(inDir, { withFileTypes: true })) {
-    if (entry.isFile() && /\.csv$/i.test(entry.name)) files[entry.name] = await readFile(path.join(inDir, entry.name));
+    if (entry.isFile() && /\.(csv|xlsx)$/i.test(entry.name)) files[entry.name] = await readFile(path.join(inDir, entry.name));
   }
-  const result = normaliseEcoGreen({ files, profile, now });
+  // profile.format selects the delivery format: 'raw-tables' (default) or 'ledger-table'
+  const result = profile.format === 'ledger-table'
+    ? normaliseLedgerTable({ files, profile, now })
+    : normaliseEcoGreen({ files, profile, now });
   const runDir = path.join(outRoot, result.manifest.branch_code, result.manifest.extraction_run_id);
   await mkdir(runDir, { recursive: true });
   await writeFile(path.join(runDir, 'transactions.csv'), result.transactionsCsv);
   await writeFile(path.join(runDir, 'trial_balance.csv'), result.trialBalanceCsv);
-  await writeFile(path.join(runDir, 'allocations.csv'), result.allocationsCsv);
+  if (result.allocationsCsv) await writeFile(path.join(runDir, 'allocations.csv'), result.allocationsCsv);
+  if (result.componentsCsv) await writeFile(path.join(runDir, 'trial_balance_components.csv'), result.componentsCsv);
   await writeFile(path.join(runDir, 'normalisation_report.json'), JSON.stringify(result.report, null, 2) + '\n');
   // manifest last: the inbox treats a folder as complete only once manifest.json exists
   await writeFile(path.join(runDir, 'manifest.json'), JSON.stringify(result.manifest, null, 2) + '\n');
@@ -60,7 +65,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const { runDir, report } = await runNormalise({ inDir: args.in, profilePath: args.profile, outRoot: args.out });
     console.log(`run folder: ${runDir}`);
-    console.log(JSON.stringify({ output: report.output, bridge: report.bridge, exclusions: report.exclusions, unbalanced_vouchers: report.unbalanced_vouchers.length, unknown_ledgers: report.unknown_ledgers.length }, null, 2));
+    console.log(JSON.stringify({
+      output: report.output, bridge: report.bridge, exclusions: report.exclusions,
+      unbalanced_vouchers: report.unbalanced_vouchers.length,
+      unknown_ledgers: report.unknown_ledgers?.length, unknown_controls: report.unknown_controls?.length,
+      trial_balance_ties: report.trial_balance_ties && { all: report.trial_balance_ties.all, failing: report.trial_balance_ties.failing.length },
+      date_repair: report.date_repair, pushers: report.pushers,
+    }, null, 2));
   } catch (e) {
     console.error(`${e.code ?? 'ERROR'}: ${e.message}`);
     process.exit(1);

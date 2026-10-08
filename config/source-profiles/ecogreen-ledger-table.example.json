@@ -1,0 +1,25 @@
+{
+  "format": "ledger-table",
+  "profile_version": "v1",
+  "branch_code": "PILOT01",
+  "from_date": "2026-04-01",
+  "to_date": "2026-07-05",
+  "ledger_file": "ledger.xlsx",
+  "closing_tb_file": "closing_tb.xlsx",
+  "opening_tb_file": "opening_tb.xlsx",
+  "pushed_by_value": "ZOHO",
+  "prefix_types": {
+    "J": "JOURNAL",
+    "Q": "PAYMENT",
+    "211": "RECEIPT",
+    "213": "PAYMENT",
+    "P": "PAYMENT",
+    "R": "RECEIPT",
+    "H": "RECEIPT",
+    "F": "CONTRA",
+    "W": "CONTRA",
+    "X": "CONTRA",
+    "Y": "CONTRA"
+  },
+  "control_aliases": {}
+}
