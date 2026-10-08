@@ -12,6 +12,7 @@ import { createAuth } from './auth.js';
 import { createReadRouter } from './routes/read.js';
 import { createMutateRouter } from './routes/mutate.js';
 import { createDevRouter } from './routes/dev.js';
+import { createImportRouter } from './routes/import_runs.js';
 import { createAgentRouter, minimalResponseMiddleware } from './routes/agent.js';
 import { createBranchesRouter } from './routes/branches.js';
 import { createAdminRouter } from './routes/admin.js';
@@ -75,6 +76,7 @@ export function createApp({
   archiveAdapter = process.env.ARCHIVE_ADAPTER ?? 'local',
   inboxAdapter = process.env.INBOX_ADAPTER ?? 'local',
   devSeedEnabled = process.env.DEV_SEED_ENABLED === 'true',
+  importEnabled = process.env.IMPORT_ENABLED === 'true',
   authMode = process.env.AUTH_MODE ?? 'token',
   booksConnection,
   sessionAuth,
@@ -136,7 +138,9 @@ export function createApp({
     app.use(cors({ origin: allowedOrigins }));
   }
 
-  app.use(express.json({ limit: '1mb' }));
+  // 12mb: POST /api/import/runs carries a whole normalised branch run (base64 CSVs);
+  // every other route is small. The import router re-checks a 10 MB decoded cap.
+  app.use(express.json({ limit: '12mb' }));
 
   // No-op unless a Catalyst-backed adapter is configured (see catalyst_runtime.js):
   // initializes this request's Catalyst app and makes it available to every downstream
@@ -192,6 +196,7 @@ export function createApp({
   app.use('/api', createReadRouter({ store, deps, auth }));
   app.use('/api', createMutateRouter({ store, audit, deps, auth }));
   app.use('/api', createDevRouter({ store, audit, auth, deps: devDeps, environment, devSeedEnabled, runtime }));
+  app.use('/api', createImportRouter({ store, audit, auth, deps: { archive: devDeps.archive }, environment, importEnabled, runtime }));
   // Increment 2 (team-operable console): dashboard, team & assignments, Books connection.
   app.use('/api', createBranchesRouter({ store, audit, auth }));
   app.use('/api', createAdminRouter({ store, audit, auth, users, deps: { branchSummary: branchSummaryHook } }));

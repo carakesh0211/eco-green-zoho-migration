@@ -181,6 +181,7 @@ async function main() {
     archiveAdapter,
     inboxAdapter,
     devSeedEnabled,
+    importEnabled: process.env.IMPORT_ENABLED === 'true',
   });
 
   const port = resolvePort();
