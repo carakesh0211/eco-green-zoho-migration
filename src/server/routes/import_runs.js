@@ -15,6 +15,7 @@
 // Nothing here posts to Zoho Books: the job stops after transform/Layer B, where every
 // voucher waits for mapping and approval like any other run.
 import express from 'express';
+import { gunzipSync } from 'node:zlib';
 import { newId, nowIso } from '../../core/ids.js';
 import { validateManifest } from '../../core/manifest.js';
 import { loadCutoverMatrix } from '../../core/cutover.js';
@@ -39,8 +40,13 @@ export function decodeFiles(input) {
   for (const [name, b64] of Object.entries(input)) {
     if (!/^[A-Za-z0-9_.-]{1,80}$/.test(name) || name.includes('..')) return { error: `invalid file name: ${name}` };
     if (typeof b64 !== 'string') return { error: `${name}: content must be a base64 string` };
-    const buf = Buffer.from(b64, 'base64');
+    let buf = Buffer.from(b64, 'base64');
     if (buf.length === 0) return { error: `${name}: empty` };
+    // gzip is accepted transparently (magic 1f 8b): a browser-side uploader can send a
+    // whole branch run in a few tens of kilobytes. Decoded size still counts against the cap.
+    if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+      try { buf = gunzipSync(buf, { maxOutputLength: MAX_TOTAL_BYTES }); } catch { return { error: `${name}: gzip content could not be decoded` }; }
+    }
     totalBytes += buf.length;
     if (totalBytes > MAX_TOTAL_BYTES) return { error: `files exceed ${MAX_TOTAL_BYTES} bytes in total` };
     files[name] = buf;

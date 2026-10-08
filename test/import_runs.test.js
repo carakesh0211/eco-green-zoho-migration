@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from '../src/adapters/store/memory.js';
@@ -67,6 +68,13 @@ test('decodeFiles: validates names, base64 content, required files and the size 
   const ok = decodeFiles({ 'manifest.json': 'AA==', 'transactions.csv': 'AA==', 'trial_balance.csv': 'AA==' });
   assert.equal(ok.totalBytes, 3);
   assert.ok(Buffer.isBuffer(ok.files['manifest.json']));
+  // gzip-compressed content is unpacked transparently
+  const gz = gzipSync(Buffer.from('a,b\n1,2\n')).toString('base64');
+  const unpacked = decodeFiles({ 'manifest.json': gz, 'transactions.csv': gz, 'trial_balance.csv': 'AA==' });
+  assert.equal(unpacked.files['transactions.csv'].toString('utf8'), 'a,b\n1,2\n');
+  assert.equal(unpacked.totalBytes, 8 + 8 + 1);
+  const badGz = Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from('nope')]).toString('base64');
+  assert.match(decodeFiles({ 'manifest.json': badGz, 'transactions.csv': 'AA==', 'trial_balance.csv': 'AA==' }).error, /gzip/);
 });
 
 test('an operator in scope imports the synthetic PILOT01 run: branch + run + Layer A + summary land', async () => {
