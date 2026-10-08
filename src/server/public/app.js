@@ -550,7 +550,11 @@ window.App = {
 async function start() {
   window.addEventListener('hashchange', dispatch);
   await Promise.all([refreshHealth(), loadAuthConfig()]);
-  if (getToken()) await tryLoadMe();
+  // A Catalyst-signed-in user carries no bearer token (the session is a cookie the
+  // server reads), so the session must be probed whenever catalyst mode is on — not
+  // only when a token is stored. Without this the hosted-login redirect to "/" always
+  // bounced back to #/login (observed live 2026-10-08).
+  if (getToken() || state.authConfig?.modes?.includes('catalyst')) await tryLoadMe();
   await dispatch();
 }
 window.App.start = start;
