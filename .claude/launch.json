@@ -18,6 +18,15 @@
         "src/server/index.js"
       ],
       "port": 4100
+    },
+    {
+      "name": "console-460",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--env-file=var/real460.env",
+        "src/server/index.js"
+      ],
+      "port": 4200
     }
   ]
 }
