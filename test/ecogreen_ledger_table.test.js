@@ -667,8 +667,55 @@ test('INVALID_PROFILE: every missing or bad field is reported together', () => {
   bad({ to_date: '2026-02-30' }, /to_date must be YYYY-MM-DD/);
   bad({ from_date: '2026-08-01' }, /from_date is after to_date/);
   bad({ prefix_types: { ...PROFILE.prefix_types, Q: 'SETTLEMENT' } }, /prefix_types\.Q: unknown voucher type SETTLEMENT/);
+  bad({ credit_sign: 'minus' }, /credit_sign must be one of auto, negative, positive/);
   const { prefix_types: _p, ...noPrefixes } = PROFILE;
   assert.throws(() => run(files, noPrefixes), (e) => e.code === 'INVALID_PROFILE' && /prefix_types is required/.test(e.message) && !/branch_code is required/.test(e.message));
+});
+
+// ---------------------------------------------------------------- credit sign convention
+
+/** the same population with the Credit column written as positive magnitudes (branch 460 delivery) */
+const positiveCreditRows = () => baseRows().map((r) => ({ ...r, Credit: Math.abs(Number(r.Credit)).toFixed(2) }));
+
+test('credit sign: credits written as positive magnitudes are detected and give the same vouchers and trial balance as the negative convention', () => {
+  const negative = run();
+  const positive = run(baseFiles({ 'ledger.csv': ledgerCsv(positiveCreditRows()) }));
+  // six credit lines vote (four of ours, two of Smartpharma's); the footer row does not
+  assert.deepEqual(negative.report.credit_sign, { sign: 'negative', source: 'detected', positive_cells: 0, negative_cells: 6 });
+  assert.deepEqual(positive.report.credit_sign, { sign: 'positive', source: 'detected', positive_cells: 6, negative_cells: 0 });
+  assert.equal(positive.transactionsCsv, negative.transactionsCsv);
+  assert.equal(positive.trialBalanceCsv, negative.trialBalanceCsv);
+  assert.equal(positive.componentsCsv, negative.componentsCsv);
+  assert.deepEqual(positive.report.unbalanced_vouchers, []);
+  assert.equal(positive.report.trial_balance_ties.all, true);
+  assert.deepEqual(positive.report.exclusions, negative.report.exclusions);
+  assert.notEqual(positive.manifest.extraction_run_id, negative.manifest.extraction_run_id, 'the input bytes differ, so the run id differs');
+});
+
+test('credit sign: a column with no credits at all defaults to the negative convention; footer rows do not vote', () => {
+  const rows = baseRows().filter((r) => Number(r.Credit) === 0 || !r.c_prefix); // keep the debit lines and the footer (Credit -3000)
+  const res = run(baseFiles({ 'ledger.csv': ledgerCsv(rows) }));
+  assert.deepEqual(res.report.credit_sign, { sign: 'negative', source: 'detected', positive_cells: 0, negative_cells: 0 });
+  const footerOnly = run(baseFiles({ 'ledger.csv': ledgerCsv(rows.map((r) => (r.c_prefix ? r : { ...r, Credit: '3000.00' }))) }));
+  assert.deepEqual(footerOnly.report.credit_sign, { sign: 'negative', source: 'detected', positive_cells: 0, negative_cells: 0 }, 'a positive footer total does not flip the convention');
+});
+
+test('credit sign: a column mixing positive and negative credits is refused as CREDIT_SIGN_AMBIGUOUS unless the profile fixes the convention', () => {
+  const rows = baseRows();
+  rows[1].Credit = '300.00'; // one credit written as a magnitude among negatives
+  const files = baseFiles({ 'ledger.csv': ledgerCsv(rows) });
+  assert.throws(() => run(files), (e) => e instanceof NormaliseError && e.code === 'CREDIT_SIGN_AMBIGUOUS' && /ledger\.csv: the Credit column mixes 1 positive and 5 negative values/.test(e.message));
+  const forced = run(files, { ...PROFILE, credit_sign: 'negative' });
+  assert.deepEqual(forced.report.credit_sign, { sign: 'negative', source: 'profile', positive_cells: 1, negative_cells: 5 });
+  assert.deepEqual(forced.report.unbalanced_vouchers.map((v) => v.voucher_id), ['26/J/1'], 'the mis-signed line surfaces as an unbalanced voucher instead of being silently flipped');
+});
+
+test('credit sign: profile credit_sign positive is honoured even when the data looks negative (and reported as source profile)', () => {
+  const res = run(baseFiles(), { ...PROFILE, credit_sign: 'positive' });
+  assert.equal(res.report.credit_sign.source, 'profile');
+  assert.equal(res.report.credit_sign.sign, 'positive');
+  assert.equal(res.report.output.credit_total, '0.00', 'every negative credit now reads as a debit, so nothing balances');
+  assert.equal(res.report.unbalanced_vouchers.length, 4);
 });
 
 test('MISSING_FILE: the ledger table and the closing trial balance are required; the opening trial balance is optional', () => {

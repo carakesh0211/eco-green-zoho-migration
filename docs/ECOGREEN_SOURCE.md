@@ -142,7 +142,7 @@ format is recognised from the bytes, not the file name).
 
 | Profile field | File |
 | --- | --- |
-| `ledger_file` (default `ledger.xlsx`) | One table of every transaction of the period, one row per account line: `c_br_code`, `c_year`, `c_prefix`, `d_date`, `n_tran_no`, `c_act_code`, `act_name`, `Debit`, `Credit` (negative), `c_opp_act_code`, `opp_act_name`, plus the helper columns below |
+| `ledger_file` (default `ledger.xlsx`) | One table of every transaction of the period, one row per account line: `c_br_code`, `c_year`, `c_prefix`, `d_date`, `n_tran_no`, `c_act_code`, `act_name`, `Debit`, `Credit` (negative, or a positive magnitude; see *Credit sign* below), `c_opp_act_code`, `opp_act_name`, plus the helper columns below |
 | `closing_tb_file` (default `closing_tb.xlsx`, required) | Trial balance report as at the cut-off: opening, transactions and closing per account |
 | `opening_tb_file` (default `opening_tb.xlsx`, optional) | The same report as at 31 March, used only to check the year-end carry-forward |
 
@@ -161,8 +161,16 @@ in `report.unknown_controls`.
 
 **Vouchers.** A document is `c_year/c_prefix/n_tran_no`; `c_br_code` is ignored, so the lines of one document that
 carry different branch codes (for example `0` and the branch) join into one voucher. The voucher type comes from
-`prefix_types`. Net amount per line is `Debit + Credit`, positive is a debit line, negative a credit line. Lines of one
-document with different dates take the earliest.
+`prefix_types`. Net amount per line is `Debit + Credit` when the source writes credits as negatives, or `Debit - Credit`
+when it writes both columns as positive magnitudes (the branch 460 delivery of 2026-10-08 does); positive is a debit
+line, negative a credit line. Lines of one document with different dates take the earliest.
+
+**Credit sign.** `credit_sign` in the profile is `auto` (default), `negative` or `positive`. Under `auto` the
+convention is read from the non-footer rows: only negative credits (or none) means `negative`, only positive credits
+means `positive`, and a column that mixes both stops the run with `CREDIT_SIGN_AMBIGUOUS` instead of guessing per row.
+The outcome is `report.credit_sign` (`sign`, `source` = `detected` or `profile`, and the positive and negative cell
+counts). A wrong convention shows up as every voucher unbalanced and the trial balance ties failing on every ledger
+we touch, so the report is the first thing to check on a new delivery.
 
 **Excel date damage and the repair rule.** The extractor writes `dd/mm/yy` text, but opening the file in Excel turns
 some of it into real dates with day and month swapped (9 April read as 4 September). Text dates are parsed as

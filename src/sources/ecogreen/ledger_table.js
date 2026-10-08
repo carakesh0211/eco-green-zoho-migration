@@ -27,6 +27,7 @@ import { NormaliseError, parseSourceDate, cleanCode } from './normalise.js';
 export const LEDGER_COLUMNS = ['c_br_code', 'c_year', 'c_prefix', 'd_date', 'n_tran_no', 'c_act_code', 'act_name', 'Debit', 'Credit', 'Status', 'To be pushed by'];
 export const TB_COLUMNS = ['Act Code', 'Description', 'Op.Debit', 'Op.Credit', 'Tran. Debit', 'Tran. Credit', 'Cl.Debit', 'Cl.Credit'];
 export const EXCLUSION_REASONS = Object.freeze(['PUSHED_BY_OTHER', 'PUSHED_BY_UNKNOWN', 'UNKNOWN_PREFIX', 'BAD_DATE', 'OUT_OF_WINDOW', 'ZERO_AMOUNT', 'FOOTER']);
+export const CREDIT_SIGN_VALUES = Object.freeze(['auto', 'negative', 'positive']);
 
 const VOUCHER_TYPES = new Set(['JOURNAL', 'PAYMENT', 'RECEIPT', 'CONTRA', 'EXPENSE']);
 
@@ -39,7 +40,37 @@ function validateProfile(profile) {
   if (profile?.to_date && !isIsoDate(profile.to_date)) errors.push('to_date must be YYYY-MM-DD');
   if (profile?.from_date && profile?.to_date && profile.from_date > profile.to_date) errors.push('from_date is after to_date');
   for (const [p, t] of Object.entries(profile?.prefix_types ?? {})) if (!VOUCHER_TYPES.has(t)) errors.push(`prefix_types.${p}: unknown voucher type ${t}`);
+  if (profile?.credit_sign !== undefined && !CREDIT_SIGNS.has(profile.credit_sign)) errors.push(`credit_sign must be one of ${[...CREDIT_SIGNS].join(', ')}`);
   if (errors.length) throw new NormaliseError('INVALID_PROFILE', `invalid ledger-table profile: ${errors.join('; ')}`);
+}
+
+const CREDIT_SIGNS = new Set(CREDIT_SIGN_VALUES);
+
+/**
+ * Sign convention of the Credit column. The first deliveries wrote credits as negatives
+ * (net = Debit + Credit); the branch 460 delivery of 2026-10-08 writes both columns as
+ * positive magnitudes (net = Debit - Credit). Unless the profile fixes it with
+ * `credit_sign: 'negative' | 'positive'`, the convention is read from the non-footer rows:
+ * only negatives (or no credits at all) means negative, only positives means positive, and
+ * a column mixing both is refused (CREDIT_SIGN_AMBIGUOUS) rather than guessed per row.
+ */
+function resolveCreditSign(rows, fileName, profile) {
+  let positive = 0; let negative = 0;
+  for (const r of rows) {
+    const prefix = cell(r.c_prefix); const tranNo = cell(r.n_tran_no);
+    if (!prefix || !tranNo) continue; // footer / total rows do not vote
+    const v = cellMoney(fileName, r, 'Credit', `${cell(r.c_year)}/${prefix}/${tranNo}`);
+    if (v > 0n) positive += 1; else if (v < 0n) negative += 1;
+  }
+  const configured = profile.credit_sign ?? 'auto';
+  let sign = configured;
+  if (configured === 'auto') {
+    if (positive > 0 && negative > 0) {
+      throw new NormaliseError('CREDIT_SIGN_AMBIGUOUS', `${fileName}: the Credit column mixes ${positive} positive and ${negative} negative values; set credit_sign in the profile`);
+    }
+    sign = positive > 0 ? 'positive' : 'negative';
+  }
+  return { sign, source: configured === 'auto' ? 'detected' : 'profile', positive_cells: positive, negative_cells: negative };
 }
 
 /** A file may arrive as .xlsx (Buffer) or as .csv; both become rows of objects. */
@@ -144,6 +175,7 @@ export function normaliseLedgerTable({ files, profile, now }) {
   for (const [alias, code] of Object.entries(profile.control_aliases ?? {})) byName.set(nameKey(alias), code);
 
   const { dates, repair } = resolveDates(ledger.rows, profile);
+  const creditSign = resolveCreditSign(ledger.rows, ledgerFile, profile);
 
   const stats = new Map();
   const bump = (prefix, reason, key, paise) => {
@@ -167,8 +199,8 @@ export function normaliseLedgerTable({ files, profile, now }) {
     const tranNo = cell(r.n_tran_no);
     const key = `${cell(r.c_year)}/${prefix}/${tranNo}`;
     const debit = cellMoney(ledgerFile, r, 'Debit', key);
-    const credit = cellMoney(ledgerFile, r, 'Credit', key); // negative in the source
-    const net = debit + credit;
+    const credit = cellMoney(ledgerFile, r, 'Credit', key); // negative or a positive magnitude, per creditSign
+    const net = creditSign.sign === 'positive' ? debit - credit : debit + credit;
     const absAmt = net < 0n ? -net : net;
     if (!prefix || !tranNo) { bump(prefix || '(none)', 'FOOTER', key, absAmt); return; }
     const pusherRaw = cell(r['To be pushed by']);
@@ -270,6 +302,7 @@ export function normaliseLedgerTable({ files, profile, now }) {
   const report = {
     branch_code: branch, extraction_run_id: runId, from_date: profile.from_date, to_date: profile.to_date, inputs: inputHashes,
     date_repair: repair,
+    credit_sign: creditSign,
     pushers: Object.fromEntries(Object.entries(pusherSummary).map(([k, v]) => [k, { rows: v.rows, documents: v.documents.size, prefixes: [...v.prefixes].sort(), gross_amount: formatMoney(v.paise) }])),
     output: { vouchers: ids.length, lines: txnRows.length, debit_total: formatMoney(debitTotal), credit_total: formatMoney(creditTotal), by_type: Object.fromEntries(Object.entries(byType).map(([k, v]) => [k, { vouchers: v.vouchers, lines: v.lines, debit_total: formatMoney(v.paise) }])), trial_balance_ledgers: tbRows.length },
     bridge: { table: ledgerFile, source_rows: ledger.rows.length, emitted_rows: emitted, excluded_rows: excludedRows, ties: ledger.rows.length === emitted + excludedRows },
