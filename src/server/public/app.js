@@ -126,13 +126,37 @@ function chipClass(status) {
   const s = String(status ?? '').toUpperCase();
   if (!s) return 'chip-grey';
   if (s.startsWith('NOT_')) return 'chip-grey';
-  if (['PASS', 'READY', 'MIGRATED', 'APPROVED', 'CLEAR', 'RECEIVED', 'CONNECTED', 'ACTIVE', 'OK', 'POSTED', 'RESOLVED'].includes(s)) return 'chip-green';
+  if (['PASS', 'READY', 'MIGRATED', 'APPROVED', 'CLEAR', 'RECEIVED', 'CONNECTED', 'ACTIVE', 'OK', 'POSTED', 'RESOLVED', 'APPROVED_EXCEPTION'].includes(s)) return 'chip-green';
   if (['FAIL', 'BLOCKED', 'REJECTED', 'VALIDATION_FAILED', 'DEAD_LETTER', 'ERROR', 'OVERLAP_FOUND', 'DISCONNECTED', 'FAILED_FINAL', 'FAILED_RETRYABLE'].includes(s)) return 'chip-red';
   if (['IN_PROGRESS', 'DRAFT', 'PARTIAL', 'PENDING_AUTH', 'PAUSED', 'QUEUED', 'OPEN', 'ASSIGNED', 'INVITED'].includes(s)) return 'chip-amber';
   return 'chip-grey';
 }
 function chip(status, label) {
   return el('span', { class: `chip ${chipClass(status)}` }, String(label ?? status ?? '—'));
+}
+
+/** 'NOT_STARTED' -> 'Not started'. Display only; never used for anything sent to the API. */
+function humanize(value) {
+  const t = String(value ?? '').replace(/_/g, ' ').trim().toLowerCase();
+  return t ? (t.charAt(0).toUpperCase() + t.slice(1)).replace(/\bapi\b/gi, 'API') : '';
+}
+
+/** Free text from the API may arrive wrapped as { value, untrusted: true } (bot / minimal
+ * mode); a signed-in human normally gets the bare string. Always render the string. */
+function plain(v) {
+  if (v && typeof v === 'object' && 'value' in v) return v.value === null || v.value === undefined ? '' : String(v.value);
+  return v === null || v === undefined ? '' : String(v);
+}
+
+const SEVERITY_WORDS = {
+  P0: ['chip-red', 'P0 · Critical'],
+  P1: ['chip-red', 'P1 · High'],
+  P2: ['chip-amber', 'P2 · Medium'],
+  P3: ['chip-grey', 'P3 · Low'],
+};
+function severityChip(severity) {
+  const [cls, label] = SEVERITY_WORDS[severity] ?? ['chip-grey', String(severity ?? '—')];
+  return el('span', { class: `chip ${cls}` }, label);
 }
 
 /** A 10-segment bar built entirely from <div>s (CSP forbids inline style, so width
@@ -259,19 +283,113 @@ function toast(message, type = 'info') {
 
 let lastHealth = null;
 
+/** Plain-language archive wording shared by the top-bar pill, Overview and Settings. */
+function archiveStateWords(status) {
+  switch (status) {
+    case 'ENABLED_VERIFIED': return 'On (verified)';
+    case 'ENABLED_UNVERIFIED': return 'On (not yet verified)';
+    case 'LOCAL': return 'Local disk';
+    case 'DISABLED_DEVELOPMENT': return 'Off';
+    default: return status ? humanize(status) : 'Unknown';
+  }
+}
+function archiveWords(status) {
+  return `Archive: ${archiveStateWords(status).toLowerCase()}`;
+}
+
+function renderEnvPills(health, failureMessage) {
+  const host = document.getElementById('envPills');
+  if (!host) return;
+  host.innerHTML = '';
+  if (!health) {
+    host.appendChild(el('span', { class: 'env-pill danger', title: failureMessage || '' }, 'Posting disabled'));
+    host.appendChild(el('span', { class: 'env-pill' }, 'Health check failed'));
+    return;
+  }
+  host.appendChild(
+    health.postingEnabled
+      ? el('span', { class: 'env-pill ok' }, 'Posting ENABLED')
+      : el('span', { class: 'env-pill danger' }, 'Posting disabled')
+  );
+  host.appendChild(el('span', { class: 'env-pill' }, `env=${health.environment} \u00b7 driver=${health.driver}`));
+  const archiveBad = health.archiveStatus === 'DISABLED_DEVELOPMENT' || health.archiveStatus === 'ENABLED_UNVERIFIED';
+  host.appendChild(
+    el(
+      'span',
+      { class: `env-pill${archiveBad ? ' danger' : health.archiveStatus === 'ENABLED_VERIFIED' ? ' ok' : ''}` },
+      archiveWords(health.archiveStatus)
+    )
+  );
+}
+
 async function refreshHealth() {
   const banner = document.getElementById('postingBanner');
   const archiveNotice = document.getElementById('archiveDisabledNotice');
   try {
     const health = await api('/api/health');
     lastHealth = health;
-    banner.textContent =
-      `${health.postingEnabled ? 'POSTING IS ENABLED!' : 'POSTING DISABLED'} — WORKER ${String(health.workerMode || 'disabled').toUpperCase()} — ` +
-      `driver=${health.driver} — store=${health.storeAdapter} (${health.claimSemantics}) — ` +
-      `archive=${health.archiveStatus}${health.archiveBucket?.name ? ' (' + health.archiveBucket.name + ')' : ''} — env=${health.environment}`;
+    // One short line only. The detail (driver, store, archive, environment...) lives in
+    // the top-bar pills and Settings -> System status.
+    banner.textContent = health.postingEnabled
+      ? 'Posting to Zoho Books is ENABLED. Check the Settings page before continuing.'
+      : 'Posting is disabled. Nothing is being sent to Zoho Books.';
     archiveNotice.hidden = health.archiveStatus !== 'DISABLED_DEVELOPMENT';
+    renderEnvPills(health);
   } catch (err) {
-    banner.textContent = `POSTING DISABLED — health check failed: ${err.message}`;
+    banner.textContent = 'Posting is disabled. The server health check failed.';
+    renderEnvPills(null, err.message);
+  }
+}
+
+// ---------------------------------------------------------------- page title / nav counts
+
+/** Views call this to set the heading shown in the top bar (and the browser tab). */
+function setPageTitle(text) {
+  const t = String(text ?? '').trim();
+  const node = document.getElementById('pageTitle');
+  if (node) node.textContent = t || 'Migration console';
+  document.title = t ? `${t} \u2014 Eco Green \u2192 Zoho Books` : 'Eco Green \u2192 Zoho Books Migration Console';
+}
+
+const DEFAULT_TITLES = {
+  login: 'Sign in',
+  overview: 'Overview',
+  branches: 'Branches',
+  exceptions: 'Exceptions',
+  team: 'Team',
+  settings: 'Settings',
+  legacy: 'Legacy console',
+  admin: 'Zoho Books connection',
+};
+function defaultTitleFor(path) {
+  const segs = path.split('/').filter(Boolean);
+  if (segs[0] === 'branches' && segs[1]) return `Branch ${decodeURIComponent(segs[1])}`;
+  return DEFAULT_TITLES[segs[0]] || 'Migration console';
+}
+
+let openExceptionCount = null; // null = not known yet
+let openCountFetchedAt = 0;
+
+/** Views that already hold the exceptions list can push the fresh number here. */
+function setOpenExceptionCount(n) {
+  openExceptionCount = Number.isFinite(n) ? n : null;
+  openCountFetchedAt = Date.now();
+  const badge = document.getElementById('navCountExceptions');
+  if (badge) {
+    badge.textContent = openExceptionCount === null ? '' : String(openExceptionCount);
+    badge.hidden = openExceptionCount === null;
+  }
+}
+
+async function refreshOpenExceptionCount(force = false) {
+  if (!state.user) return;
+  if (!force && Date.now() - openCountFetchedAt < 30000) return;
+  openCountFetchedAt = Date.now();
+  try {
+    const data = await api('/api/exceptions?status=OPEN');
+    setOpenExceptionCount((data.exceptions ?? []).length);
+  } catch {
+    /* the badge is a convenience; a failed fetch just leaves it blank */
   }
 }
 
@@ -329,7 +447,7 @@ const routeTable = [];
 
 /** pattern: '/branches/:code' style. opts.public === true skips the sign-in gate
  * (only /login needs this). opts.roles restricts the route to those roles once
- * signed in (a role mismatch redirects to /branches rather than 403ing silently). */
+ * signed in (a role mismatch redirects to /overview rather than 403ing silently). */
 function registerRoute(pattern, handler, opts = {}) {
   const segments = pattern.split('/').filter(Boolean);
   routeTable.push({ segments, handler, opts });
@@ -376,46 +494,74 @@ function replaceQuery(path, query) {
   history.replaceState(null, '', newHash);
 }
 
-function navItem(label, path, activePath) {
-  const active = activePath === path || activePath.startsWith(`${path}/`);
-  return el('button', { class: `navlink${active ? ' navlink-active' : ''}`, onclick: () => navigate(path) }, label);
+function navItem(label, path, activePath, { also = [], countId = null } = {}) {
+  const prefixes = [path, ...also];
+  const active = prefixes.some((p) => activePath === p || activePath.startsWith(`${p}/`));
+  const children = [label];
+  if (countId) {
+    const known = openExceptionCount !== null;
+    children.push(el('span', { class: 'count', id: countId, title: 'Open exceptions', hidden: known ? null : '' }, known ? String(openExceptionCount) : ''));
+  }
+  return el(
+    'button',
+    {
+      type: 'button',
+      class: `navlink${active ? ' navlink-active' : ''}`,
+      'aria-current': active ? 'page' : null,
+      onclick: () => {
+        closeSidebar();
+        navigate(path);
+      },
+    },
+    children
+  );
+}
+
+function closeSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const btn = document.getElementById('menuBtn');
+  if (sidebar) sidebar.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
 function renderNav() {
   const nav = document.getElementById('mainNav');
   const loginBox = document.getElementById('loginBox');
+  const shell = document.getElementById('shell');
   if (!nav || !loginBox) return;
   nav.innerHTML = '';
   loginBox.innerHTML = '';
+  if (shell) shell.classList.toggle('shell-anon', !state.user);
   if (state.user) {
     const { path } = parseHash();
+    nav.appendChild(el('div', { class: 'navsection' }, 'Work'));
+    nav.appendChild(navItem('Overview', '/overview', path));
     nav.appendChild(navItem('Branches', '/branches', path));
-    nav.appendChild(navItem('Legacy console', '/legacy', path));
-    if (isAdmin()) {
-      nav.appendChild(navItem('Team', '/team', path));
-      nav.appendChild(navItem('Administration', '/admin/connections/books', path));
-    } else if (hasRole('approver', 'viewer', 'operator')) {
-      nav.appendChild(navItem('Team', '/team', path));
-    }
-    const label =
-      `${state.user.id} (${state.user.role}` +
-      `${state.user.principal_type === 'bot' ? ', bot' : ''}` +
-      `${state.user.email ? `, ${state.user.email}` : ''})`;
-    loginBox.appendChild(el('span', { class: 'whoami' }, label));
-    loginBox.appendChild(el('button', { onclick: signOut }, 'Sign out'));
+    nav.appendChild(navItem('Exceptions', '/exceptions', path, { countId: 'navCountExceptions' }));
+    nav.appendChild(el('div', { class: 'navsection' }, 'Manage'));
+    // Same visibility rule as before: every signed-in role may open Team (non-admins get
+    // the read-only view); Settings (Books connection, system status) is admin-only.
+    if (hasRole('admin', 'approver', 'viewer', 'operator')) nav.appendChild(navItem('Team', '/team', path));
+    if (isAdmin()) nav.appendChild(navItem('Settings', '/settings', path, { also: ['/admin/connections/books', '/legacy'] }));
+    // Identity: id and role only. The email is never rendered anywhere in the UI.
+    loginBox.appendChild(el('span', { class: 'who' }, state.user.id));
+    loginBox.appendChild(el('span', { class: 'role' }, `${state.user.role}${state.user.principal_type === 'bot' ? ' (bot)' : ''}`));
+    loginBox.appendChild(el('button', { type: 'button', onclick: signOut }, 'Sign out'));
   } else {
-    loginBox.appendChild(el('span', { class: 'whoami' }, 'Not signed in'));
+    loginBox.appendChild(el('span', { class: 'role' }, 'Not signed in'));
   }
 }
 
 async function dispatch() {
   const { path, query } = parseHash();
+  closeSidebar();
   if (path === '/' || path === '') {
-    navigate(state.user ? '/branches' : '/login');
+    navigate(state.user ? '/overview' : '/login');
     return;
   }
   const match = matchRoute(path.split('/').filter(Boolean));
   const viewEl = document.getElementById('view');
+  setPageTitle(defaultTitleFor(path));
   if (!match) {
     viewEl.innerHTML = '';
     viewEl.appendChild(el('p', { class: 'muted' }, `No such view: ${path}`));
@@ -432,10 +578,11 @@ async function dispatch() {
   }
   if (match.opts.roles && state.user && !match.opts.roles.includes(state.user.role)) {
     // Not an outright 403 page: send them somewhere they can actually use.
-    navigate('/branches');
+    navigate('/overview');
     return;
   }
   renderNav();
+  refreshOpenExceptionCount();
   viewEl.innerHTML = '';
   try {
     await match.handler(viewEl, match.params, query);
@@ -486,7 +633,7 @@ function renderLoginView(container) {
       errorP.textContent = 'That token was not accepted.';
       return;
     }
-    navigate('/branches');
+    navigate('/overview');
   }
   tokenInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') onTokenLogin();
@@ -517,6 +664,9 @@ window.App = {
   chip,
   chipClass,
   progressBar,
+  humanize,
+  plain,
+  severityChip,
   renderTable,
   renderDataTable,
   renderJson,
@@ -534,6 +684,12 @@ window.App = {
   loadAuthConfig,
   tryLoadMe,
   signOut,
+  // page chrome
+  setPageTitle,
+  setOpenExceptionCount,
+  refreshOpenExceptionCount,
+  archiveWords,
+  archiveStateWords,
   // router
   registerRoute,
   navigate,
@@ -549,6 +705,14 @@ window.App = {
 /** Called once, by boot.js, after every view script has registered its routes. */
 async function start() {
   window.addEventListener('hashchange', dispatch);
+  const menuBtn = document.getElementById('menuBtn');
+  if (menuBtn) {
+    menuBtn.addEventListener('click', () => {
+      const sidebar = document.getElementById('sidebar');
+      const open = sidebar.classList.toggle('open');
+      menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  }
   await Promise.all([refreshHealth(), loadAuthConfig()]);
   // A Catalyst-signed-in user carries no bearer token (the session is a cookie the
   // server reads), so the session must be probed whenever catalyst mode is on — not

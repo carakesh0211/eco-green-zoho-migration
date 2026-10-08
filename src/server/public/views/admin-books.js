@@ -259,15 +259,17 @@
     );
   }
 
-  async function renderAdminBooksPage(container, params, query) {
-    container.appendChild(el('h2', {}, 'Administration — Connections — Zoho Books'));
-
+  /** The whole Books-connection UI (readiness, connection, locations) rendered into any
+   * host element. The standalone route and Settings -> Zoho Books connection both call
+   * this; `basePath` is only used to strip the one-shot ?connected / ?error toast params
+   * from whichever hash the host page lives at. */
+  async function renderBooksConnection(container, query = {}, basePath = '/admin/connections/books') {
     if (query.connected === '1') toast('Zoho Books connected.', 'success');
     if (query.error) toast(`Connection error: ${query.error}`, 'error');
     if (query.connected || query.error) {
       // Don't leave the one-shot toast params in the URL.
       const { connected, error, ...rest } = query;
-      replaceQuery('/admin/connections/books', rest);
+      replaceQuery(basePath, rest);
     }
 
     const readinessCard = el('section', { class: 'card' });
@@ -284,6 +286,13 @@
     await renderConnectionCard(connectionCard, refreshAll, readinessCard);
     await renderLocationsCard(locationsCard);
   }
+
+  async function renderAdminBooksPage(container, params, query) {
+    container.appendChild(el('h2', {}, 'Administration — Connections — Zoho Books'));
+    await renderBooksConnection(container, query);
+  }
+
+  window.App.renderBooksConnection = renderBooksConnection;
 
   window.App.registerRoute('/admin/connections/books', renderAdminBooksPage, { roles: ['admin'] });
 })();

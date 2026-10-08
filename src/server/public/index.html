@@ -7,26 +7,40 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>Eco Green &rarr; Zoho Books Migration Console</h1>
-    <nav id="mainNav" class="mainNav"></nav>
-    <div id="loginBox" class="loginBox"></div>
-  </header>
+  <div id="shell" class="shell shell-anon">
+    <aside id="sidebar" class="sidebar" aria-label="Main navigation">
+      <div class="brand">Eco Green &rarr; Zoho Books<small>Migration console</small></div>
+      <nav id="mainNav" class="mainNav" aria-label="Modules"></nav>
+      <div id="loginBox" class="sidebar-foot"></div>
+    </aside>
 
-  <div id="postingBanner" class="banner banner-danger">POSTING DISABLED &mdash; loading&hellip;</div>
-  <div id="archiveDisabledNotice" class="banner banner-danger" hidden>Archive disabled (Development, Stratus not activated) &mdash; files are NOT being stored anywhere.</div>
-  <div id="toasts" class="toasts"></div>
+    <div class="content">
+      <header class="topbar-v2">
+        <button id="menuBtn" type="button" class="menu-btn" aria-controls="sidebar" aria-expanded="false">&#9776; Menu</button>
+        <h1 id="pageTitle" class="page-title">Migration console</h1>
+        <span class="spacer"></span>
+        <div id="envPills" class="env-pills" aria-label="Environment status"></div>
+      </header>
 
-  <main id="app">
-    <div id="view"></div>
-  </main>
+      <div id="postingBanner" class="banner banner-danger" role="status">Posting is disabled.</div>
+      <div id="archiveDisabledNotice" class="banner banner-danger" hidden>Archive disabled (Development, Stratus not activated) &mdash; files are NOT being stored anywhere.</div>
+      <div id="toasts" class="toasts"></div>
+
+      <main id="app">
+        <div id="view"></div>
+      </main>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
   <script src="/views/legacy.js"></script>
+  <script src="/views/overview.js"></script>
   <script src="/views/branches.js"></script>
   <script src="/views/branch-workspace.js"></script>
+  <script src="/views/exceptions.js"></script>
   <script src="/views/team.js"></script>
   <script src="/views/admin-books.js"></script>
+  <script src="/views/settings.js"></script>
   <script src="/boot.js"></script>
 </body>
 </html>

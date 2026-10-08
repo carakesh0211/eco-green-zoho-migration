@@ -18,10 +18,13 @@ const PUBLIC_DIR = join(__dirname, '..', 'src', 'server', 'public');
 const EXTRA_SCRIPTS = [
   '/boot.js',
   '/views/legacy.js',
+  '/views/overview.js',
   '/views/branches.js',
   '/views/branch-workspace.js',
+  '/views/exceptions.js',
   '/views/team.js',
   '/views/admin-books.js',
+  '/views/settings.js',
 ];
 
 async function startApp() {
