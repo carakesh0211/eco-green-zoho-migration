@@ -173,11 +173,19 @@ counts). A wrong convention shows up as every voucher unbalanced and the trial b
 we touch, so the report is the first thing to check on a new delivery.
 
 **Excel date damage and the repair rule.** The extractor writes `dd/mm/yy` text, but opening the file in Excel turns
-some of it into real dates with day and month swapped (9 April read as 4 September). Text dates are parsed as
-`dd/mm/yy` and never changed. Date-typed cells are read as they are; if that leaves any date-typed cell outside the
-profile window and reading every one of them with day and month swapped puts all of them inside, the swapped reading is
-used for all date-typed cells. Otherwise nothing is changed. The outcome is `report.date_repair`
-(`swapped_day_month`, and the counts of cells outside the window under each reading).
+every cell whose day part is 12 or less into a real date with day and month swapped (9 April read as 4 September);
+cells with a day above 12 cannot be read that way and stay text. Dates are read in the context of the profile window
+(owner instruction of 2026-10-09: the data is 1 April to 5 July 2026). Text dates are parsed as `dd/mm/yy` and never
+changed. For the date-typed cells one reading is chosen per file: as-is when every cell already falls in the window and
+the file has no text dates (an extractor that writes real dates, as branch 460 does); otherwise swapped, provided the
+swapped reading is a valid date inside the window for every date-typed cell, either because some as-is readings fall
+outside the window or because the file mixes text and date-typed cells, which is the signature of Excel damage
+(branch 461: 18,484 date-typed cells among 24,759 text ones). When the swapped reading would be invalid or outside the
+window for any cell nothing is swapped and those cells surface as `OUT_OF_WINDOW`. `date_typed_cells` in the profile
+(`auto` default, `as_is`, `swapped`) fixes the reading when the operator knows the delivery. The outcome is
+`report.date_repair` (`swapped_day_month`, the counts of cells outside the window under each reading, and `reason`:
+`profile`, `no_date_cells`, `as_is_in_window`, `out_of_window_as_is`, `mixed_text_and_date_cells` or
+`swapped_reading_invalid`).
 
 **Trial balance emitted to the contract.** Because Smartpharma's documents are already in Books, each ledger is built
 as: opening = Eco Green opening plus the other pusher's movement (what Books holds before our documents), period debit

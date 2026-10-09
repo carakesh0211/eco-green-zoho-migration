@@ -41,6 +41,7 @@ function validateProfile(profile) {
   if (profile?.from_date && profile?.to_date && profile.from_date > profile.to_date) errors.push('from_date is after to_date');
   for (const [p, t] of Object.entries(profile?.prefix_types ?? {})) if (!VOUCHER_TYPES.has(t)) errors.push(`prefix_types.${p}: unknown voucher type ${t}`);
   if (profile?.credit_sign !== undefined && !CREDIT_SIGNS.has(profile.credit_sign)) errors.push(`credit_sign must be one of ${[...CREDIT_SIGNS].join(', ')}`);
+  if (profile?.date_typed_cells !== undefined && !DATE_TYPED_CELL_MODES.has(profile.date_typed_cells)) errors.push(`date_typed_cells must be one of ${[...DATE_TYPED_CELL_MODES].join(', ')}`);
   if (errors.length) throw new NormaliseError('INVALID_PROFILE', `invalid ledger-table profile: ${errors.join('; ')}`);
 }
 
@@ -107,28 +108,57 @@ function cellMoney(name, row, col, key) {
   }
 }
 
+const DATE_TYPED_CELL_MODES = new Set(['auto', 'as_is', 'swapped']);
+
 /**
- * Date cells: the extractor writes dd/mm/yy text, but Excel re-reads some of them as
- * dates with day and month swapped (9 April stored as 4 September). Strings are parsed as
- * dd/mm/yy; date-typed cells are tried as-is first, and if that leaves any date-typed
- * cell outside the window while the swapped reading puts every one inside, the swapped
- * reading is used for ALL date-typed cells and the repair is reported.
+ * Date cells, read in the context of the profile window (owner instruction, 2026-10-09:
+ * the data is 1 April to 5 July 2026, read every date in that context only).
+ *
+ * The extractor writes dd/mm/yy text. When the file is opened in Excel, every cell whose
+ * day part is 12 or less is re-read as an m/d/yy date with day and month swapped
+ * (9 April stored as 4 September); cells with a day above 12 cannot be read that way and
+ * stay text. So in a damaged file the date-typed cells are exactly the swapped ones, and
+ * the text cells are right. Strings are therefore parsed as dd/mm/yy and never changed.
+ * For the date-typed cells, one reading is chosen for the whole file:
+ *   - as-is when every date-typed cell already falls in the window AND the file has no
+ *     text dates (an extractor that writes real dates, e.g. branch 460);
+ *   - otherwise swapped, when the swapped reading is a valid date inside the window for
+ *     every date-typed cell: either because some as-is readings fall outside the window
+ *     (reason out_of_window_as_is) or because the file mixes text and date-typed cells,
+ *     the signature of Excel damage (reason mixed_text_and_date_cells);
+ *   - as-is when the swapped reading would be invalid or outside the window for any
+ *     cell (reason swapped_reading_invalid); such cells then surface as OUT_OF_WINDOW.
+ * `date_typed_cells` in the profile ('auto' default, 'as_is', 'swapped') fixes the reading
+ * when the operator knows the delivery; the choice and its reason are reported.
  */
 function resolveDates(rows, profile) {
   const parsed = rows.map((r) => {
     const v = r.d_date;
-    if (v && typeof v === 'object' && v.date) return { kind: 'date', asIs: v.date, swapped: `${v.date.slice(0, 4)}-${v.date.slice(8, 10)}-${v.date.slice(5, 7)}` };
+    if (v && typeof v === 'object' && v.date) {
+      const swapped = `${v.date.slice(0, 4)}-${v.date.slice(8, 10)}-${v.date.slice(5, 7)}`;
+      return { kind: 'date', asIs: v.date, swapped: isIsoDate(swapped) ? swapped : null };
+    }
     const iso = parseSourceDate(cell(v));
     return { kind: 'text', asIs: iso, swapped: iso };
   });
   const inWindow = (d) => d && d >= profile.from_date && d <= profile.to_date;
   const dateCells = parsed.filter((p) => p.kind === 'date');
+  const mixed = dateCells.length > 0 && dateCells.length < parsed.length;
   const asIsBad = dateCells.filter((p) => !inWindow(p.asIs)).length;
-  const swappedBad = dateCells.filter((p) => !inWindow(p.swapped) || !isIsoDate(p.swapped)).length;
-  const useSwapped = dateCells.length > 0 && asIsBad > 0 && swappedBad === 0;
+  const swappedBad = dateCells.filter((p) => !inWindow(p.swapped)).length;
+  const configured = profile.date_typed_cells ?? 'auto';
+  let useSwapped; let reason;
+  if (configured !== 'auto') { useSwapped = configured === 'swapped'; reason = 'profile'; }
+  else if (dateCells.length === 0) { useSwapped = false; reason = 'no_date_cells'; }
+  else if (asIsBad === 0 && !mixed) { useSwapped = false; reason = 'as_is_in_window'; }
+  else if (swappedBad > 0) { useSwapped = false; reason = 'swapped_reading_invalid'; }
+  else { useSwapped = true; reason = asIsBad > 0 ? 'out_of_window_as_is' : 'mixed_text_and_date_cells'; }
   return {
     dates: parsed.map((p) => (useSwapped && p.kind === 'date' ? p.swapped : p.asIs)),
-    repair: { date_typed_cells: dateCells.length, text_cells: parsed.length - dateCells.length, swapped_day_month: useSwapped, out_of_window_as_is: asIsBad, out_of_window_swapped: swappedBad },
+    repair: {
+      date_typed_cells: dateCells.length, text_cells: parsed.length - dateCells.length, swapped_day_month: useSwapped,
+      out_of_window_as_is: asIsBad, out_of_window_swapped: swappedBad, reason,
+    },
   };
 }
 
