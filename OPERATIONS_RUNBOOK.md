@@ -118,3 +118,36 @@ concern:
 5. Document the incident, root cause, and remediation in the exception/audit trail
    before closing — closing an exception must never erase its history
    (`PROJECT_CONTEXT.md`).
+
+## 11. Importing a ledger-table delivery from a cloud session
+
+Where the branch files are (Zoho WorkDrive, team "Upsourced Consultancy Services Pvt Ltd",
+workspace "Prospecting - Client SOW"):
+
+- `FRANKROSS / TRANSACTIONAL DATA MIGRATION / branch-extract_data / tripura / <branch>`:
+  `Ledger_01042026_to_05072026.xlsx`, `Closing_tb_report_05072026.xlsx`,
+  `opening_tb_report_31032026.xlsx` (branches 460 to 469; 460 and 461 verified on 2026-10-09).
+- `FRANKROSS / TRANSACTIONAL DATA MIGRATION / ECOGREEN_TABLE DATA / <branch>`: the older raw
+  table dumps (`jv_det.csv`, `set_det.csv`, ...), plus `Transaction_Prefix_Mapping.xlsx` and the
+  Rule Book for the ledger-table format.
+
+Steps (real data stays under `var/`, which is gitignored):
+
+1. Download the three ledger-table files through the WorkDrive connector into
+   `var/raw<branch>/run-in/` as `ledger.xlsx`, `closing_tb.xlsx`, `opening_tb.xlsx`. A 4-column
+   opening file (`Act Code, Description, Op.Debit, Op.Credit`) is not the report format and must be
+   left out of the folder; the normaliser then skips the 31 March check.
+2. Write `var/profiles/<branch>-ledger-table.json` from
+   `config/source-profiles/ecogreen-ledger-table.example.json`: `branch_code`, window
+   `2026-04-01` to `2026-07-05`, `prefix_types` from the branch's prefix sheet (Zoho-pushed
+   prefixes so far: `J` JOURNAL, `Q` PAYMENT, `211` RECEIPT, `213` PAYMENT, `F` CONTRA).
+   Leave `credit_sign` and `date_typed_cells` on `auto`; the report says what was detected.
+3. `node scripts/normalise-ecogreen.js --in var/raw<branch>/run-in --profile var/profiles/<branch>-ledger-table.json --out var/inbox-real`.
+   Expect `unbalanced_vouchers` empty, `trial_balance_ties.all` true and `bridge.ties` true before
+   going further. Branch 460 (749 vouchers) and 461 (589 vouchers) both meet this.
+4. Import into the hosted console. In a cloud session the bearer token is a network secret that
+   the egress proxy injects on requests to the console host, so the process never holds it:
+   `node scripts/import-run.js --dir var/inbox-real/<branch>/<run-id> --url https://<console-host> --proxy-auth --branch-name "Branch <branch>"`.
+   The job reports INGEST, LAYER_A and CLASSIFY_TRANSFORM; vouchers come out BLOCKED until mapping
+   rules are approved. The import endpoint cannot post to Zoho Books.
+5. For a run whose mapping is already approved, `POST /api/runs/:id/retransform` applies the rules.
