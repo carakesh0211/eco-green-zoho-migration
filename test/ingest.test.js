@@ -4,6 +4,7 @@ import { openStore } from '../src/adapters/store/memory.js';
 import { createAudit } from '../src/core/audit.js';
 import { sha256Bytes } from '../src/core/hash.js';
 import { ingestRun } from '../src/core/ingest.js';
+import { isDuplicateOnlyRun } from '../src/core/runs.js';
 
 const TX_HEADER = [
   'branch_code', 'voucher_id', 'voucher_no', 'voucher_type', 'voucher_date', 'line_no',
@@ -199,6 +200,35 @@ test('ingest: a second run whose transactions.csv shares the same sha256 is quar
     const dupExceptions = await store.find('exceptions', { category: 'DUPLICATE_FILE' });
     assert.equal(dupExceptions.length, 1);
     assert.equal(dupExceptions[0].run_id, 'RUN-B-DUP');
+
+    // The trial balance was new, so this run is not a pure re-upload of an earlier one.
+    assert.equal(run2Row.error_code ?? null, null);
+    assert.equal(await isDuplicateOnlyRun(store, run2Row), false);
+  } finally {
+    await store.close();
+  }
+});
+
+test('ingest: re-uploading byte-identical files under a new run id marks the run DUPLICATE_FILE', async () => {
+  const { store, ctx } = await makeCtx();
+  try {
+    const txBuf = twoBalancedVouchers();
+    const tbBuf = matchingTb();
+    const archive = makeArchive();
+    const run1 = runOf(buildManifest({ runId: 'RUN-ORIG', txBuf, tbBuf }), txBuf, tbBuf);
+    const first = await ingestRun(ctx, { inbox: makeInbox(run1.files), archive, inboxRef: run1.inboxRef, workerId: 'worker-1' });
+    assert.equal(first.outcome, 'STAGED');
+
+    const run2 = runOf(buildManifest({ runId: 'RUN-REUPLOAD', txBuf, tbBuf }), txBuf, tbBuf);
+    const second = await ingestRun(ctx, { inbox: makeInbox(run2.files), archive, inboxRef: run2.inboxRef, workerId: 'worker-1' });
+    assert.equal(second.outcome, 'VALIDATION_FAILED');
+    assert.deepEqual(second.errors.map((e) => e.code), ['DUPLICATE_FILE', 'DUPLICATE_FILE']);
+
+    const row = await store.get('extraction_runs', 'RUN-REUPLOAD');
+    assert.equal(row.status, 'VALIDATION_FAILED');
+    assert.equal(row.error_code, 'DUPLICATE_FILE');
+    assert.equal(await isDuplicateOnlyRun(store, row), true);
+    assert.equal((await store.find('source_files', { run_id: 'RUN-REUPLOAD' })).length, 0);
   } finally {
     await store.close();
   }

@@ -37,6 +37,7 @@
 //                              (approval no longer holds; needs re-approval).
 import { nowIso } from './ids.js';
 import { parseMoney, formatMoney, abs as moneyAbs, sum as moneySum } from './money.js';
+import { currentRun } from './runs.js';
 
 export class BranchNotFoundError extends Error {
   constructor(branchCode) {
@@ -138,8 +139,8 @@ export async function computeBranchSummary(store, branchCode, { now = nowIso() }
   // ---- cutover (prefer the all-classes '*' row; else the most recently created row) ----
   const cutover = cutoverRows.find((r) => r.transaction_class === '*') ?? latestByCreatedAt(cutoverRows);
 
-  // ---- receipt status ----
-  const latestRun = runs[0] ?? null;
+  // ---- receipt status (a duplicate-only re-upload does not replace the run it repeated) ----
+  const latestRun = await currentRun(store, runs);
   const filesOfLatestRun = latestRun ? await store.find('source_files', { run_id: latestRun.id }) : [];
   const receipt_status = mapReceiptStatus(latestRun, filesOfLatestRun);
 
