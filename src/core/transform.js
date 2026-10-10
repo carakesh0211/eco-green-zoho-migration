@@ -392,11 +392,13 @@ function codedError(code, message) {
  * type at the time. They are released the same way once that route is APPROVED; while it
  * is still missing they keep their UNMAPPED_MODULE block and open exception untouched.
  */
-export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v1' }) {
-  const { store, audit } = ctx;
-  const now = ctx.now ? ctx.now() : nowIso();
-  const { resolve: resolveException } = await import('./exceptions.js');
-
+/**
+ * The preconditions of retransformRun, without changing anything: resolves to the run, or
+ * throws NOT_FOUND / INVALID_RUN_STATE / BATCH_IN_PROGRESS. Lets a caller refuse a request
+ * before starting the (long) re-transform as a background job.
+ */
+export async function checkRetransformable(ctx, { runId }) {
+  const { store } = ctx;
   const run = await store.get('extraction_runs', runId);
   if (!run) throw codedError('NOT_FOUND', `Run not found: ${runId}`);
   if (!RETRANSFORM_RUN_STATES.has(run.status)) {
@@ -407,6 +409,15 @@ export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v
   if (busy) {
     throw codedError('BATCH_IN_PROGRESS', `Batch ${busy.id} is ${busy.status}; re-transform needs every batch DRAFT, REJECTED or APPROVAL_INVALIDATED`);
   }
+  return run;
+}
+
+export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v1' }) {
+  const { store, audit } = ctx;
+  const now = ctx.now ? ctx.now() : nowIso();
+  const { resolve: resolveException } = await import('./exceptions.js');
+
+  const run = await checkRetransformable(ctx, { runId });
 
   const routedTypes = new Set((await store.find('mapping_rules', { rule_type: 'MODULE_ROUTE', status: 'APPROVED' }))
     .map(r => r.source_key));
