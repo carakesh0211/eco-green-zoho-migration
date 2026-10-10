@@ -25,6 +25,7 @@ import { refreshBranchSummary } from '../core/branch_summary.js';
 import { createBooksConnection } from '../books/connection.js';
 import { createArchiveHealth } from './archive_health.js';
 import { createRetransformJobs } from './retransform_jobs.js';
+import { createBulkMappingRouter } from './routes/bulk_mapping.js';
 import { isPostingEnabled, postingBlockedReasons, loadBooksConfig } from '../books/guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -199,6 +200,7 @@ export function createApp({
   app.locals.retransformJobs = retransformJobs; // tests await detached work through this
   app.use('/api', createMutateRouter({ store, audit, deps, auth, retransformJobs }));
   app.use('/api', createDevRouter({ store, audit, auth, deps: devDeps, environment, devSeedEnabled, runtime }));
+  app.use('/api', createBulkMappingRouter({ store, audit, auth, archive: devDeps.archive ?? null }));
   app.use('/api', createImportRouter({ store, audit, auth, deps: { archive: devDeps.archive }, environment, importEnabled, runtime }));
   // Increment 2 (team-operable console): dashboard, team & assignments, Books connection.
   app.use('/api', createBranchesRouter({ store, audit, auth }));
