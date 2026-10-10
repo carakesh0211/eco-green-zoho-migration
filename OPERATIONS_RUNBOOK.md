@@ -164,7 +164,19 @@ Steps (real data stays under `var/`, which is gitignored):
    Approving mapping rules (bulk or single) starts the same job automatically for every
    re-transformable run in the approver's branches that still has vouchers blocked for a missing
    rule (audit `TRANSFORM.AUTO_REAPPLY`), so the manual button is only needed after other changes.
-6. Before approving and posting a batch, check **Ledger push summary** (branch page, steps 3-6;
+6. Map a branch's remaining ledgers and parties in bulk on **Bulk mapping** (branch page, step 3;
+   `#/branches/:code/bulk-mapping`):
+   - Upload the Zoho Books exports once (Chart of Accounts required; Vendors and Customers
+     optional, CSV or XLSX). They are stored in the archive and shared by every branch; a later
+     partial upload replaces only the lists it contains.
+   - **Create rules for all confident matches** makes DRAFT rules for exact and close name
+     matches and for parties that are Books accounts.
+   - **Download mapping sheet**, fill `books_name` (Books names, not ids) for the rest, and
+     upload it. Each row reports RULE, BLANK, NOT_FOUND, AMBIGUOUS, UNKNOWN_SOURCE,
+     ALREADY_APPROVED, BAD_TYPE or DUPLICATE_ROW. Codes that lost leading zeros in Excel still match.
+   - An approver approves the created rules on the same page, which starts the re-apply job (step 5).
+   Bot tokens can read these pages but cannot upload lists or create rules.
+7. Before approving and posting a batch, check **Ledger push summary** (branch page, steps 3-6;
    `GET /api/branches/:code/ledger-summary`): per source ledger, the debit and credit that will be
    sent to Zoho Books, what is held back and why, and whether the amounts to push balance. Use
    **Download CSV** to keep the confirmed figures with the batch approval.

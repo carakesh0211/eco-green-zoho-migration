@@ -416,3 +416,5 @@ main#app { width: 100%; min-width: 0; }
 /* ledger push summary */
 .num { display: block; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ledger-summary .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.bulk-mapping .bulk-card { margin: 12px 0; }
+.bulk-mapping .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }

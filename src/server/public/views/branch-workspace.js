@@ -577,6 +577,7 @@
     function scopeActions() {
       const row = el('div', { class: 'actions' }, [
         el('button', { type: 'button', class: 'linklike', onclick: () => navigate('/mapping') }, 'Open mapping'),
+        el('button', { type: 'button', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/bulk-mapping`) }, 'Bulk mapping'),
         el('button', { type: 'button', class: 'linklike', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/ledger-summary`) }, 'Ledger push summary'),
       ]);
       if (hasRole('operator', 'admin') && latestRun && RETRANSFORM_STATES.has(latestRun.status)) {

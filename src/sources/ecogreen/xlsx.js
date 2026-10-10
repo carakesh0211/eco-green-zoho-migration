@@ -138,7 +138,12 @@ function sheetList(files) {
   return sheets;
 }
 
-export function readXlsx(buffer) {
+/**
+ * opts.rawNumbers: keep numeric cells as the exact digit string written in the file (no
+ * Number conversion, no date conversion) — needed for 19-digit Zoho ids, which a JS Number
+ * would round.
+ */
+export function readXlsx(buffer, { rawNumbers = false } = {}) {
   const files = unzip(buffer);
   const strings = sharedStrings(files);
   const isDate = dateStyles(files);
@@ -167,6 +172,7 @@ export function readXlsx(buffer) {
         else if (type === 'inlineStr') value = textOf(inner);
         else if (type === 'str') value = v === undefined ? '' : decodeXml(v);
         else if (type === 'b') value = v === '1';
+        else if (v !== undefined && v !== '' && rawNumbers) value = decodeXml(v);
         else if (v !== undefined && v !== '') {
           const num = Number(v);
           value = Number.isFinite(num) ? (isDate[style] ? { date: serialToIsoDate(num) } : num) : decodeXml(v);
