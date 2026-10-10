@@ -551,6 +551,7 @@
         );
       }
       if (s.id === 'scope') head.appendChild(scopeActions());
+      if (s.id === 'review' || s.id === 'approve' || s.id === 'post') head.appendChild(ledgerSummaryAction());
       head.appendChild(
         el('div', { class: 'chips-row' }, [
           el('span', { class: 'muted' }, 'Technical status: '),
@@ -559,30 +560,88 @@
       );
     }
 
+    // ---- steps 4-6 extra: per-ledger debit/credit to be pushed, confirmed before posting ----
+    function ledgerSummaryAction() {
+      return el('div', { class: 'actions' }, [
+        el('button', { type: 'button', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/ledger-summary`) }, 'Ledger push summary'),
+        el('span', { class: 'muted' }, ' Debit and credit per ledger that will be sent to Zoho Books.'),
+      ]);
+    }
+
     // ---- step 3 extras: jump to the Mapping screen, re-apply mapping to the latest run ----
+    // Re-apply runs as a background job on the server (it takes minutes for a real run);
+    // the line below the buttons shows its progress and survives a redraw of the step.
+    const reapplyStatus = el('p', { class: 'muted' });
+    let reapplyPolling = false;
+
     function scopeActions() {
       const row = el('div', { class: 'actions' }, [
         el('button', { type: 'button', class: 'linklike', onclick: () => navigate('/mapping') }, 'Open mapping'),
+        el('button', { type: 'button', class: 'linklike', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/ledger-summary`) }, 'Ledger push summary'),
       ]);
       if (hasRole('operator', 'admin') && latestRun && RETRANSFORM_STATES.has(latestRun.status)) {
         row.appendChild(
           el('button', { type: 'button', onclick: () => reapplyMappingModal(latestRun) }, 'Re-apply mapping to the latest run')
         );
       }
-      return row;
+      return el('div', {}, [row, reapplyStatus]);
+    }
+
+    function describeJob(job) {
+      if (!job) return '';
+      const who = job.trigger === 'mapping_approval' ? ' (started automatically after mapping approval)' : '';
+      if (job.stage === 'QUEUED' || job.stage === 'RUNNING') return `Re-applying mapping to run ${job.runId}${who}… this can take a few minutes. You can leave this page.`;
+      if (job.stage === 'DONE') return `Mapping re-applied${who}: ${n(job.result?.reset)} vouchers retried, ${n(job.result?.stillBlocked)} still blocked.`;
+      return `Re-applying the mapping failed${who}: ${job.error?.message ?? 'unknown error'}`;
+    }
+
+    /** Poll a re-transform job until it finishes, keeping the status line current. */
+    async function followJob(jobId) {
+      if (reapplyPolling) return;
+      reapplyPolling = true;
+      try {
+        for (;;) {
+          const job = await api(`/api/runs/retransform-jobs/${encodeURIComponent(jobId)}`).catch(() => null);
+          if (!job) { reapplyStatus.textContent = ''; return; }
+          reapplyStatus.textContent = describeJob(job);
+          if (job.stage === 'DONE') {
+            toast(describeJob(job), 'success');
+            await reloadWorkspace();
+            return;
+          }
+          if (job.stage === 'FAILED') {
+            toast(describeJob(job), 'error');
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 5000));
+        }
+      } finally {
+        reapplyPolling = false;
+      }
+    }
+
+    /** On page load: pick up a re-apply that is still running (manual or automatic). */
+    async function resumeJob() {
+      if (!latestRun) return;
+      const out = await api(`/api/runs/${encodeURIComponent(latestRun.id)}/retransform-job`).catch(() => null);
+      const job = out?.job;
+      if (!job) return;
+      reapplyStatus.textContent = describeJob(job);
+      if (job.stage === 'QUEUED' || job.stage === 'RUNNING') followJob(job.jobId);
     }
 
     function reapplyMappingModal(run) {
       confirmModal({
         title: 'Re-apply mapping',
-        intro: `This re-checks the vouchers in the latest run for branch ${branch} against the approved mapping rules. Vouchers that were blocked by a missing rule are retried. Nothing is posted to Zoho Books.`,
+        intro: `This re-checks the vouchers in the latest run for branch ${branch} against the approved mapping rules. Vouchers that were blocked by a missing rule are retried. It runs in the background and can take a few minutes. Nothing is posted to Zoho Books.`,
         submitLabel: 'Re-apply mapping',
         onConfirm: async (close, fail) => {
           try {
             const out = await api(`/api/runs/${encodeURIComponent(run.id)}/retransform`, { method: 'POST' });
-            toast(`Mapping re-applied: ${n(out?.reset)} vouchers reset, ${n(out?.stillBlocked)} still blocked`, 'success');
             close();
-            await reloadWorkspace();
+            toast(out?.joined ? 'The mapping is already being re-applied to this run.' : 'Re-applying the mapping. This can take a few minutes.', 'success');
+            reapplyStatus.textContent = describeJob({ runId: run.id, stage: 'RUNNING' });
+            followJob(out.jobId);
           } catch (err) {
             // 409 = INVALID_RUN_STATE / BATCH_IN_PROGRESS: show the server's own message when
             // it sent one, otherwise a plain-language version of the code.
@@ -658,6 +717,7 @@
     // ---- first paint ----
     refreshAll();
     selectStep(selectedId);
+    resumeJob();
   }
 
   window.App.registerRoute('/branches/:code', renderBranchWorkspace);

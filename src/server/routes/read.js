@@ -1,7 +1,8 @@
 // Read-only console/agent routes. See CONTRACTS.md §H (read list) and §G (bot reuses
 // these unchanged — same auth, role, and branch-scoping machinery).
 import express from 'express';
-import { isDuplicateOnlyRun } from '../../core/runs.js';
+import { isDuplicateOnlyRun, currentRun } from '../../core/runs.js';
+import { computeLedgerPushSummary } from '../../core/ledger_summary.js';
 
 function wrap(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -33,6 +34,35 @@ export function createReadRouter({ store, deps = {}, auth }) {
       const runs = [];
       for (const r of rows) runs.push({ ...r, duplicate_only: await isDuplicateOnlyRun(store, r) });
       res.json({ runs });
+    })
+  );
+
+  // ---- ledger push summary: per ledger, debit/credit to be pushed vs held back ----
+  router.get(
+    '/runs/:id/ledger-summary',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const run = await store.get('extraction_runs', req.params.id);
+      if (!run) return res.status(404).json({ error: 'NOT_FOUND' });
+      if (!auth.branchAllowed(req.user, run.branch_code)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${run.branch_code}` });
+      }
+      res.json(await computeLedgerPushSummary(store, run.id));
+    })
+  );
+
+  router.get(
+    '/branches/:code/ledger-summary',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const branch = req.params.code;
+      if (!auth.branchAllowed(req.user, branch)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${branch}` });
+      }
+      const runs = await store.find('extraction_runs', { branch_code: branch }, { orderBy: 'created_at DESC' });
+      const run = await currentRun(store, runs);
+      if (!run) return res.status(404).json({ error: 'NO_RUN', message: `No run has been imported for branch ${branch}` });
+      res.json(await computeLedgerPushSummary(store, run.id));
     })
   );
 

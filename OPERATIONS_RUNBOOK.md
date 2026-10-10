@@ -158,6 +158,16 @@ Steps (real data stays under `var/`, which is gitignored):
    Re-transform releases vouchers blocked at transform (`UNMAPPED_ENTITY`) and vouchers blocked
    at classification for a missing voucher-type route (`UNMAPPED_MODULE`) once that route is
    approved; the rest are re-checked and stay blocked with their exception open.
+   Re-transform runs as a background job (`202` + `jobId`; progress at
+   `GET /api/runs/retransform-jobs/:jobId`, latest job of a run at `GET /api/runs/:id/retransform-job`),
+   because a real run takes minutes against the Data Store and AppSail cuts requests at 30 s.
+   Approving mapping rules (bulk or single) starts the same job automatically for every
+   re-transformable run in the approver's branches that still has vouchers blocked for a missing
+   rule (audit `TRANSFORM.AUTO_REAPPLY`), so the manual button is only needed after other changes.
+6. Before approving and posting a batch, check **Ledger push summary** (branch page, steps 3-6;
+   `GET /api/branches/:code/ledger-summary`): per source ledger, the debit and credit that will be
+   sent to Zoho Books, what is held back and why, and whether the amounts to push balance. Use
+   **Download CSV** to keep the confirmed figures with the batch approval.
 
 Re-importing a branch whose normalised `transactions.csv` / `trial_balance.csv` are byte-identical
 to an earlier run is refused at INGEST (`DUPLICATE_FILE`, file sha256 already registered). That

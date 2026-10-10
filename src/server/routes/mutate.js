@@ -9,7 +9,6 @@
 import express from 'express';
 import { assertTransition, BATCH_TRANSITIONS, QUEUE_TRANSITIONS } from '../../core/states.js';
 import { nowIso, uk, isIsoDate } from '../../core/ids.js';
-import { refreshBranchSummary } from '../../core/branch_summary.js';
 import * as exceptionsModule from '../../core/exceptions.js';
 import { isBotUser, botMayPerform } from './agent.js';
 
@@ -40,7 +39,10 @@ function wrap(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
-export function createMutateRouter({ store, audit, deps = {}, auth }) {
+// Run states in which a re-transform is allowed (src/core/transform.js RETRANSFORM_RUN_STATES).
+const REAPPLY_RUN_STATES = new Set(['CLASSIFIED', 'TRANSFORMED', 'READY_FOR_APPROVAL']);
+
+export function createMutateRouter({ store, audit, deps = {}, auth, retransformJobs = null }) {
   const router = express.Router();
 
   function botGate(actionName) {
@@ -103,10 +105,9 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
       if (!auth.branchAllowed(req.user, run.branch_code)) {
         return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${run.branch_code}` });
       }
-      if (!deps.transform) return notImplemented(res, 'transform');
-      let result;
+      if (!deps.transform || !retransformJobs) return notImplemented(res, 'transform');
       try {
-        result = await deps.transform.retransformRun(ctxFor(req), { runId: run.id });
+        if (deps.transform.checkRetransformable) await deps.transform.checkRetransformable(ctxFor(req), { runId: run.id });
       } catch (err) {
         if (err?.code === 'NOT_FOUND') return res.status(404).json({ error: err.code, message: err.message });
         if (err?.code === 'INVALID_RUN_STATE' || err?.code === 'BATCH_IN_PROGRESS') {
@@ -114,14 +115,83 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
         }
         throw err;
       }
-      try {
-        await refreshBranchSummary(store, run.branch_code);
-      } catch {
-        // best effort: the summary is a derived view and can be refreshed later
-      }
-      res.json(result);
+      // Runs as a detached job (src/server/retransform_jobs.js): a real run takes minutes.
+      const { job, joined } = await retransformJobs.start(ctxFor(req), { runId: run.id, branchCode: run.branch_code, trigger: 'manual' });
+      res.status(202).json({ jobId: job.jobId, runId: run.id, stage: job.stage, joined });
     })
   );
+
+  // ---- progress of a re-transform job (and the latest job of a run) ----
+  router.get(
+    '/runs/retransform-jobs/:jobId',
+    auth.authenticate(),
+    auth.requireRole('operator', 'admin', 'approver', 'viewer'),
+    wrap(async (req, res) => {
+      const job = retransformJobs?.get(req.params.jobId);
+      if (!job) return res.status(404).json({ error: 'NOT_FOUND', message: 'unknown re-transform job (jobs are kept in memory by the instance that started them)' });
+      if (!auth.branchAllowed(req.user, job.branchCode)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${job.branchCode}` });
+      }
+      res.json(job);
+    })
+  );
+
+  router.get(
+    '/runs/:id/retransform-job',
+    auth.authenticate(),
+    auth.requireRole('operator', 'admin', 'approver', 'viewer'),
+    wrap(async (req, res) => {
+      const run = await store.get('extraction_runs', req.params.id);
+      if (!run) return res.status(404).json({ error: 'NOT_FOUND' });
+      if (!auth.branchAllowed(req.user, run.branch_code)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${run.branch_code}` });
+      }
+      res.json({ job: retransformJobs?.latestForRun(run.id) ?? null });
+    })
+  );
+
+  /**
+   * After mapping rules are approved, re-apply the mapping to every run that still has
+   * vouchers blocked for a missing rule (UNMAPPED_ENTITY / UNMAPPED_MODULE), in branches
+   * the approver may act on. Runs that cannot be re-transformed now (wrong state, a batch
+   * in progress) are skipped and reported. Each run gets its own background job.
+   */
+  async function autoReapply(req) {
+    if (!deps.transform || !retransformJobs) return [];
+    const started = [];
+    const runs = await store.find('extraction_runs', {});
+    for (const run of runs) {
+      if (!REAPPLY_RUN_STATES.has(run.status) || !auth.branchAllowed(req.user, run.branch_code)) continue;
+      let hasBlocked = false;
+      for (const reason of ['UNMAPPED_ENTITY', 'UNMAPPED_MODULE']) {
+        const rows = await store.find('vouchers', { extraction_run_id: run.id, disposition: 'BLOCKED', disposition_reason: reason }, { limit: 1 });
+        if (rows.length) { hasBlocked = true; break; }
+      }
+      if (!hasBlocked) continue;
+      try {
+        if (deps.transform.checkRetransformable) await deps.transform.checkRetransformable(ctxFor(req), { runId: run.id });
+      } catch (err) {
+        started.push({ runId: run.id, branchCode: run.branch_code, skipped: err?.code ?? 'ERROR' });
+        continue;
+      }
+      const { job } = await retransformJobs.start(ctxFor(req), { runId: run.id, branchCode: run.branch_code, trigger: 'mapping_approval' });
+      started.push({ runId: run.id, branchCode: run.branch_code, jobId: job.jobId });
+    }
+    if (started.length) {
+      await audit.emit({
+        actor: req.user.id, actorRole: req.user.role, action: 'TRANSFORM.AUTO_REAPPLY', entityType: 'extraction_runs',
+        entityId: null, before: null, after: { runs: started }, reason: 'mapping rules approved', correlationId: req.correlationId,
+      });
+    }
+    return started;
+  }
+
+  /** Start autoReapply after the response (the scan reads every run). -> true if scheduled. */
+  function scheduleAutoReapply(req) {
+    if (!deps.transform || !retransformJobs) return false;
+    retransformJobs.detach(() => autoReapply(req));
+    return true;
+  }
 
   // ---- cutover matrix upsert (DRAFT) ----
   router.post(
@@ -302,7 +372,8 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
         reason: req.body?.reason ?? null,
         correlationId: req.correlationId,
       });
-      res.json({ approved: approvedIds.length, ids: approvedIds });
+      const reapplyScheduled = approvedIds.length > 0 && scheduleAutoReapply(req);
+      res.json({ approved: approvedIds.length, ids: approvedIds, reapplyScheduled });
     })
   );
 
@@ -363,7 +434,8 @@ export function createMutateRouter({ store, audit, deps = {}, auth }) {
         reason: req.body?.reason ?? null,
         correlationId: req.correlationId,
       });
-      res.json(updated);
+      const reapplyScheduled = row.status !== 'APPROVED' && scheduleAutoReapply(req);
+      res.json({ ...updated, reapplyScheduled });
     })
   );
 
