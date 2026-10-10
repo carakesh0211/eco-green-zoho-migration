@@ -382,7 +382,7 @@ test('date repair: date-typed cells outside the window that fall inside once day
     ...xpair('S', 50, { date: '2026-11-04' }, 'SALES', 'CASH', 90, { by: SMART }),
   ];
   const res = run(baseFiles({ 'ledger.csv': xlsxLedger(lines) }), { ...PROFILE, ledger_file: 'ledger.csv' });
-  assert.deepEqual(res.report.date_repair, { date_typed_cells: 6, text_cells: 2, swapped_day_month: true, out_of_window_as_is: 6, out_of_window_swapped: 0 });
+  assert.deepEqual(res.report.date_repair, { date_typed_cells: 6, text_cells: 2, swapped_day_month: true, out_of_window_as_is: 6, out_of_window_swapped: 0, reason: 'out_of_window_as_is' });
   const tx = rowsOf(res.transactionsCsv);
   const dateOf = (id) => [...new Set(tx.filter((r) => r.voucher_id === id).map((r) => r.voucher_date))];
   assert.deepEqual(dateOf('26/J/1'), ['2026-04-09']);
@@ -393,18 +393,50 @@ test('date repair: date-typed cells outside the window that fall inside once day
   assert.equal(excl(res, 'J', 'OUT_OF_WINDOW'), undefined);
 });
 
-test('date repair: when date-typed cells already fall in the window nothing is swapped, even if the swapped reading is also in the window', () => {
-  // 2026-05-06 and 2026-06-05 are both in the window under either reading
+test('date repair: a file that mixes text and date-typed cells is Excel-damaged, so the date-typed cells are swapped even when both readings fall in the window', () => {
+  // Excel read "06/05/26" (6 May) as May 6 and "05/06/26" (5 June) as June 5; "20/04/26" could not be read and stayed text
   const lines = [
     ...xpair('J', 1, { date: '2026-05-06' }, 'EXP01', 'BANK01', 300),
     ...xpair('P', 5, { date: '2026-06-05' }, 'EXP01', 'BANK01', 500),
     ...xpair('R', 8, '20/04/26', 'CASH', 'BANK01', 700),
   ];
   const res = run(baseFiles({ 'ledger.csv': xlsxLedger(lines) }));
-  assert.deepEqual(res.report.date_repair, { date_typed_cells: 4, text_cells: 2, swapped_day_month: false, out_of_window_as_is: 0, out_of_window_swapped: 0 });
+  assert.deepEqual(res.report.date_repair, { date_typed_cells: 4, text_cells: 2, swapped_day_month: true, out_of_window_as_is: 0, out_of_window_swapped: 0, reason: 'mixed_text_and_date_cells' });
+  const tx = rowsOf(res.transactionsCsv);
+  assert.equal(tx.find((r) => r.voucher_id === '26/J/1').voucher_date, '2026-06-05');
+  assert.equal(tx.find((r) => r.voucher_id === '26/P/5').voucher_date, '2026-05-06');
+  assert.equal(tx.find((r) => r.voucher_id === '26/R/8').voucher_date, '2026-04-20', 'text dates are never touched');
+});
+
+test('date repair: a file of only date-typed cells that all fall in the window is read as-is (an extractor that writes real dates), even if the swapped reading would also fit', () => {
+  const lines = [
+    ...xpair('J', 1, { date: '2026-05-06' }, 'EXP01', 'BANK01', 300),
+    ...xpair('P', 5, { date: '2026-06-05' }, 'EXP01', 'BANK01', 500),
+  ];
+  const res = run(baseFiles({ 'ledger.csv': xlsxLedger(lines) }));
+  assert.deepEqual(res.report.date_repair, { date_typed_cells: 4, text_cells: 0, swapped_day_month: false, out_of_window_as_is: 0, out_of_window_swapped: 0, reason: 'as_is_in_window' });
   const tx = rowsOf(res.transactionsCsv);
   assert.equal(tx.find((r) => r.voucher_id === '26/J/1').voucher_date, '2026-05-06');
   assert.equal(tx.find((r) => r.voucher_id === '26/P/5').voucher_date, '2026-06-05');
+});
+
+test('date repair: date_typed_cells in the profile fixes the reading (as_is or swapped) and is reported as reason profile', () => {
+  const lines = [
+    ...xpair('J', 1, { date: '2026-05-06' }, 'EXP01', 'BANK01', 300),
+    ...xpair('R', 8, '20/04/26', 'CASH', 'BANK01', 700),
+  ];
+  const files = baseFiles({ 'ledger.csv': xlsxLedger(lines) });
+  const asIs = run(files, { ...PROFILE, date_typed_cells: 'as_is' });
+  assert.equal(asIs.report.date_repair.reason, 'profile');
+  assert.equal(asIs.report.date_repair.swapped_day_month, false);
+  assert.equal(rowsOf(asIs.transactionsCsv).find((r) => r.voucher_id === '26/J/1').voucher_date, '2026-05-06');
+  const swapped = run(files, { ...PROFILE, date_typed_cells: 'swapped' });
+  assert.equal(swapped.report.date_repair.reason, 'profile');
+  assert.equal(rowsOf(swapped.transactionsCsv).find((r) => r.voucher_id === '26/J/1').voucher_date, '2026-06-05');
+  // forcing swapped on a cell whose swapped reading is impossible (2026-05-13 -> month 13) makes that line BAD_DATE
+  const forced = run(baseFiles({ 'ledger.csv': xlsxLedger([...xpair('J', 1, { date: '2026-05-13' }, 'EXP01', 'BANK01', 300), ...xpair('R', 8, '20/04/26', 'CASH', 'BANK01', 700)]) }), { ...PROFILE, date_typed_cells: 'swapped' });
+  assert.equal(excl(forced, 'J', 'BAD_DATE').rows, 2);
+  assert.throws(() => run(files, { ...PROFILE, date_typed_cells: 'guess' }), (e) => e.code === 'INVALID_PROFILE' && /date_typed_cells must be one of auto, as_is, swapped/.test(e.message));
 });
 
 test('date repair: not applied when the swapped reading would leave any date-typed cell outside the window (or invalid)', () => {
@@ -415,6 +447,7 @@ test('date repair: not applied when the swapped reading would leave any date-typ
   ];
   const res = run(baseFiles({ 'ledger.csv': xlsxLedger(lines) }));
   assert.equal(res.report.date_repair.swapped_day_month, false);
+  assert.equal(res.report.date_repair.reason, 'swapped_reading_invalid');
   assert.equal(res.report.date_repair.out_of_window_as_is, 2);
   assert.equal(res.report.date_repair.out_of_window_swapped, 2);
   assert.deepEqual(excl(res, 'J', 'OUT_OF_WINDOW'), { prefix: 'J', reason: 'OUT_OF_WINDOW', rows: 2, documents: 1, amount: '600.00' });
@@ -428,7 +461,7 @@ test('date repair: not applied when the swapped reading would leave any date-typ
 test('date repair: text-only dates are never touched, and text dates outside the window are simply OUT_OF_WINDOW', () => {
   const lines = [...xpair('J', 1, '09/09/26', 'EXP01', 'BANK01', 300), ...xpair('P', 5, '10/04/26', 'EXP01', 'BANK01', 500)];
   const res = run(baseFiles({ 'ledger.csv': xlsxLedger(lines) }));
-  assert.deepEqual(res.report.date_repair, { date_typed_cells: 0, text_cells: 4, swapped_day_month: false, out_of_window_as_is: 0, out_of_window_swapped: 0 });
+  assert.deepEqual(res.report.date_repair, { date_typed_cells: 0, text_cells: 4, swapped_day_month: false, out_of_window_as_is: 0, out_of_window_swapped: 0, reason: 'no_date_cells' });
   assert.equal(excl(res, 'J', 'OUT_OF_WINDOW').rows, 2);
   assert.equal(res.report.output.vouchers, 1);
 });
@@ -471,7 +504,7 @@ test('the same population read from .xlsx files (shared strings, numbers, single
   assert.equal(res.report.trial_balance_ties.all, true);
   assert.deepEqual(res.report.opening_differences, []);
   assert.equal(res.report.bridge.table, 'ledger.xlsx');
-  assert.deepEqual(res.report.date_repair, { date_typed_cells: 0, text_cells: 13, swapped_day_month: false, out_of_window_as_is: 0, out_of_window_swapped: 0 });
+  assert.deepEqual(res.report.date_repair, { date_typed_cells: 0, text_cells: 13, swapped_day_month: false, out_of_window_as_is: 0, out_of_window_swapped: 0, reason: 'no_date_cells' });
 });
 
 test('mixed delivery: an .xlsx ledger with CSV trial balances works, and inputs are recognised by content, not file name', () => {
@@ -667,8 +700,55 @@ test('INVALID_PROFILE: every missing or bad field is reported together', () => {
   bad({ to_date: '2026-02-30' }, /to_date must be YYYY-MM-DD/);
   bad({ from_date: '2026-08-01' }, /from_date is after to_date/);
   bad({ prefix_types: { ...PROFILE.prefix_types, Q: 'SETTLEMENT' } }, /prefix_types\.Q: unknown voucher type SETTLEMENT/);
+  bad({ credit_sign: 'minus' }, /credit_sign must be one of auto, negative, positive/);
   const { prefix_types: _p, ...noPrefixes } = PROFILE;
   assert.throws(() => run(files, noPrefixes), (e) => e.code === 'INVALID_PROFILE' && /prefix_types is required/.test(e.message) && !/branch_code is required/.test(e.message));
+});
+
+// ---------------------------------------------------------------- credit sign convention
+
+/** the same population with the Credit column written as positive magnitudes (branch 460 delivery) */
+const positiveCreditRows = () => baseRows().map((r) => ({ ...r, Credit: Math.abs(Number(r.Credit)).toFixed(2) }));
+
+test('credit sign: credits written as positive magnitudes are detected and give the same vouchers and trial balance as the negative convention', () => {
+  const negative = run();
+  const positive = run(baseFiles({ 'ledger.csv': ledgerCsv(positiveCreditRows()) }));
+  // six credit lines vote (four of ours, two of Smartpharma's); the footer row does not
+  assert.deepEqual(negative.report.credit_sign, { sign: 'negative', source: 'detected', positive_cells: 0, negative_cells: 6 });
+  assert.deepEqual(positive.report.credit_sign, { sign: 'positive', source: 'detected', positive_cells: 6, negative_cells: 0 });
+  assert.equal(positive.transactionsCsv, negative.transactionsCsv);
+  assert.equal(positive.trialBalanceCsv, negative.trialBalanceCsv);
+  assert.equal(positive.componentsCsv, negative.componentsCsv);
+  assert.deepEqual(positive.report.unbalanced_vouchers, []);
+  assert.equal(positive.report.trial_balance_ties.all, true);
+  assert.deepEqual(positive.report.exclusions, negative.report.exclusions);
+  assert.notEqual(positive.manifest.extraction_run_id, negative.manifest.extraction_run_id, 'the input bytes differ, so the run id differs');
+});
+
+test('credit sign: a column with no credits at all defaults to the negative convention; footer rows do not vote', () => {
+  const rows = baseRows().filter((r) => Number(r.Credit) === 0 || !r.c_prefix); // keep the debit lines and the footer (Credit -3000)
+  const res = run(baseFiles({ 'ledger.csv': ledgerCsv(rows) }));
+  assert.deepEqual(res.report.credit_sign, { sign: 'negative', source: 'detected', positive_cells: 0, negative_cells: 0 });
+  const footerOnly = run(baseFiles({ 'ledger.csv': ledgerCsv(rows.map((r) => (r.c_prefix ? r : { ...r, Credit: '3000.00' }))) }));
+  assert.deepEqual(footerOnly.report.credit_sign, { sign: 'negative', source: 'detected', positive_cells: 0, negative_cells: 0 }, 'a positive footer total does not flip the convention');
+});
+
+test('credit sign: a column mixing positive and negative credits is refused as CREDIT_SIGN_AMBIGUOUS unless the profile fixes the convention', () => {
+  const rows = baseRows();
+  rows[1].Credit = '300.00'; // one credit written as a magnitude among negatives
+  const files = baseFiles({ 'ledger.csv': ledgerCsv(rows) });
+  assert.throws(() => run(files), (e) => e instanceof NormaliseError && e.code === 'CREDIT_SIGN_AMBIGUOUS' && /ledger\.csv: the Credit column mixes 1 positive and 5 negative values/.test(e.message));
+  const forced = run(files, { ...PROFILE, credit_sign: 'negative' });
+  assert.deepEqual(forced.report.credit_sign, { sign: 'negative', source: 'profile', positive_cells: 1, negative_cells: 5 });
+  assert.deepEqual(forced.report.unbalanced_vouchers.map((v) => v.voucher_id), ['26/J/1'], 'the mis-signed line surfaces as an unbalanced voucher instead of being silently flipped');
+});
+
+test('credit sign: profile credit_sign positive is honoured even when the data looks negative (and reported as source profile)', () => {
+  const res = run(baseFiles(), { ...PROFILE, credit_sign: 'positive' });
+  assert.equal(res.report.credit_sign.source, 'profile');
+  assert.equal(res.report.credit_sign.sign, 'positive');
+  assert.equal(res.report.output.credit_total, '0.00', 'every negative credit now reads as a debit, so nothing balances');
+  assert.equal(res.report.unbalanced_vouchers.length, 4);
 });
 
 test('MISSING_FILE: the ledger table and the closing trial balance are required; the opening trial balance is optional', () => {

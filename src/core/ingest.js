@@ -335,6 +335,15 @@ export async function ingestRun(ctx, { inbox, archive, inboxRef, workerId }) {
     await assertTransition(RUN_TRANSITIONS, 'run', RUN_STATES.CLAIMED, RUN_STATES.VALIDATION_FAILED);
     await store.releaseClaim('extraction_runs', run.id, { workerId, newStatus: RUN_STATES.VALIDATION_FAILED });
     const errors = fileResults.flatMap((f) => f.issues.map((i) => ({ ...i, file_name: f.fileMeta.file_name })));
+    if (fileResults.length > 0 && fileResults.every((f) => f.status === 'QUARANTINED')) {
+      // Every file is already held by an earlier run: mark the row so it does not stand in
+      // for that run as the branch's current one (src/core/runs.js).
+      await store.update('extraction_runs', run.id, {
+        error_code: 'DUPLICATE_FILE',
+        error_message: 'All files were already received in an earlier run',
+        updated_at: nowFn(effCtx),
+      });
+    }
     await auditStep(effCtx, 4, { entityId: run.id, after: { outcome: 'VALIDATION_FAILED', errors }, branchCode: run.branch_code });
     return { outcome: 'VALIDATION_FAILED', runId: run.id, errors };
   }

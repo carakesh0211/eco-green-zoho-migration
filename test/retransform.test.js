@@ -65,6 +65,15 @@ async function addLedgerAndPartyRules(store) {
   }));
 }
 
+/** Re-shape the seeded voucher as classification left it when no MODULE_ROUTE was approved
+ * yet (src/core/overlap.js): BLOCKED / UNMAPPED_MODULE with its own open exception. */
+async function blockAtClassification(store, voucher, exception) {
+  await store.update('vouchers', voucher.id, { disposition_reason: 'UNMAPPED_MODULE' });
+  await store.update('exceptions', exception.id, {
+    category: 'UNMAPPED_MODULE', message: 'No approved MODULE_ROUTE for JOURNAL', dedupe_key: `cls:${voucher.id}:UNMAPPED_MODULE`,
+  });
+}
+
 describe('retransformRun', () => {
   test('without the missing rules the voucher stays BLOCKED and the exception is open again', async () => {
     const { store, voucher, exception } = await seed();
@@ -115,7 +124,73 @@ describe('retransformRun', () => {
       assert.equal((await store.get('extraction_runs', RUN_ID)).status, 'TRANSFORMED');
       const rerun = await store.find('audit_events', { action: 'TRANSFORM.RERUN' });
       assert.equal(rerun.length, 1);
-      assert.deepEqual(JSON.parse(rerun[0].after_json), { reset: 1 });
+      assert.deepEqual(JSON.parse(rerun[0].after_json), { reset: 1, resetUnmappedModule: 0 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  test('a voucher blocked at classification (UNMAPPED_MODULE) migrates once its route and rules are approved', async () => {
+    const { store, voucher, exception } = await seed();
+    try {
+      await blockAtClassification(store, voucher, exception);
+      await addLedgerAndPartyRules(store);
+      const res = await retransformRun(ctxFor(store), { runId: RUN_ID });
+      assert.equal(res.reset, 1);
+      assert.equal(res.stillBlocked, 0);
+      assert.equal(res.stillUnmappedModule, 0);
+
+      const v = await store.get('vouchers', voucher.id);
+      assert.equal(v.disposition, 'MIGRATE');
+      assert.equal(v.disposition_reason, null);
+      assert.equal(v.target_module, 'journal');
+      const exc = await store.get('exceptions', exception.id);
+      assert.equal(exc.status, 'RESOLVED');
+      assert.equal(exc.category, 'UNMAPPED_MODULE');
+      const rerun = await store.find('audit_events', { action: 'TRANSFORM.RERUN' });
+      assert.deepEqual(JSON.parse(rerun[0].after_json), { reset: 1, resetUnmappedModule: 1 });
+    } finally {
+      await store.close();
+    }
+  });
+
+  test('a voucher blocked at classification is released once its route is approved and re-blocked as UNMAPPED_ENTITY while ledger rules are missing', async () => {
+    const { store, voucher, exception } = await seed();
+    try {
+      await blockAtClassification(store, voucher, exception);
+      // Route approved, ledger/party rules still missing: released, then re-blocked by the transform.
+      const res = await retransformRun(ctxFor(store), { runId: RUN_ID });
+      assert.equal(res.reset, 1);
+      assert.equal(res.stillBlocked, 1);
+      assert.equal(res.stillUnmappedModule, 0);
+      const v = await store.get('vouchers', voucher.id);
+      assert.equal(v.disposition, 'BLOCKED');
+      assert.equal(v.disposition_reason, 'UNMAPPED_ENTITY');
+      assert.equal((await store.get('exceptions', exception.id)).status, 'RESOLVED');
+      const open = (await store.find('exceptions', { voucher_id: voucher.id })).filter((e) => e.status === 'OPEN');
+      assert.equal(open.length, 1);
+      assert.equal(open[0].category, 'UNMAPPED_ENTITY');
+    } finally {
+      await store.close();
+    }
+  });
+
+  test('a voucher blocked at classification stays UNMAPPED_MODULE while its route is still not approved', async () => {
+    const { store, voucher, exception } = await seed();
+    try {
+      await blockAtClassification(store, voucher, exception);
+      const [route] = await store.find('mapping_rules', { rule_type: 'MODULE_ROUTE' });
+      await store.update('mapping_rules', route.id, { status: 'DRAFT' });
+      await addLedgerAndPartyRules(store);
+      const res = await retransformRun(ctxFor(store), { runId: RUN_ID });
+      assert.equal(res.reset, 0);
+      assert.equal(res.stillBlocked, 1);
+      assert.equal(res.stillUnmappedModule, 1);
+      const v = await store.get('vouchers', voucher.id);
+      assert.equal(v.disposition, 'BLOCKED');
+      assert.equal(v.disposition_reason, 'UNMAPPED_MODULE');
+      assert.equal((await store.get('exceptions', exception.id)).status, 'OPEN');
+      assert.equal((await store.find('exceptions', { voucher_id: voucher.id })).length, 1);
     } finally {
       await store.close();
     }

@@ -8,6 +8,8 @@
   "closing_tb_file": "closing_tb.xlsx",
   "opening_tb_file": "opening_tb.xlsx",
   "pushed_by_value": "ZOHO",
+  "credit_sign": "auto",
+  "date_typed_cells": "auto",
   "prefix_types": {
     "J": "JOURNAL",
     "Q": "PAYMENT",

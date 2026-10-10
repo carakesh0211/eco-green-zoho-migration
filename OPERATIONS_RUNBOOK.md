@@ -118,3 +118,72 @@ concern:
 5. Document the incident, root cause, and remediation in the exception/audit trail
    before closing — closing an exception must never erase its history
    (`PROJECT_CONTEXT.md`).
+
+## 11. Importing a ledger-table delivery from a cloud session
+
+Where the branch files are (Zoho WorkDrive, team "Upsourced Consultancy Services Pvt Ltd",
+workspace "Prospecting - Client SOW"):
+
+- `FRANKROSS / TRANSACTIONAL DATA MIGRATION / branch-extract_data / tripura / <branch>`:
+  `Ledger_01042026_to_05072026.xlsx`, `Closing_tb_report_05072026.xlsx`,
+  `opening_tb_report_31032026.xlsx` (branches 460 to 469; 460 and 461 verified on 2026-10-09).
+- `FRANKROSS / TRANSACTIONAL DATA MIGRATION / ECOGREEN_TABLE DATA / <branch>`: the older raw
+  table dumps (`jv_det.csv`, `set_det.csv`, ...), plus `Transaction_Prefix_Mapping.xlsx` and the
+  Rule Book for the ledger-table format.
+
+Steps (real data stays under `var/`, which is gitignored):
+
+1. Download the three ledger-table files through the WorkDrive connector into
+   `var/raw<branch>/run-in/` as `ledger.xlsx`, `closing_tb.xlsx`, `opening_tb.xlsx`. A 4-column
+   opening file (`Act Code, Description, Op.Debit, Op.Credit`) is not the report format and must be
+   left out of the folder; the normaliser then skips the 31 March check.
+2. Write `var/profiles/<branch>-ledger-table.json` from
+   `config/source-profiles/ecogreen-ledger-table.example.json`: `branch_code`, window
+   `2026-04-01` to `2026-07-05`, `prefix_types` from the branch's prefix sheet (Zoho-pushed
+   prefixes so far: `J` JOURNAL, `Q` PAYMENT, `211` RECEIPT, `213` PAYMENT, `F` CONTRA).
+   Leave `credit_sign` and `date_typed_cells` on `auto`; the report says what was detected.
+3. `node scripts/normalise-ecogreen.js --in var/raw<branch>/run-in --profile var/profiles/<branch>-ledger-table.json --out var/inbox-real`.
+   Expect `unbalanced_vouchers` empty, `trial_balance_ties.all` true and `bridge.ties` true before
+   going further. Branch 460 (749 vouchers) and 461 (589 vouchers) both meet this.
+4. Import into the hosted console. In a cloud session the bearer token is a network secret that
+   the egress proxy injects on requests to the console host, so the process never holds it:
+   `node scripts/import-run.js --dir var/inbox-real/<branch>/<run-id> --url https://<console-host> --proxy-auth --branch-name "Branch <branch>"`.
+   The job reports INGEST, LAYER_A and CLASSIFY_TRANSFORM; vouchers come out BLOCKED until mapping
+   rules are approved. The import endpoint cannot post to Zoho Books.
+5. For a run whose mapping is already approved, `POST /api/runs/:id/retransform` applies the rules.
+   This needs a human operator or admin token. The proxy-injected console token is a bot
+   principal, and bots may only pause/resume batches, retry queue items and assign exceptions
+   (`src/server/routes/agent.js`), so a cloud session gets `403 BOT_CEILING:retransform`. Ask the
+   owner to click "Re-apply mapping to the latest run" (branch page, step 3) instead.
+   Re-transform releases vouchers blocked at transform (`UNMAPPED_ENTITY`) and vouchers blocked
+   at classification for a missing voucher-type route (`UNMAPPED_MODULE`) once that route is
+   approved; the rest are re-checked and stay blocked with their exception open.
+   Re-transform runs as a background job (`202` + `jobId`; progress at
+   `GET /api/runs/retransform-jobs/:jobId`, latest job of a run at `GET /api/runs/:id/retransform-job`),
+   because a real run takes minutes against the Data Store and AppSail cuts requests at 30 s.
+   Approving mapping rules (bulk or single) starts the same job automatically for every
+   re-transformable run in the approver's branches that still has vouchers blocked for a missing
+   rule (audit `TRANSFORM.AUTO_REAPPLY`), so the manual button is only needed after other changes.
+6. Map a branch's remaining ledgers and parties in bulk on **Bulk mapping** (branch page, step 3;
+   `#/branches/:code/bulk-mapping`):
+   - Upload the Zoho Books exports once (Chart of Accounts required; Vendors and Customers
+     optional, CSV or XLSX). They are stored in the archive and shared by every branch; a later
+     partial upload replaces only the lists it contains.
+   - **Create rules for all confident matches** makes DRAFT rules for exact and close name
+     matches and for parties that are Books accounts.
+   - **Download mapping sheet**, fill `books_name` (Books names, not ids) for the rest, and
+     upload it. Each row reports RULE, BLANK, NOT_FOUND, AMBIGUOUS, UNKNOWN_SOURCE,
+     ALREADY_APPROVED, BAD_TYPE or DUPLICATE_ROW. Codes that lost leading zeros in Excel still match.
+   - An approver approves the created rules on the same page, which starts the re-apply job (step 5).
+   Bot tokens can read these pages but cannot upload lists or create rules.
+7. Before approving and posting a batch, check **Ledger push summary** (branch page, steps 3-6;
+   `GET /api/branches/:code/ledger-summary`): per source ledger, the debit and credit that will be
+   sent to Zoho Books, what is held back and why, and whether the amounts to push balance. Use
+   **Download CSV** to keep the confirmed figures with the batch approval.
+
+Re-importing a branch whose normalised `transactions.csv` / `trial_balance.csv` are byte-identical
+to an earlier run is refused at INGEST (`DUPLICATE_FILE`, file sha256 already registered). That
+attempt leaves a `VALIDATION_FAILED` run row with no vouchers, marked `error_code =
+DUPLICATE_FILE`. The branch summary and branch page skip such a row (`src/core/runs.js`), so the
+earlier run stays the current one; act on that run. Compare `sha256sum` of the two CSVs with the
+existing run before uploading to avoid the extra row.

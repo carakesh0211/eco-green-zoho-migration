@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'server', 'public');
 const read = (rel) => readFileSync(join(PUBLIC_DIR, rel), 'utf8');
 
-const NEW_VIEWS = ['views/overview.js', 'views/exceptions.js', 'views/settings.js', 'views/mapping.js'];
+const NEW_VIEWS = ['views/overview.js', 'views/exceptions.js', 'views/settings.js', 'views/mapping.js', 'views/ledger-summary.js', 'views/bulk-mapping.js'];
 
 describe('console UI v2 shell', () => {
   test('index.html has the sidebar shell ids app.js depends on', () => {
@@ -72,6 +72,24 @@ describe('console UI v2 shell', () => {
     }
     assert.match(read('views/branch-workspace.js'), /\/retransform/);
     assert.match(read('views/branch-workspace.js'), /navigate\('\/mapping'\)/);
+  });
+
+  test('Ledger push summary page: registered, reads the branch summary API, linked from the branch workspace', () => {
+    const src = read('views/ledger-summary.js');
+    assert.match(src, /registerRoute\('\/branches\/:code\/ledger-summary'/);
+    assert.ok(src.includes('/ledger-summary`'), 'ledger-summary.js should call /api/branches/:code/ledger-summary');
+    const ws = read('views/branch-workspace.js');
+    assert.match(ws, /\/ledger-summary`\)/);
+    assert.match(ws, /retransform-jobs\//, 'the workspace follows the background re-apply job');
+  });
+
+  test('Bulk mapping page: registered, calls the bulk mapping APIs, linked from workspace step 3', () => {
+    const src = read('views/bulk-mapping.js');
+    assert.match(src, /registerRoute\('\/branches\/:code\/bulk-mapping'/);
+    for (const ep of ['/api/books-reference', '/mapping-proposals`', '/mapping-auto`', '/mapping-sheet.csv`', '/mapping-sheet`', '/api/mappings/approve']) {
+      assert.ok(src.includes(ep), `bulk-mapping.js should call ${ep}`);
+    }
+    assert.match(read('views/branch-workspace.js'), /\/bulk-mapping`\)/);
   });
 
   test('Settings reuses the Books connection view through a shared render function', () => {
