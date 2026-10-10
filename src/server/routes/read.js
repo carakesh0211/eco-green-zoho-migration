@@ -1,6 +1,7 @@
 // Read-only console/agent routes. See CONTRACTS.md §H (read list) and §G (bot reuses
 // these unchanged — same auth, role, and branch-scoping machinery).
 import express from 'express';
+import { isDuplicateOnlyRun } from '../../core/runs.js';
 
 function wrap(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -26,8 +27,12 @@ export function createReadRouter({ store, deps = {}, auth }) {
         return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${branch}` });
       }
       const where = branch ? { branch_code: branch } : {};
-      const rows = await store.find('extraction_runs', where, { orderBy: 'created_at DESC' });
-      res.json({ runs: filterByBranch(rows, req.user) });
+      const rows = filterByBranch(await store.find('extraction_runs', where, { orderBy: 'created_at DESC' }), req.user);
+      // duplicate_only: a re-upload of files already held (src/core/runs.js); clients pick the
+      // branch's current run past these rows.
+      const runs = [];
+      for (const r of rows) runs.push({ ...r, duplicate_only: await isDuplicateOnlyRun(store, r) });
+      res.json({ runs });
     })
   );
 

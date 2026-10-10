@@ -151,3 +151,17 @@ Steps (real data stays under `var/`, which is gitignored):
    The job reports INGEST, LAYER_A and CLASSIFY_TRANSFORM; vouchers come out BLOCKED until mapping
    rules are approved. The import endpoint cannot post to Zoho Books.
 5. For a run whose mapping is already approved, `POST /api/runs/:id/retransform` applies the rules.
+   This needs a human operator or admin token. The proxy-injected console token is a bot
+   principal, and bots may only pause/resume batches, retry queue items and assign exceptions
+   (`src/server/routes/agent.js`), so a cloud session gets `403 BOT_CEILING:retransform`. Ask the
+   owner to click "Re-apply mapping to the latest run" (branch page, step 3) instead.
+   Re-transform releases vouchers blocked at transform (`UNMAPPED_ENTITY`) and vouchers blocked
+   at classification for a missing voucher-type route (`UNMAPPED_MODULE`) once that route is
+   approved; the rest are re-checked and stay blocked with their exception open.
+
+Re-importing a branch whose normalised `transactions.csv` / `trial_balance.csv` are byte-identical
+to an earlier run is refused at INGEST (`DUPLICATE_FILE`, file sha256 already registered). That
+attempt leaves a `VALIDATION_FAILED` run row with no vouchers, marked `error_code =
+DUPLICATE_FILE`. The branch summary and branch page skip such a row (`src/core/runs.js`), so the
+earlier run stays the current one; act on that run. Compare `sha256sum` of the two CSVs with the
+existing run before uploading to avoid the extra row.

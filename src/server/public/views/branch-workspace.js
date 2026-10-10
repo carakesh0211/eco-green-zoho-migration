@@ -204,12 +204,13 @@
 
   // ---------------------------------------------------------------- data helpers
 
-  /** The newest run row (id + status) for the branch, or null. Step 3 uses the status to
-   * decide whether "Re-apply mapping" makes sense. */
+  /** The branch's current run row (id + status), or null: the newest run, skipping re-uploads
+   * of files already held (`duplicate_only`, see src/core/runs.js) so they never hide the run
+   * that holds the data. Step 3 uses the status to decide whether "Re-apply mapping" makes sense. */
   async function fetchLatestRun(branch) {
     try {
       const { runs } = await api(`/api/runs?branch=${encodeURIComponent(branch)}`);
-      return runs?.[0] ?? null;
+      return runs?.find((r) => !r.duplicate_only) ?? runs?.[0] ?? null;
     } catch {
       return null;
     }
