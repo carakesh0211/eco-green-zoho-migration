@@ -73,9 +73,10 @@ function sharedStrings(files) {
   const xml = files.get('xl/sharedStrings.xml');
   if (!xml) return [];
   const out = [];
+  const text = xml.toString('utf8'); // once: decoding per match is quadratic and exhausts memory on big lists
   const re = /<si>([\s\S]*?)<\/si>|<si\/>/g;
   let m;
-  while ((m = re.exec(xml.toString('utf8'))) !== null) out.push(textOf(m[1] ?? ''));
+  while ((m = re.exec(text)) !== null) out.push(textOf(m[1] ?? ''));
   return out;
 }
 

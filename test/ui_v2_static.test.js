@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'server', 'public');
 const read = (rel) => readFileSync(join(PUBLIC_DIR, rel), 'utf8');
 
-const NEW_VIEWS = ['views/overview.js', 'views/exceptions.js', 'views/settings.js', 'views/mapping.js', 'views/ledger-summary.js', 'views/bulk-mapping.js'];
+const NEW_VIEWS = ['views/overview.js', 'views/exceptions.js', 'views/settings.js', 'views/mapping.js', 'views/ledger-summary.js', 'views/bulk-mapping.js', 'views/validation.js'];
 
 describe('console UI v2 shell', () => {
   test('index.html has the sidebar shell ids app.js depends on', () => {
@@ -90,6 +90,15 @@ describe('console UI v2 shell', () => {
       assert.ok(src.includes(ep), `bulk-mapping.js should call ${ep}`);
     }
     assert.match(read('views/branch-workspace.js'), /\/bulk-mapping`\)/);
+  });
+
+  test('Data validation page: registered, calls the validation APIs, linked from the branch workspace', () => {
+    const src = read('views/validation.js');
+    assert.match(src, /registerRoute\('\/branches\/:code\/validation'/);
+    for (const ep of ['/validation/runs`', '/rerun`', '/lines?account=', '/report.csv?view=', '/api/validation/mappings', '/api/validation/mappings/remove']) {
+      assert.ok(src.includes(ep), `validation.js should call ${ep}`);
+    }
+    assert.match(read('views/branch-workspace.js'), /\/validation`\)/);
   });
 
   test('Settings reuses the Books connection view through a shared render function', () => {

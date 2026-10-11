@@ -418,3 +418,12 @@ main#app { width: 100%; min-width: 0; }
 .ledger-summary .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 .bulk-mapping .bulk-card { margin: 12px 0; }
 .bulk-mapping .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+
+/* data validation */
+.validation-page .validation-card { margin: 12px 0; }
+.validation-page .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.validation-page .validation-form { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; align-items: center; margin: 8px 0; }
+.validation-page .validation-form label { font-weight: 600; }
+@media (max-width: 640px) { .validation-page .validation-form { grid-template-columns: 1fr; } }
+.validation-page .banner { margin: 8px 0; padding: 8px 12px; border-radius: 6px; }
+.validation-page .kv-list dd { font-variant-numeric: tabular-nums; }
