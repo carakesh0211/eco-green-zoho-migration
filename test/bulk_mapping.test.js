@@ -79,6 +79,13 @@ describe('parseBooksExport', () => {
     assert.equal(p.accounts[0].account_id, BIG_ID);
   });
 
+  test('ids rounded by Excel (scientific notation or all alike) are refused with the fix', () => {
+    const rounded = 'Account ID,Account Name\n3.37019E+18,Office Rent\n3.37019E+18,Freight Inward\n';
+    assert.throws(() => parseBooksExport(buf(rounded), { kindHint: 'accounts' }), (e) => e instanceof BooksExportError && /Excel/.test(e.message) && /3\.37019E\+18/.test(e.message));
+    const repeated = 'Contact ID,Display Name\n3370190000000000000,A\n3370190000000000000,B\n';
+    assert.throws(() => parseBooksExport(buf(repeated), { kindHint: 'vendors' }), /rounded or repeated/);
+  });
+
   test('missing id / name columns is a BooksExportError naming the headers found', () => {
     assert.throws(() => parseBooksExport(buf('Foo,Bar\n1,2\n'), { kindHint: 'accounts' }), (e) => e instanceof BooksExportError && /Foo, Bar/.test(e.message));
     assert.throws(() => parseBooksExport(buf('Foo,Bar\n1,2\n'), { kindHint: 'vendors' }), BooksExportError);

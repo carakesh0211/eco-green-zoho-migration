@@ -251,3 +251,16 @@ test('sheetToObjects: works on a sheet read from a workbook, keeping { date } ce
     { d_date: { date: '2026-04-10' }, n_amount: 5, ok: true },
   ]);
 });
+
+test('readXlsx: a large shared-string table is read in linear time', () => {
+  // Regression: the shared-strings XML was re-decoded for every string, which exhausted
+  // memory on Zoho Books contact exports (~50k strings).
+  const rows = [['Contact ID', 'Display Name']];
+  for (let i = 0; i < 30000; i += 1) rows.push([`id-${i}`, `Party name number ${i} with some padding text`]);
+  const bytes = buildXlsx([{ name: 'Contacts', rows }], { deflate: true });
+  const started = Date.now();
+  const wb = readXlsx(bytes);
+  assert.equal(wb.sheets[0].rows.length, 30001);
+  assert.equal(wb.sheets[0].rows[30000][1], 'Party name number 29999 with some padding text');
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
+});

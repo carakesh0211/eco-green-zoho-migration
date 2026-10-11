@@ -61,6 +61,20 @@ function isActive(v) {
   return ['active', 'true', 'yes', '1'].includes(s);
 }
 
+/**
+ * Ids that Excel turned into numbers come back rounded ("3.37019E+18") and all alike, so
+ * every mapping would point at the same wrong record. Refuse them with a fix the user can do.
+ */
+function assertExactIds(ids, label, fileName) {
+  const bad = ids.filter((id) => /e[+-]?\d+$/i.test(id) || /^\d+\.\d+$/.test(id));
+  if (bad.length > 0 || (ids.length > 1 && new Set(ids).size < ids.length)) {
+    const example = bad[0] ?? ids.find((id, i) => ids.indexOf(id) !== i);
+    throw new BooksExportError(`${fileName || label}: the ${label} column has rounded or repeated values (e.g. "${example}"). `
+      + 'Excel converts long Zoho ids to numbers when a file is opened and saved. Upload the file exactly as exported from Zoho Books, '
+      + 'or format the id column as Text before saving.');
+  }
+}
+
 /** Rows (arrays) of the first non-empty sheet / the CSV, with the header row first. */
 function readTable(bytes) {
   const isZip = bytes.length > 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
@@ -103,6 +117,7 @@ export function parseBooksExport(bytes, { fileName = '', kindHint } = {}) {
         is_active: isActive(cell(r, col.status)),
       }))
       .filter((a) => a.account_id && a.account_name);
+    assertExactIds(accounts.map((a) => a.account_id), 'Account ID', fileName);
     // Parent ids from parent names when the export only names the parent.
     const idByName = new Map(accounts.map((a) => [a.account_name.toLowerCase(), a.account_id]));
     for (const a of accounts) {
@@ -129,6 +144,7 @@ export function parseBooksExport(bytes, { fileName = '', kindHint } = {}) {
       };
     })
     .filter((c) => c.contact_id && c.contact_name);
+  assertExactIds(contacts.map((c) => c.contact_id), 'Contact ID', fileName);
   return { kind, contactType, contacts };
 }
 
