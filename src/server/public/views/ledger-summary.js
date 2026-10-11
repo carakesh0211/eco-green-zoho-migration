@@ -71,13 +71,71 @@
     const note = el('div');
     const controls = el('div', { class: 'actions' });
     const tableHost = el('div');
-    page.append(header, kpis, note, controls, tableHost);
+    const linksHost = el('section', { class: 'card ledger-links' });
+    page.append(header, kpis, note, controls, tableHost, linksHost);
 
     let data = null;
     let view = 'all';
     let q = '';
 
+    const ISSUE_WORDS = {
+      NO_PARTNER: 'Clearing voucher without its payment/receipt',
+      NOT_CLEARED: 'Payment/receipt not cleared to bank',
+      AMOUNT_MISMATCH: 'Amounts do not cancel',
+      PARTY_ON_CLEARING_LEG: 'Clearing voucher names a party',
+      NOT_REIMBURSED: 'Expense without Head Office reimbursement',
+      NO_HEAD_OFFICE: 'Reimbursement not against Head Office',
+      UNMATCHED_REIMBURSEMENT: 'Reimbursement without an expense journal',
+    };
+
+    // Client rules (query reply, items 6-8): UR_PAY / UR_REC pairs and petty-cash pairs.
+    async function loadLinks() {
+      linksHost.replaceChildren(el('h3', {}, 'Linked vouchers'), el('p', { class: 'muted' }, 'Checking voucher pairs…'));
+      let out;
+      try {
+        out = await api(`/api/branches/${encodeURIComponent(branch)}/voucher-links`);
+      } catch (err) {
+        if (err.status === 404) { linksHost.replaceChildren(); return; }
+        showError(linksHost, err);
+        return;
+      }
+      const c = out.controls;
+      const rows = [
+        ...Object.entries(c).map(([code, x]) => ({
+          what: `${code} — ${x.label}`, vouchers: String(x.vouchers), pairs: `${x.ok_pairs} of ${x.pairs}`, open: x.open_balance, problems: x.problems.length,
+        })),
+        { what: `Petty cash (${out.petty.vendor}) — expense once, Head Office reimbursement as settlement`, vouchers: String(out.petty.expense_journals + out.petty.reimbursement_journals),
+          pairs: `${out.petty.pairs.filter((p) => p.ok).length} of ${out.petty.pairs.length}`, open: '', problems: out.petty.problems.length },
+      ];
+      const table = el('div');
+      renderDataTable(table, rows, [
+        { key: 'what', label: 'Pattern' },
+        { key: 'vouchers', label: 'Vouchers' },
+        { key: 'pairs', label: 'Linked pairs OK' },
+        { key: 'open', label: 'Control balance left', render: (r) => (r.open === '' ? '' : num(r.open)) },
+        { key: 'problems', label: 'Result', render: (r) => (r.problems ? el('span', { class: 'error-text' }, `${r.problems} problem(s)`) : 'OK') },
+      ]);
+      const problems = [...Object.values(c).flatMap((x) => x.problems), ...out.petty.problems];
+      const list = el('div');
+      if (problems.length) {
+        renderDataTable(list, problems, [
+          { key: 'voucher', label: 'Voucher' },
+          { key: 'issue', label: 'Issue', render: (p) => ISSUE_WORDS[p.issue] || p.issue },
+          { key: 'detail', label: 'Detail' },
+        ]);
+      }
+      linksHost.replaceChildren(
+        el('h3', {}, 'Linked vouchers'),
+        el('p', { class: 'muted' }, 'Each negative-numbered voucher (e.g. 26/Q/-875) clears its payment or receipt (26/Q/875) from the control ledger to the bank and is never a second payment or receipt. '
+          + 'Petty-cash expenses are booked once; the Head Office reimbursement journal is settlement only.'),
+        el('div', { class: out.summary.ok ? 'banner banner-ok' : 'banner banner-danger' },
+          out.summary.ok ? 'All voucher pairs are linked and balance.' : `${out.summary.problems} voucher pair problem(s) to review.`),
+        table, list,
+      );
+    }
+
     async function load() {
+      loadLinks();
       tableHost.innerHTML = '';
       tableHost.appendChild(el('p', { class: 'muted' }, 'Loading ledger totals… this reads every line of the run and can take a few seconds.'));
       try {

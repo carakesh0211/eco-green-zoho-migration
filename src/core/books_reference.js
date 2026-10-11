@@ -31,6 +31,7 @@ const ACCOUNT_COLS = {
   parentId: ['parentaccountid', 'parentid'],
   parentName: ['parentaccount', 'parentaccountname', 'parentname'],
   status: ['accountstatus', 'status', 'isactive', 'active'],
+  ecoCodes: ['cfecogreenaccountcode', 'ecogreenaccountcode', 'ecogreencode', 'sourcecode', 'legacycode'],
 };
 const CONTACT_COLS = {
   id: ['contactid', 'customerid', 'vendorid', 'id'],
@@ -38,6 +39,7 @@ const CONTACT_COLS = {
   company: ['companyname'],
   type: ['contacttype', 'type'],
   status: ['status', 'contactstatus'],
+  number: ['vendornumber', 'customernumber', 'contactnumber'],
 };
 
 function pick(header, aliases) {
@@ -73,6 +75,15 @@ function assertExactIds(ids, label, fileName) {
       + 'Excel converts long Zoho ids to numbers when a file is opened and saved. Upload the file exactly as exported from Zoho Books, '
       + 'or format the id column as Text before saving.');
   }
+}
+
+/**
+ * The Eco Green codes tagged on a Books account ("CF.Eco Green Account Code"): several per
+ * cell, separated by spaces, new lines or commas; Excel's leading apostrophe is dropped but
+ * a code's own leading minus is kept ("'-CGSTR" -> "-CGSTR").
+ */
+export function splitCodes(value) {
+  return [...new Set(String(value ?? '').split(/[\s,;]+/).map((t) => t.replace(/^'+/, '').trim().toUpperCase()).filter(Boolean))];
 }
 
 /** Rows (arrays) of the first non-empty sheet / the CSV, with the header row first. */
@@ -115,6 +126,7 @@ export function parseBooksExport(bytes, { fileName = '', kindHint } = {}) {
         account_id: cell(r, col.id), account_name: cell(r, col.name), account_code: cell(r, col.code),
         account_type: cell(r, col.type), parent_account_id: cell(r, col.parentId), parent_account_name: cell(r, col.parentName),
         is_active: isActive(cell(r, col.status)),
+        eco_codes: splitCodes(cell(r, col.ecoCodes)),
       }))
       .filter((a) => a.account_id && a.account_name);
     assertExactIds(accounts.map((a) => a.account_id), 'Account ID', fileName);
@@ -141,6 +153,7 @@ export function parseBooksExport(bytes, { fileName = '', kindHint } = {}) {
         contact_id: cell(r, col.id), contact_name: name, company_name: cell(r, col.company),
         contact_type: rowType.includes('vendor') ? 'vendor' : rowType.includes('customer') ? 'customer' : (contactType ?? ''),
         status: isActive(cell(r, col.status)) ? 'active' : 'inactive',
+        contact_number: cell(r, col.number),
       };
     })
     .filter((c) => c.contact_id && c.contact_name);

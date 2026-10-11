@@ -81,6 +81,7 @@ describe('console UI v2 shell', () => {
     const ws = read('views/branch-workspace.js');
     assert.match(ws, /\/ledger-summary`\)/);
     assert.match(ws, /retransform-jobs\//, 'the workspace follows the background re-apply job');
+    assert.ok(src.includes('/voucher-links`'), 'ledger-summary.js shows the linked-voucher check');
   });
 
   test('Bulk mapping page: registered, calls the bulk mapping APIs, linked from workspace step 3', () => {

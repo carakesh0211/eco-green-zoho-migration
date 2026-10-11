@@ -174,6 +174,66 @@ describe('proposeForRun', () => {
   });
 });
 
+describe('matching by code', () => {
+  const COA = [
+    'Account ID,Account Name,Account Code,Account Type,Account Status,CF.Eco Green Account Code',
+    '3370193000000300001,Cheques In Hand,BK0001,bank,Active,"CHEQUE UR_PAY UR_REC"',
+    "3370193000000300002,Central Tax Receivable,TX0001,other_current_liability,Active,'-CGSTR",
+    '3370193000000300003,Example Bank-0001,BK0002,bank,Active,000123',
+    '3370193000000300004,WALLET COLLECTION CONTROL,H10001,payment_clearing,Active,',
+    '3370193000000300005,Online Clearing Account,ONLINE,payment_clearing,Active,"ONLINE H10002"',
+    '3370193000000300006,ADVANCE - DUES,FRP0001G,accounts_payable,Active,',
+  ].join('\n');
+  const CUST = ['Contact ID,Display Name,Customer Number,Status', '3370193000000400001,Corporate Customer,H10003,Active', '3370193000000400002,WALLET COLLECTION CONTROL,H10001,Active', '3370193000000400003,Head Office,0,Active'].join('\n');
+  const VEN = ['Contact ID,Display Name,Vendor Number,Status', '3370193000000500001,Sample Pharma LLP,V00001,Active'].join('\n');
+  const ref = () => buildReference([
+    parseBooksExport(buf(COA), { kindHint: 'accounts' }), parseBooksExport(buf(CUST), { kindHint: 'customers' }), parseBooksExport(buf(VEN), { kindHint: 'vendors' }),
+  ], { uploadedBy: 'u', uploadedAt: NOW });
+  const ent = {
+    ledgers: [
+      { ledger_code: 'UR_REC', ledger_name: 'Cheques Received', usage_count: 284, amount: '1.00' },
+      { ledger_code: '-CGSTR', ledger_name: 'Central Tax Receivable', usage_count: 3, amount: '1.00' },
+      { ledger_code: '000123', ledger_name: 'Example Bank', usage_count: 9, amount: '1.00' },
+      { ledger_code: '004999', ledger_name: 'Advance - Dues', usage_count: 4, amount: '1.00' },
+    ],
+    parties: [
+      { party_code: 'V00001', party_name: 'Sample Pharma LLP', usage_count: 2, amount: '1.00', ledger_codes: [] },
+      { party_code: 'H10002', party_name: 'WALLET SALE', usage_count: 3, amount: '1.00', ledger_codes: [] },
+      { party_code: 'H10001', party_name: 'WALLET COLLECTION CONTROL', usage_count: 180, amount: '1.00', ledger_codes: [] },
+    ],
+  };
+
+  test('Eco Green codes on accounts (apostrophe and minus handled) and Vendor/Customer Numbers win over names', () => {
+    const parsed = parseBooksExport(buf(COA), { kindHint: 'accounts' });
+    assert.deepEqual(parsed.accounts[0].eco_codes, ['CHEQUE', 'UR_PAY', 'UR_REC']);
+    assert.deepEqual(parsed.accounts[1].eco_codes, ['-CGSTR']);
+    const rows = proposeForRun({ entities: ent, reference: ref(), rules: [] });
+    const by = Object.fromEntries(rows.map((r) => [r.source_code, r]));
+    assert.equal(by.UR_REC.match, 'CODE');
+    assert.equal(by.UR_REC.books_name, 'Cheques In Hand');
+    assert.equal(by['-CGSTR'].books_id, '3370193000000300002');
+    assert.equal(by['000123'].books_name, 'Example Bank-0001');
+    assert.notEqual(by['004999'].match, 'CODE', 'no Eco Green code on the Books account -> name matching');
+    assert.equal(by.V00001.books_kind, 'contact');
+    assert.equal(by.H10002.books_kind, 'account', 'party tagged on a clearing account');
+    assert.equal(by.H10001.books_kind, 'contact', 'a Customer Number match comes before an account code');
+    assert.equal(autoRules(rows, { mappingVersion: 'v', effectiveFrom: '2026-04-01', booksOrgId: null }).filter((r) => r.source_key === 'UR_REC').length, 1);
+  });
+
+  test('sheet books_code: Books Account Code, Eco Green code or Customer Number, with the master type given', () => {
+    const sheet = [
+      { line: 2, type: 'ledger', source_code: '004999', source_name: '', books_kind: '', books_name: '', books_code: 'FRP0001G' },
+      { line: 3, type: 'ledger', source_code: '-CGSTR', source_name: '', books_kind: '', books_name: '', books_code: '-CGSTR' },
+      { line: 4, type: 'party', source_code: 'H10001', source_name: '', books_kind: 'account', books_name: '', books_code: 'H10001' },
+      { line: 5, type: 'party', source_code: 'H10002', source_name: '', books_kind: 'account', books_name: '', books_code: 'NOPE' },
+    ];
+    const { rules, results } = resolveSheet(sheet, { entities: ent, reference: ref(), rules: [], mappingVersion: 'v', effectiveFrom: '2026-04-01', booksOrgId: null });
+    assert.deepEqual(results.map((r) => r.outcome), ['RULE', 'RULE', 'RULE', 'NOT_FOUND']);
+    assert.deepEqual(rules.map((r) => [r.source_key, r.target_value]), [['004999', '3370193000000300006'], ['-CGSTR', '3370193000000300002'], ['H10001', '3370193000000300004']]);
+    assert.equal(rules[2].target_meta.kind, 'account', 'master type "account" overrides the Customer Number match');
+  });
+});
+
 describe('mapping sheet', () => {
   test('sheetCsv -> parseSheet round trip (BOM, quoted names)', () => {
     const rows = proposeForRun({ entities: ENTITIES, reference: reference(), rules: [] });
@@ -188,7 +248,7 @@ describe('mapping sheet', () => {
 
   test('parseSheet reads XLSX and rejects a sheet without the needed columns', () => {
     const bytes = buildXlsx([{ name: 'Sheet1', rows: [['type', 'source_code', 'books_name'], ['Ledger', 103, 'Freight Inward']] }]);
-    assert.deepEqual(parseSheet(bytes), [{ line: 2, type: 'ledger', source_code: '103', source_name: '', books_kind: '', books_name: 'Freight Inward' }]);
+    assert.deepEqual(parseSheet(bytes), [{ line: 2, type: 'ledger', source_code: '103', source_name: '', books_kind: '', books_name: 'Freight Inward', books_code: '' }]);
     assert.throws(() => parseSheet(buf('type,code\nLedger,1\n')), SheetError);
   });
 

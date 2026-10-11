@@ -15,7 +15,7 @@
   const fmt = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const money = (s) => el('span', { class: 'num' }, fmt.format(Number(s) || 0));
   const MATCH_WORDS = {
-    EXACT: 'Exact match', FUZZY: 'Close match', ACCOUNT: 'Party is a Books account',
+    CODE: 'Code match', EXACT: 'Exact match', FUZZY: 'Close match', ACCOUNT: 'Party is a Books account',
     REVIEW: 'Possible match – choose', AMBIGUOUS: 'Several matches – choose', NONE: 'No match – fill in',
   };
   const OUTCOME_WORDS = {
@@ -95,8 +95,9 @@
         el('label', {}, ['Filled sheet ', sheetInput]),
         el('button', { type: 'button', onclick: uploadSheet }, 'Upload filled sheet'),
       ]) : el('p', { class: 'muted' }, 'Your role can look at the suggestions; an operator creates the rules.'),
-      el('p', { class: 'muted' }, 'In the sheet, fill in or correct the books_name column with the exact Zoho Books account or contact name '
-        + '(for parties, set books_kind to account or contact if needed). Leave a row blank to skip it. Codes may lose leading zeros in Excel; that is fine.'),
+      el('p', { class: 'muted' }, 'Ledgers and parties are matched first by code (the Eco Green code tagged on the Books account, or the Vendor/Customer Number), then by name. '
+        + 'In the sheet, fill in either books_code (a Books Account Code, an Eco Green code or a Vendor/Customer Number, with books_kind account or contact) or books_name (the exact Books name). '
+        + 'Upload the sheet after "Create rules for all confident matches" so its rows replace those drafts, then approve.'),
       proposalsTable,
     ]));
 
