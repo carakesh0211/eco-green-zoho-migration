@@ -550,6 +550,7 @@
           ])
         );
       }
+      if (s.id === 'reconcile' || s.id === 'prove') head.appendChild(validationAction());
       if (s.id === 'scope') head.appendChild(scopeActions());
       if (s.id === 'review' || s.id === 'approve' || s.id === 'post') head.appendChild(ledgerSummaryAction());
       head.appendChild(
@@ -560,11 +561,20 @@
       );
     }
 
+    // ---- steps 2 and 7 extra: Opening TB + ledger = Closing TB, account by account ----
+    function validationAction() {
+      return el('div', { class: 'actions' }, [
+        el('button', { type: 'button', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/validation`) }, 'Data validation'),
+        el('span', { class: 'muted' }, ' Upload Opening TB, Closing TB and ledger; checks every account reconciles.'),
+      ]);
+    }
+
     // ---- steps 4-6 extra: per-ledger debit/credit to be pushed, confirmed before posting ----
     function ledgerSummaryAction() {
       return el('div', { class: 'actions' }, [
         el('button', { type: 'button', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/ledger-summary`) }, 'Ledger push summary'),
-        el('span', { class: 'muted' }, ' Debit and credit per ledger that will be sent to Zoho Books.'),
+        el('button', { type: 'button', class: 'linklike', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/validation`) }, 'Data validation'),
+        el('span', { class: 'muted' }, ' Debit and credit per ledger that will be sent to Zoho Books; Opening TB + transactions = Closing TB check.'),
       ]);
     }
 
@@ -579,6 +589,7 @@
         el('button', { type: 'button', class: 'linklike', onclick: () => navigate('/mapping') }, 'Open mapping'),
         el('button', { type: 'button', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/bulk-mapping`) }, 'Bulk mapping'),
         el('button', { type: 'button', class: 'linklike', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/ledger-summary`) }, 'Ledger push summary'),
+        el('button', { type: 'button', class: 'linklike', onclick: () => navigate(`/branches/${encodeURIComponent(branch)}/validation`) }, 'Data validation'),
       ]);
       if (hasRole('operator', 'admin') && latestRun && RETRANSFORM_STATES.has(latestRun.status)) {
         row.appendChild(

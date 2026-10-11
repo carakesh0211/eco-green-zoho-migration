@@ -187,3 +187,39 @@ attempt leaves a `VALIDATION_FAILED` run row with no vouchers, marked `error_cod
 DUPLICATE_FILE`. The branch summary and branch page skip such a row (`src/core/runs.js`), so the
 earlier run stays the current one; act on that run. Compare `sha256sum` of the two CSVs with the
 existing run before uploading to avoid the extra row.
+
+## 12. Data validation (Opening TB + transactions = Closing TB)
+
+Branch page → **Data validation** (steps 2 and 7; `#/branches/:code/validation`). An operator,
+approver or admin uploads the Opening TB, Closing TB and ledger (XLSX or CSV, up to 8 MB each).
+Each account is reconciled on `opening + (debit - credit) = calculated closing`, which is then
+compared with the Closing TB within the chosen tolerance. A run never changes migration data.
+
+- **Matching:** accounts are matched across the files by code. All-digit codes are compared
+  without leading zeros, and Excel's leading apostrophe is ignored. Where codes are missing,
+  accounts are matched by name. Confirmed mappings take precedence over both.
+- **Party lines:** in the Eco Green ledger, a party line whose code is not a TB account goes to
+  the control ledger named in `Status`.
+- **Opening balances** come from one of:
+  - the Opening TB file at its report date (default);
+  - the Opening TB file's Op. columns;
+  - the Closing TB's own Op. columns.
+
+  If the Opening TB is the 31 March report, income and expense accounts differ by the
+  year-end close. Each such account is flagged `OPENING_MISMATCH`, and the page offers a
+  re-run on the Closing TB opening. For branch 461 that re-run reconciles 152 of 152 accounts.
+- **Exception views:**
+  - missing from Opening TB or Closing TB
+  - not in the ledger (marked when the balance moved without transactions)
+  - unmapped (seen in one file only, with name suggestions)
+  - name differs
+  - duplicate mappings
+  - debit/credit and balance inconsistencies (both sides filled, negative debit, TB or ledger
+    not balancing, unbalanced vouchers)
+
+  Every view downloads as CSV, and clicking an account shows its ledger lines.
+- **Manual mappings** are made in the Unmapped view. They are global, apply to all branches
+  (audit `VALIDATION.MAPPINGS`) and take effect on the next run or **Re-run with saved
+  mappings**.
+- **Storage:** uploaded files and results are kept in the archive and found through audit
+  `VALIDATION.RUN`. No table is added.
