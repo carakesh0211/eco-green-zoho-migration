@@ -70,12 +70,28 @@ export function proposeForRun({ entities, reference, rules }) {
   const approved = approvedKeys(rules);
   const accounts = reference?.accounts ?? [];
   const contacts = reference?.contacts ?? [];
-  const ledgers = entities.ledgers.filter((l) => !approved.has(`LEDGER_ACCOUNT|${l.ledger_code}`));
-  const parties = entities.parties.filter((p) => !approved.has(`PARTY|${p.party_code}`));
+  const allLedgers = entities.ledgers.filter((l) => !approved.has(`LEDGER_ACCOUNT|${l.ledger_code}`));
+  const allParties = entities.parties.filter((p) => !approved.has(`PARTY|${p.party_code}`));
+
+  // 1. By code first: the source code tagged on the Books record wins over any name.
+  const idx = codeIndex(reference);
+  const rows = [];
+  const ledgers = [];
+  for (const l of allLedgers) {
+    const hit = matchByCode(idx, l.ledger_code, 'ledger');
+    if (!hit) { ledgers.push(l); continue; }
+    rows.push(codeRow('LEDGER_ACCOUNT', l.ledger_code, l.ledger_name, l, hit));
+  }
+  const parties = [];
+  for (const p of allParties) {
+    const hit = matchByCode(idx, p.party_code, 'party');
+    if (!hit) { parties.push(p); continue; }
+    rows.push(codeRow('PARTY', p.party_code, p.party_name, p, hit));
+  }
   const byLedger = new Map(ledgers.map((l) => [l.ledger_code, l]));
   const byParty = new Map(parties.map((p) => [p.party_code, p]));
 
-  const rows = [];
+  // 2. By name for the rest.
   for (const p of proposeAccountMappings({ ledgers, accounts })) {
     const src = byLedger.get(p.source_key);
     rows.push({
@@ -97,11 +113,67 @@ export function proposeForRun({ entities, reference, rules }) {
   return rows;
 }
 
-export const CONFIDENT = new Set(['EXACT', 'FUZZY', 'ACCOUNT']);
+export const CONFIDENT = new Set(['CODE', 'EXACT', 'FUZZY', 'ACCOUNT']);
 
-const SHEET_HEADER = ['type', 'source_code', 'source_name', 'entries', 'amount', 'suggestion', 'books_kind', 'books_name', 'other_candidates', 'note'];
+/** Codes compared upper case, without Excel's apostrophe; all-digit codes without leading zeros. */
+export function normSourceCode(code) {
+  const s = text(code).replace(/^'+/, '').toUpperCase();
+  return /^\d+$/.test(s) ? s.replace(/^0+(?=\d)/, '') : s;
+}
+
+/**
+ * Lookups by code over the Books reference:
+ *   eco:     Eco Green code tagged on a Books account (CF.Eco Green Account Code) -> accounts
+ *   number:  Vendor / Customer Number of a Books contact -> contacts
+ *   acct:    Books Account Code -> accounts
+ * Only active records take part.
+ */
+export function codeIndex(reference) {
+  const eco = new Map(); const number = new Map(); const acct = new Map();
+  const add = (m, k, v) => { if (!k) return; if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
+  for (const a of reference?.accounts ?? []) {
+    if (!a.is_active) continue;
+    for (const c of a.eco_codes ?? []) add(eco, normSourceCode(c), a);
+    add(acct, normSourceCode(a.account_code), a);
+  }
+  for (const c of reference?.contacts ?? []) {
+    if (c.status !== 'active') continue;
+    add(number, normSourceCode(c.contact_number), c);
+  }
+  return { eco, number, acct };
+}
+
+/**
+ * Source ledger -> the Books account whose Eco Green codes include it (never by Books Account
+ * Code: that numbering is Books' own and collides with Eco Green codes).
+ * Source party -> the Books contact whose Vendor/Customer Number is the party code; else the
+ * Books account tagged with it (payment clearing accounts).
+ * -> { kind, target } | { kind, ambiguous: [...] } | null
+ */
+export function matchByCode(idx, code, what) {
+  const k = normSourceCode(code);
+  if (!k) return null;
+  const pick = (kind, list) => (list.length === 1 ? { kind, target: list[0] } : { kind, ambiguous: list });
+  if (what === 'ledger') return idx.eco.has(k) ? pick('account', idx.eco.get(k)) : null;
+  if (idx.number.has(k)) return pick('contact', idx.number.get(k));
+  if (idx.eco.has(k)) return pick('account', idx.eco.get(k));
+  return null;
+}
+
+function codeRow(ruleType, code, name, src, hit) {
+  const base = { rule_type: ruleType, source_code: code, source_name: name, entries: src.usage_count, amount: src.amount };
+  const label = (r) => (hit.kind === 'account' ? r.account_name : r.contact_name);
+  const idOf = (r) => (hit.kind === 'account' ? r.account_id : r.contact_id);
+  if (hit.ambiguous) {
+    return { ...base, match: 'AMBIGUOUS', books_kind: hit.kind, books_name: '', books_id: '', alternatives: hit.ambiguous.map(label), note: `${hit.ambiguous.length} Books records carry code ${code}` };
+  }
+  const how = hit.kind === 'account' ? 'Eco Green code on the Books account' : 'Vendor/Customer Number';
+  return { ...base, match: 'CODE', books_kind: hit.kind, books_name: label(hit.target), books_id: idOf(hit.target), alternatives: [], note: `Matched by ${how}` };
+}
+
+const SHEET_HEADER = ['type', 'source_code', 'source_name', 'entries', 'amount', 'suggestion', 'books_kind', 'books_name', 'books_code', 'other_candidates', 'note'];
 const TYPE_WORD = { LEDGER_ACCOUNT: 'Ledger', PARTY: 'Party' };
-const MATCH_WORD = { EXACT: 'Exact match', FUZZY: 'Close match - check', ACCOUNT: 'Party is a Books account', REVIEW: 'Possible match - choose', AMBIGUOUS: 'Several matches - choose', NONE: 'No match - fill in' };
+const MATCH_WORD = { CODE: 'Code match', EXACT: 'Exact match', FUZZY: 'Close match - check', ACCOUNT: 'Party is a Books account', REVIEW: 'Possible match - choose', AMBIGUOUS: 'Several matches - choose', NONE: 'No match - fill in' };
 
 function csvCell(v) {
   const s = v === null || v === undefined ? '' : String(v);
@@ -114,7 +186,7 @@ export function sheetCsv(rows) {
   for (const r of rows) {
     lines.push([
       TYPE_WORD[r.rule_type], r.source_code, r.source_name, r.entries, r.amount, MATCH_WORD[r.match] ?? r.match,
-      r.books_kind, r.books_name, r.alternatives.join(' | '), r.note,
+      r.books_kind, r.books_name, '', r.alternatives.join(' | '), r.note,
     ].map(csvCell).join(','));
   }
   return `﻿${lines.join('\r\n')}\r\n`;
@@ -137,7 +209,8 @@ export function parseSheet(bytes) {
   }
   const header = (table[0] ?? []).map((h) => text(h).toLowerCase().replace(/\s+/g, '_'));
   const idx = (n) => header.indexOf(n);
-  for (const need of ['type', 'source_code', 'books_name']) {
+  if (idx('books_name') === -1 && idx('books_code') === -1) throw new SheetError('the sheet needs a "books_name" or a "books_code" column; download a fresh mapping sheet and fill that one in');
+  for (const need of ['type', 'source_code']) {
     if (idx(need) === -1) throw new SheetError(`the sheet has no "${need}" column; download a fresh mapping sheet and fill that one in`);
   }
   return table.slice(1)
@@ -148,8 +221,9 @@ export function parseSheet(bytes) {
       source_name: idx('source_name') === -1 ? '' : text(r[idx('source_name')]),
       books_kind: idx('books_kind') === -1 ? '' : text(r[idx('books_kind')]).toLowerCase(),
       books_name: text(r[idx('books_name')]),
+      books_code: idx('books_code') === -1 ? '' : text(r[idx('books_code')]),
     }))
-    .filter((r) => r.type || r.source_code || r.books_name);
+    .filter((r) => r.type || r.source_code || r.books_name || r.books_code);
 }
 
 function findSource(row, list, codeOf, nameOf) {
@@ -186,6 +260,27 @@ function findTarget(name, { accounts, contacts }, kind) {
   return pickContacts() ?? pickAccounts() ?? { error: 'NOT_FOUND' };
 }
 
+/**
+ * Books target by code: an account by its Books Account Code, then by the Eco Green code
+ * tagged on it; a contact by its Vendor/Customer Number. kind null = contact, then account.
+ */
+function findTargetByCode(code, idx, kind) {
+  const k = normSourceCode(code);
+  const asAccount = () => {
+    const hits = idx.acct.get(k) ?? idx.eco.get(k) ?? [];
+    if (hits.length === 1) return { target: { kind: 'account', id: hits[0].account_id, name: hits[0].account_name, type: hits[0].account_type, parent: hits[0].parent_account_name || null } };
+    return hits.length > 1 ? { error: 'AMBIGUOUS', count: hits.length } : null;
+  };
+  const asContact = () => {
+    const hits = idx.number.get(k) ?? [];
+    if (hits.length === 1) return { target: { kind: 'contact', id: hits[0].contact_id, name: hits[0].contact_name, type: hits[0].contact_type || null } };
+    return hits.length > 1 ? { error: 'AMBIGUOUS', count: hits.length } : null;
+  };
+  if (kind === 'account') return asAccount() ?? { error: 'NOT_FOUND' };
+  if (kind === 'contact') return asContact() ?? { error: 'NOT_FOUND' };
+  return asContact() ?? asAccount() ?? { error: 'NOT_FOUND' };
+}
+
 function ruleRow({ ruleType, sourceKey, target, mappingVersion, effectiveFrom, booksOrgId, match }) {
   const meta = target.kind === 'account'
     ? { ...(ruleType === 'PARTY' ? { kind: 'account' } : {}), account_name: target.name, account_type: target.type, parent_account_name: target.parent, books_org_id: booksOrgId, match }
@@ -215,6 +310,7 @@ export function autoRules(rows, { mappingVersion, effectiveFrom, booksOrgId }) {
 export function resolveSheet(sheetRows, { entities, reference, rules: existing, mappingVersion, effectiveFrom, booksOrgId }) {
   const approved = approvedKeys(existing);
   const ref = { accounts: reference?.accounts ?? [], contacts: reference?.contacts ?? [] };
+  const codes = codeIndex(reference);
   const rules = [];
   const seen = new Set();
   const results = sheetRows.map((r) => {
@@ -228,9 +324,11 @@ export function resolveSheet(sheetRows, { entities, reference, rules: existing, 
     const sourceKey = ruleType === 'LEDGER_ACCOUNT' ? src.ledger_code : src.party_code;
     const out = { ...base, rule_type: ruleType, source_code: sourceKey };
     if (approved.has(`${ruleType}|${sourceKey}`)) return { ...out, outcome: 'ALREADY_APPROVED', message: 'already has an approved rule; left unchanged' };
-    if (!r.books_name) return { ...out, outcome: 'BLANK', message: 'no Books name filled in; skipped' };
+    if (!r.books_name && !r.books_code) return { ...out, outcome: 'BLANK', message: 'no Books name or code filled in; skipped' };
     const kind = ruleType === 'LEDGER_ACCOUNT' ? 'account' : (r.books_kind === 'account' || r.books_kind === 'contact' ? r.books_kind : null);
-    const found = findTarget(r.books_name, ref, kind);
+    const found = r.books_code ? findTargetByCode(r.books_code, codes, kind) : findTarget(r.books_name, ref, kind);
+    if (found.error === 'NOT_FOUND' && r.books_code) return { ...out, outcome: 'NOT_FOUND', message: `code "${r.books_code}" is not an active ${kind ?? 'contact or account'} code in the uploaded Books lists` };
+    if (found.error === 'AMBIGUOUS' && r.books_code) return { ...out, outcome: 'AMBIGUOUS', message: `${found.count} Books records carry code "${r.books_code}"` };
     if (found.error === 'NOT_FOUND') return { ...out, outcome: 'NOT_FOUND', message: `"${r.books_name}" is not an active ${kind ?? 'contact or account'} in the uploaded Books lists` };
     if (found.error === 'AMBIGUOUS') return { ...out, outcome: 'AMBIGUOUS', message: `${found.count} Books records are named "${r.books_name}"; make the name unique in Books or ask an admin` };
     const uk = `${ruleType}|${sourceKey}`;

@@ -169,8 +169,16 @@ Steps (real data stays under `var/`, which is gitignored):
    - Upload the Zoho Books exports once (Chart of Accounts required; Vendors and Customers
      optional, CSV or XLSX). They are stored in the archive and shared by every branch; a later
      partial upload replaces only the lists it contains.
-   - **Create rules for all confident matches** makes DRAFT rules for exact and close name
-     matches and for parties that are Books accounts.
+   - Matching is by code first: a source ledger goes to the Books account whose
+     "CF.Eco Green Account Code" lists it, and a party goes to the contact with that Vendor or
+     Customer Number (else to an account tagged with it). Names are used only for the rest.
+   - **Create rules for all confident matches** makes DRAFT rules for code matches, exact and
+     close name matches, and parties that are Books accounts.
+   - Client overrides go in the sheet's `books_code` column (Books Account Code, Eco Green code or
+     Vendor/Customer Number, with `books_kind`). Upload the sheet after the confident matches so its
+     rows replace those drafts, then approve.
+   - Books exports must keep their 19-digit IDs: export as CSV from Books and upload without
+     opening in Excel. Files with rounded IDs (`3.37019E+18`) are refused.
    - **Download mapping sheet**, fill `books_name` (Books names, not ids) for the rest, and
      upload it. Each row reports RULE, BLANK, NOT_FOUND, AMBIGUOUS, UNKNOWN_SOURCE,
      ALREADY_APPROVED, BAD_TYPE or DUPLICATE_ROW. Codes that lost leading zeros in Excel still match.
@@ -187,6 +195,14 @@ attempt leaves a `VALIDATION_FAILED` run row with no vouchers, marked `error_cod
 DUPLICATE_FILE`. The branch summary and branch page skip such a row (`src/core/runs.js`), so the
 earlier run stays the current one; act on that run. Compare `sha256sum` of the two CSVs with the
 existing run before uploading to avoid the extra row.
+
+**Linked vouchers** (Ledger push summary page, `GET /api/branches/:code/voucher-links`, read-only):
+- every negative-numbered UR_PAY / UR_REC voucher must clear its positive partner from the
+  control ledger to the bank;
+- each petty-cash expense journal (Petty Cash Vendor) must have one Head Office reimbursement
+  journal that carries no expense.
+
+Problems are listed by voucher. The check does not change how vouchers are posted.
 
 ## 12. Data validation (Opening TB + transactions = Closing TB)
 

@@ -427,3 +427,5 @@ main#app { width: 100%; min-width: 0; }
 @media (max-width: 640px) { .validation-page .validation-form { grid-template-columns: 1fr; } }
 .validation-page .banner { margin: 8px 0; padding: 8px 12px; border-radius: 6px; }
 .validation-page .kv-list dd { font-variant-numeric: tabular-nums; }
+.ledger-summary .ledger-links { margin: 16px 0; }
+.ledger-summary .ledger-links .banner { margin: 8px 0; padding: 8px 12px; border-radius: 6px; }

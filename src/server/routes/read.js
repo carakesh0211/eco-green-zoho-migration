@@ -3,6 +3,7 @@
 import express from 'express';
 import { isDuplicateOnlyRun, currentRun } from '../../core/runs.js';
 import { computeLedgerPushSummary } from '../../core/ledger_summary.js';
+import { checkVoucherLinks } from '../../core/voucher_links.js';
 
 function wrap(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -63,6 +64,23 @@ export function createReadRouter({ store, deps = {}, auth }) {
       const run = await currentRun(store, runs);
       if (!run) return res.status(404).json({ error: 'NO_RUN', message: `No run has been imported for branch ${branch}` });
       res.json(await computeLedgerPushSummary(store, run.id));
+    })
+  );
+
+  // UR_PAY / UR_REC clearing pairs and petty-cash expense/reimbursement pairs (src/core/voucher_links.js)
+  router.get(
+    '/branches/:code/voucher-links',
+    auth.authenticate(),
+    wrap(async (req, res) => {
+      const branch = req.params.code;
+      if (!auth.branchAllowed(req.user, branch)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${branch}` });
+      }
+      const runs = await store.find('extraction_runs', { branch_code: branch }, { orderBy: 'created_at DESC' });
+      const run = await currentRun(store, runs);
+      if (!run) return res.status(404).json({ error: 'NO_RUN', message: `No run has been imported for branch ${branch}` });
+      const lines = await store.find('source_txn_lines', { run_id: run.id });
+      res.json({ run: { id: run.id, branch_code: run.branch_code }, ...checkVoucherLinks(lines) });
     })
   );
 

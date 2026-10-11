@@ -145,6 +145,12 @@ test('GET /api/branches/:code/ledger-summary and /api/runs/:id/ledger-summary: s
     assert.equal(res.status, 200);
     assert.equal((await get('/branches/B2/ledger-summary')).status, 403);
     assert.equal((await get('/runs/nope/ledger-summary')).status, 404);
+    const links = await get('/branches/B1/voucher-links');
+    assert.equal(links.status, 200);
+    const linkBody = await links.json();
+    assert.equal(linkBody.run.id, 'R1');
+    assert.equal(linkBody.summary.ok, true);
+    assert.equal((await get('/branches/B2/voucher-links')).status, 403);
   } finally {
     await new Promise((r) => server.close(r));
     await store.close();
