@@ -4,6 +4,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -393,6 +394,33 @@ describe('bulk mapping routes', () => {
 
       const approve = await t.call('POST', '/mappings/approve', 'approver', { ids: auto.body.ids });
       assert.equal(approve.status, 200, JSON.stringify(approve.body));
+    } finally {
+      await t.close();
+    }
+  });
+
+  test('a Books export over the request limit uploads gzipped; an oversized raw upload gets a 413, not INTERNAL_ERROR', async () => {
+    const t = await startApp();
+    try {
+      // Shaped like a real Books Contacts export: tens of thousands of customers, ~80 columns.
+      const filler = Array.from({ length: 77 }, (_, i) => `Field ${i}`);
+      const lines = [['Contact ID', 'Display Name', 'Status', ...filler].join(',')];
+      for (let i = 0; i < 30000; i += 1) lines.push([String(3370193000000300000n + BigInt(i)), `Customer ${i}`, 'Active', ...filler.map(() => 'none')].join(','));
+      const csv = lines.join('\n');
+      assert.ok(Buffer.byteLength(csv) > 9 * 1024 * 1024, 'fixture must exceed the 12 MB JSON limit once base64-encoded');
+
+      const raw = await t.call('POST', '/books-reference', 'operator', { files: [{ name: 'Contacts.csv', kind: 'customers', content: b64(csv) }] });
+      assert.equal(raw.status, 413, JSON.stringify(raw.body));
+      assert.equal(raw.body.error, 'PAYLOAD_TOO_LARGE');
+
+      await t.call('POST', '/books-reference', 'operator', UPLOAD);
+      const gz = await t.call('POST', '/books-reference', 'operator', { files: [{ name: 'Contacts.csv', kind: 'customers', content: gzipSync(Buffer.from(csv, 'utf8')).toString('base64') }] });
+      assert.equal(gz.status, 200, JSON.stringify(gz.body));
+      assert.deepEqual([gz.body.reference.accounts, gz.body.reference.vendors, gz.body.reference.customers], [5, 2, 30000]);
+
+      const junk = await t.call('POST', '/books-reference', 'operator', { files: [{ name: 'x.csv', kind: 'customers', content: Buffer.from([0x1f, 0x8b, 1, 2, 3]).toString('base64') }] });
+      assert.equal(junk.status, 400);
+      assert.equal(junk.body.error, 'BAD_BOOKS_EXPORT');
     } finally {
       await t.close();
     }

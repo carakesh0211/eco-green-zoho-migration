@@ -32,6 +32,14 @@
     });
   }
 
+  // Gzip a file in the browser (Books exports are mostly empty columns and shrink 10-20x), so
+  // a large Contacts export fits the request limit. The server detects gzip by its magic bytes.
+  async function readGzipBase64(file) {
+    if (typeof CompressionStream === 'undefined') return readBase64(file);
+    const gz = await new Response(file.stream().pipeThrough(new CompressionStream('gzip'))).blob();
+    return readBase64(gz);
+  }
+
   function card(title, children) {
     return el('section', { class: 'card bulk-card' }, [el('h3', {}, title), ...children]);
   }
@@ -117,23 +125,32 @@
     }
 
     async function uploadReference() {
-      const files = [];
+      const chosen = [];
       for (const [kind, input] of Object.entries(inputs)) {
         const f = input.files && input.files[0];
-        if (f) files.push({ name: f.name, kind, content: await readBase64(f) });
+        if (f) chosen.push({ kind, file: f });
       }
-      if (!files.length) { toast('Choose at least one exported file.', 'error'); return; }
+      if (!chosen.length) { toast('Choose at least one exported file.', 'error'); return; }
       uploadRefBtn.disabled = true;
+      // One request per list, Chart of Accounts first: each upload keeps the lists it does not
+      // replace, and no single request has to carry every export at once.
+      chosen.sort((a, b) => (a.kind === 'accounts' ? -1 : 0) - (b.kind === 'accounts' ? -1 : 0));
+      let out = null;
+      let current = '';
       try {
-        const out = await api('/api/books-reference', { method: 'POST', body: { files } });
+        for (const { kind, file } of chosen) {
+          current = file.name;
+          refStatus.textContent = `Uploading ${file.name}…`;
+          out = await api('/api/books-reference', { method: 'POST', body: { files: [{ name: file.name, kind, content: await readGzipBase64(file) }] } });
+        }
         toast(`Books lists loaded: ${out.reference.active_accounts} accounts, ${out.reference.vendors} vendors, ${out.reference.customers} customers.`, 'success');
         for (const input of Object.values(inputs)) input.value = '';
-        await loadReference();
-        await loadProposals();
       } catch (err) {
-        toast(err.message, 'error');
+        toast(`${current}: ${err.message}`, 'error');
       } finally {
         uploadRefBtn.disabled = false;
+        await loadReference();
+        await loadProposals();
       }
     }
 

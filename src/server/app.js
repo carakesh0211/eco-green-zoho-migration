@@ -31,6 +31,9 @@ import { isPostingEnabled, postingBlockedReasons, loadBooksConfig } from '../boo
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
+// Largest JSON request body. Uploads travel base64 inside JSON; big exports are gzipped by
+// the browser first (src/server/public/views/bulk-mapping.js).
+const JSON_BODY_LIMIT = '12mb';
 
 let cachedVersion = '0.0.0';
 try {
@@ -143,7 +146,7 @@ export function createApp({
 
   // 12mb: POST /api/import/runs carries a whole normalised branch run (base64 CSVs);
   // every other route is small. The import router re-checks a 10 MB decoded cap.
-  app.use(express.json({ limit: '12mb' }));
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   // No-op unless a Catalyst-backed adapter is configured (see catalyst_runtime.js):
   // initializes this request's Catalyst app and makes it available to every downstream
@@ -219,6 +222,9 @@ export function createApp({
   app.use((err, req, res, next) => {
     if (err instanceof SyntaxError && 'body' in err) {
       return res.status(400).json({ error: 'BAD_JSON', message: err.message });
+    }
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE', message: `The upload is larger than the ${JSON_BODY_LIMIT} limit. Upload one file at a time, or a smaller export.` });
     }
     const code = err?.code;
     if (code === 'ILLEGAL_TRANSITION') return res.status(409).json({ error: code, message: err.message });
