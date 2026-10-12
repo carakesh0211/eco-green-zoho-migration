@@ -497,7 +497,19 @@
 
   // ---------------------------------------------------------------- 6. Preview
 
-  function renderPreviewSection(container, { runId = '', locked = false } = {}) {
+  const BATCH_REASON_WORDS = {
+    NO_LAYER_A_RECON_RUN: 'Draft: the source reconciliation (step 2) has not been run for this import.',
+    NO_LAYER_B_RECON_RUN: 'Draft: the voucher bridge (step 2) has not been run for this import.',
+  };
+  const batchReasonText = (reason) => {
+    if (!reason) return 'Ready for approval';
+    if (BATCH_REASON_WORDS[reason]) return BATCH_REASON_WORDS[reason];
+    const m = /^LAYER_([AB])_STATUS_(.+)$/.exec(reason);
+    if (m) return `Draft: ${m[1] === 'A' ? 'source reconciliation' : 'voucher bridge'} is ${m[2]}, not PASS (step 2).`;
+    return `Draft: ${reason}`;
+  };
+
+  function renderPreviewSection(container, { runId = '', locked = false, branch = '', canBuild = false, onBatchBuilt = null } = {}) {
     const modulesEl = el('div', { class: 'tablewrap' });
     const vouchersEl = el('div', { class: 'tablewrap' });
     const payloadEl = el('div', { class: 'tablewrap' });
@@ -552,6 +564,47 @@
       }
     }
 
+    // Build the batch (one per accounting month) from the vouchers ready to migrate. It
+    // moves the branch to step 5, where a second person approves it. Nothing is posted.
+    const buildOut = el('div', { class: 'tablewrap' });
+    const buildBtn = el('button', { type: 'button', onclick: buildBatches }, 'Build batch for approval');
+    async function buildBatches() {
+      const rid = locked ? runIdValue : runIdField.input.value.trim();
+      if (!rid || !branch) return;
+      buildBtn.disabled = true;
+      buildOut.replaceChildren(el('p', { class: 'muted' }, 'Building the batch…'));
+      try {
+        const { vouchers } = await api(`/api/vouchers?run=${encodeURIComponent(rid)}&disposition=MIGRATE`);
+        const periods = [...new Set(vouchers.filter((v) => v.branch_code === branch && v.target_payload_hash).map((v) => v.period))].filter(Boolean).sort();
+        if (periods.length === 0) {
+          buildOut.replaceChildren(el('p', { class: 'muted' }, 'No vouchers are ready to migrate yet. Resolve the open exceptions (or re-apply the mapping in step 3) first.'));
+          return;
+        }
+        const rows = [];
+        for (const period of periods) {
+          const b = await api('/api/batches', { method: 'POST', body: { runId: rid, branchCode: branch, period } });
+          let reason = null;
+          try { reason = JSON.parse(b.totals_json || '{}').reason ?? null; } catch { reason = null; }
+          rows.push({ period, status: b.status, vouchers: b.voucher_count, debit: b.debit_total, credit: b.credit_total, note: b.status === 'DRAFT' ? batchReasonText(reason) : b.status === 'READY_FOR_APPROVAL' ? 'Ready for approval (step 5)' : b.status });
+        }
+        renderTable(buildOut, rows, [
+          { key: 'period', label: 'Month' },
+          { key: 'status', label: 'Status' },
+          { key: 'vouchers', label: 'Vouchers' },
+          { key: 'debit', label: 'Debit' },
+          { key: 'credit', label: 'Credit' },
+          { key: 'note', label: 'Next' },
+        ]);
+        const ready = rows.filter((r) => r.status === 'READY_FOR_APPROVAL').length;
+        toast(ready ? `${ready} batch(es) ready for approval in step 5.` : 'Batch built as a draft; see the note for what is missing.', ready ? 'success' : 'info');
+        if (onBatchBuilt) onBatchBuilt();
+      } catch (err) {
+        showError(buildOut, err);
+      } finally {
+        buildBtn.disabled = false;
+      }
+    }
+
     const controls = el('div', { class: 'controls' }, [
       locked ? runIdField : runIdField.node,
       el('button', { onclick: load }, 'Load preview (MIGRATE by module)'),
@@ -561,6 +614,13 @@
     container.appendChild(modulesEl);
     container.appendChild(vouchersEl);
     container.appendChild(payloadEl);
+    if (canBuild && branch) {
+      container.appendChild(el('h3', {}, 'Build the batch'));
+      container.appendChild(el('p', { class: 'muted' }, 'When the preview looks right, build the batch: one per month, from the vouchers ready to migrate. '
+        + 'It then waits in step 5 for a second person to approve it. Nothing is posted to Zoho Books here.'));
+      container.appendChild(el('div', { class: 'actions' }, [buildBtn]));
+      container.appendChild(buildOut);
+    }
     if (runId) load();
 
     return {
@@ -575,7 +635,7 @@
 
   // ---------------------------------------------------------------- 7. Approval
 
-  function renderApprovalSection(container, { branch = '', locked = false, onBatchSelected } = {}) {
+  function renderApprovalSection(container, { branch = '', locked = false, onBatchSelected, onChanged = null, postingDisabled = false } = {}) {
     const cardsEl = el('div');
     let branchValue = branch;
     const branchField = labelOrInput('Branch', { locked, value: branch });
@@ -597,19 +657,48 @@
             el('div', { class: 'meta' }, `branch ${bt.branch_code} · period ${bt.period} · scope_hash ${bt.scope_hash} · mapping ${bt.mapping_version} · transform ${bt.transformation_version} · cutover ${bt.cutover_rule_version} · vouchers ${bt.voucher_count} · debit ${bt.debit_total} · credit ${bt.credit_total}`)
           );
           const actions = el('div', { class: 'actions' });
-          actions.appendChild(
-            el('button', {
+          if (bt.status === 'DRAFT') {
+            let why = null;
+            try { why = JSON.parse(bt.totals_json || '{}').reason ?? null; } catch { why = null; }
+            card.appendChild(el('p', { class: 'muted' }, `Draft — not ready for approval${why ? ` (${why})` : ''}. Fix this in step 2, then build the batch again in step 4.`));
+          }
+          if (bt.status === 'READY_FOR_APPROVAL') {
+            actions.appendChild(
+              el('button', {
+                onclick: async () => {
+                  const reason = prompt('Approval reason (segregation of duties: you must not be the batch creator)?') || '';
+                  try {
+                    await api(`/api/batches/${bt.id}/approve`, { method: 'POST', body: { reason } });
+                    toast('Batch approved.', 'success');
+                    load();
+                    if (onChanged) onChanged();
+                  } catch (err) {
+                    toast(err.message, 'error');
+                  }
+                },
+              }, 'Approve')
+            );
+          }
+          if (bt.status === 'APPROVED') {
+            // Step 6: hand the approved batch to the posting queue. Only where posting is on.
+            const send = el('button', {
+              disabled: postingDisabled ? true : null,
+              title: postingDisabled ? 'Posting to Zoho Books is switched off on this app' : '',
               onclick: async () => {
-                const reason = prompt('Approval reason (segregation of duties: you must not be the batch creator)?') || '';
+                if (!confirm('Send this approved batch to the posting queue? Its vouchers will be posted to Zoho Books.')) return;
                 try {
-                  await api(`/api/batches/${bt.id}/approve`, { method: 'POST', body: { reason } });
+                  await api(`/api/batches/${bt.id}/enqueue`, { method: 'POST', body: {} });
+                  toast('Batch sent to the posting queue.', 'success');
                   load();
+                  if (onChanged) onChanged();
                 } catch (err) {
                   toast(err.message, 'error');
                 }
               },
-            }, 'Approve')
-          );
+            }, 'Send to posting queue');
+            actions.appendChild(send);
+            if (postingDisabled) card.appendChild(el('p', { class: 'muted' }, 'Approved. Posting to Zoho Books is switched off on this app, so the batch waits here until posting is enabled for go-live.'));
+          }
           actions.appendChild(
             el('button', { onclick: () => onBatchSelected && onBatchSelected(bt.id) }, 'View queue/Layer C')
           );

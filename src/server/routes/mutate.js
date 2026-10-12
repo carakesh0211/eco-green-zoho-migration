@@ -11,6 +11,7 @@ import { assertTransition, BATCH_TRANSITIONS, QUEUE_TRANSITIONS } from '../../co
 import { nowIso, uk, isIsoDate } from '../../core/ids.js';
 import * as exceptionsModule from '../../core/exceptions.js';
 import { isBotUser, botMayPerform } from './agent.js';
+import { refreshBranchSummary } from '../../core/branch_summary.js';
 
 const MAPPING_RULE_TYPES = ['MODULE_ROUTE', 'LEDGER_ACCOUNT', 'PARTY', 'PAYMENT_MODE', 'TAX'];
 const MAPPING_UPSERT_MAX_ROWS = 5000;
@@ -43,6 +44,12 @@ function wrap(fn) {
 const REAPPLY_RUN_STATES = new Set(['CLASSIFIED', 'TRANSFORMED', 'READY_FOR_APPROVAL']);
 
 export function createMutateRouter({ store, audit, deps = {}, auth, retransformJobs = null }) {
+  /** Keep the branch page's step status current after a batch changes (best effort: the
+   *  batch change itself has already succeeded; a summary failure must not undo it). */
+  const refreshSummary = async (branchCode) => {
+    if (!branchCode) return;
+    try { await refreshBranchSummary(store, branchCode); } catch { /* summary refreshed on the next import or manual refresh */ }
+  };
   const router = express.Router();
 
   function botGate(actionName) {
@@ -457,6 +464,7 @@ export function createMutateRouter({ store, audit, deps = {}, auth, retransformJ
         period: req.body.period,
         createdBy: req.user.id,
       });
+      await refreshSummary(req.body.branchCode);
       res.status(201).json(result);
     })
   );
@@ -480,6 +488,7 @@ export function createMutateRouter({ store, audit, deps = {}, auth, retransformJ
         approverRole: req.user.role,
         reason: req.body?.reason,
       });
+      await refreshSummary(batch.branch_code);
       res.json(result);
     })
   );
@@ -498,6 +507,7 @@ export function createMutateRouter({ store, audit, deps = {}, auth, retransformJ
       }
       if (!deps.batch) return notImplemented(res, 'batch');
       const result = await deps.batch.enqueueBatch(ctxFor(req), { batchId: batch.id });
+      await refreshSummary(batch.branch_code);
       res.json(result);
     })
   );
@@ -692,8 +702,10 @@ export function createMutateRouter({ store, audit, deps = {}, auth, retransformJ
       if (!auth.branchAllowed(req.user, req.body?.branchCode)) {
         return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${req.body?.branchCode}` });
       }
-      if (!deps.recon_c || !deps.books) return notImplemented(res, 'recon_c/books');
-      const result = await deps.recon_c.takeSnapshot(ctxFor(req), {
+      // takeSnapshot lives in balance_bridge.js (recon_c.js has none: the route used to call
+      // deps.recon_c.takeSnapshot and failed with INTERNAL_ERROR on every click).
+      if (!deps.balance_bridge?.takeSnapshot || !deps.books) return notImplemented(res, 'balance_bridge/books');
+      const result = await deps.balance_bridge.takeSnapshot(ctxFor(req), {
         client: deps.books,
         branchCode: req.body.branchCode,
         kind: req.body.kind ?? 'BASELINE',

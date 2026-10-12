@@ -194,6 +194,18 @@ test('catalyst store: find supports IS NULL matching and orderBy/limit', async (
   await store.close();
 });
 
+test('catalyst store: orderBy id sorts by ROWID (GET /api/vouchers used it and got INTERNAL_ERROR, live 2026-10-12)', async () => {
+  const store = await openFakeStore();
+  for (const n of ['a.csv', 'b.csv', 'c.csv']) await store.insert('source_files', sourceFileRow({ file_name: n }));
+  const asc = await store.find('source_files', {}, { orderBy: 'id' });
+  assert.deepEqual(asc.map((r) => r.file_name), ['a.csv', 'b.csv', 'c.csv']);
+  const desc = await store.find('source_files', {}, { orderBy: 'id DESC' });
+  assert.deepEqual(desc.map((r) => r.file_name), ['c.csv', 'b.csv', 'a.csv']);
+  const none = await store.find('source_files', { file_name: 'missing.csv' }, { orderBy: 'id' });
+  assert.deepEqual(none, []);
+  await store.close();
+});
+
 test('catalyst store: unique violation on manifest_sha256 maps to UniqueViolationError', async () => {
   const store = await openFakeStore();
   await store.insert('extraction_runs', runRow('run-A'));

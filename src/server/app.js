@@ -46,7 +46,7 @@ try {
  * @param {import('../adapters/store/sqlite.js').Store} opts.store
  * @param {ReturnType<typeof import('../core/audit.js').createAudit>} opts.audit
  * @param {Array<{id:string, role:string, branches:string[], token_sha256:string}>} [opts.users]
- * @param {object} [opts.deps] - { recon_a, cutover, mapping, batch, worker, recon_c, books }
+ * @param {object} [opts.deps] - { recon_a, cutover, mapping, batch, worker, recon_c, balance_bridge, books }
  *   Concurrently-developed core modules, injected so tests can stub them and so a
  *   partial build (some modules not yet landed) degrades to 501 instead of crashing.
  * @param {object} [opts.devDeps] - { inbox, archive, client } for POST /api/dev/seed

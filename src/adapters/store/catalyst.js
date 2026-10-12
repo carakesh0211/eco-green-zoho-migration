@@ -126,11 +126,13 @@ export async function openStore({ app, transport } = {}) {
     const orderTerms = [];
     if (orderBy) {
       const [col, dirRaw] = String(orderBy).trim().split(/\s+/);
-      assertColumnsAllowed(logicalTable, [col]);
+      // `id` is the Store-contract name of the row id, which is ROWID in the Data Store.
+      const physicalCol = col === 'id' ? 'ROWID' : col;
+      if (physicalCol !== 'ROWID') assertColumnsAllowed(logicalTable, [col]);
       const dir = /^desc$/i.test(dirRaw ?? '') ? 'DESC' : 'ASC';
-      orderTerms.push(`${col} ${dir}`);
+      orderTerms.push(`${physicalCol} ${dir}`);
     }
-    if (tieBreakRowid) orderTerms.push('ROWID');
+    if (tieBreakRowid && !orderTerms.some((t) => t.startsWith('ROWID '))) orderTerms.push('ROWID');
     if (orderTerms.length) sql += ` ORDER BY ${orderTerms.join(', ')}`;
 
     if (Number.isInteger(limit)) sql += ` LIMIT ${limit}`;
