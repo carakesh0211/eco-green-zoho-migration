@@ -85,6 +85,79 @@ describe('runValidation: Eco Green reports', () => {
   });
 });
 
+// The same branch with a sectioned 31 March TB: ASSETS / LIABILITIES are balance sheet,
+// INCOME / EXPENDITURE are P&L. At 1 April Eco Green zeroes P&L, opens Opening Stock at last
+// year's closing stock (250) and moves the year's result (profit 750) to Reserve & Surplus.
+function sectionedFiles({ reserveName = 'Reserve & Surplus' } = {}) {
+  const opening = buildXlsx([{ name: 'TB', rows: [
+    ['Trial Balance For the Period Between : 31 Mar, 2026 and 31 Mar, 2026'],
+    [...TB_HEAD, 'Sub Total', 'Total'],
+    [null, 'ASSETS', null, null, null, null, null, null, null, 1200],
+    [null, '  CURRENT ASSETS', null, null, null, null, null, null, 1200, null],
+    ['000939', '    Hdfc Bank', 0, 0, 0, 0, 1000, 0],
+    ['DEBT', '    Sundry Debtors', 0, 0, 0, 0, 200, 0],
+    [null, 'LIABILITIES', null, null, null, null, null, null, null, -700],
+    ['RES', `    ${reserveName}`, 0, 0, 0, 0, 0, -700],
+    [null, 'INCOME', null, null, null, null, null, null, null, -800],
+    ['SAL', '    Sales Account', 0, 0, 0, 0, 0, -800],
+    [null, 'EXPENDITURE', null, null, null, null, null, null, null, 300],
+    ['OPSTK', '    Opening Stock', 0, 0, 0, 0, 300, 0],
+    [null, 'Grand Total', 0, 0, 0, 0, 1500, -1500],
+  ] }]);
+  const closing = buildXlsx([{ name: 'TB', rows: [
+    TB_HEAD,
+    ['000939', 'Hdfc Bank', 1000, 0, 300, -100, 1200, 0],
+    ['DEBT', 'Sundry Debtors', 200, 0, 0, -300, 0, -100],
+    ['RES', reserveName, 0, -1450, 0, 0, 0, -1450],
+    ['SAL', 'Sales Account', 0, 0, 100, 0, 100, 0],
+    ['OPSTK', 'Opening Stock', 250, 0, 0, 0, 250, 0],
+  ] }]);
+  return { ...ecoGreenFiles(), opening: file('opening_tb.xlsx', opening), closing: file('closing_tb.xlsx', closing) };
+}
+
+describe('runValidation: balance sheet items only (year-end close)', () => {
+  test('default with a sectioned Opening TB: P&L opens at zero, stock carried, result to Reserve & Surplus', () => {
+    const r = runValidation(sectionedFiles(), {});
+    assert.equal(r.opening_basis, 'balance_sheet_only');
+    assert.equal(r.summary.equation_holds, true, JSON.stringify(r.accounts.filter((a) => a.status !== 'RECONCILED')));
+    const by = Object.fromEntries(r.accounts.map((a) => [a.code, a]));
+    assert.equal(by.SAL.opening, '0.00', 'income does not carry forward');
+    assert.equal(by.OPSTK.opening, '250.00', 'opening stock = last year closing stock from the Closing TB');
+    assert.equal(by.RES.opening, '-1450.00');
+    assert.equal(by['000939'].opening, '1000.00', 'balance sheet items unchanged');
+    const y = r.year_end_close;
+    assert.deepEqual([y.pl_accounts, y.pl_total, y.result, y.result_amount], [2, '-500.00', 'PROFIT', '750.00']);
+    assert.deepEqual([y.opening_stock.before, y.opening_stock.carried], ['300.00', '250.00']);
+    assert.deepEqual([y.reserve.code, y.reserve.before, y.reserve.after, y.reserve.agrees], ['RES', '-700.00', '-1450.00', true]);
+    assert.ok(!r.exceptions.inconsistencies.some((i) => i.type === 'OPENING_MISMATCH' || i.type === 'TB_NOT_BALANCED'));
+  });
+
+  test('"all accounts" keeps the old behaviour: P&L balances show as differences', () => {
+    const r = runValidation(sectionedFiles(), { openingBasis: 'closing_columns' });
+    assert.equal(r.opening_basis, 'closing_columns');
+    assert.equal(r.year_end_close, null);
+    assert.equal(r.summary.equation_holds, false);
+    assert.ok(r.exceptions.inconsistencies.some((i) => i.type === 'OPENING_MISMATCH' && i.account_code === 'SAL'));
+  });
+
+  test('no reserve account by name: reported, and fixed by naming the reserve account', () => {
+    const f = sectionedFiles({ reserveName: 'General Fund' });
+    const r = runValidation(f, {});
+    assert.equal(r.year_end_close.reserve, null);
+    assert.ok(r.exceptions.inconsistencies.some((i) => i.type === 'RESERVE_NOT_FOUND'));
+    assert.equal(r.summary.equation_holds, false);
+    const fixed = runValidation(f, { reserveCode: 'RES' });
+    assert.equal(fixed.summary.equation_holds, true);
+    assert.throws(() => runValidation(f, { reserveCode: 'SAL' }), (e) => e instanceof ValidationError && e.code === 'BAD_REQUEST', 'a P&L account cannot take the result');
+  });
+
+  test('an Opening TB without section headings cannot be split; auto keeps all accounts', () => {
+    const f = ecoGreenFiles();
+    assert.throws(() => runValidation(f, { openingBasis: 'balance_sheet_only' }), (e) => e instanceof ValidationError && e.code === 'BASIS_UNAVAILABLE');
+    assert.equal(runValidation(f, {}).opening_basis, 'closing_columns');
+  });
+});
+
 describe('runValidation: plain exports, exceptions and mappings', () => {
   const opening = 'Account Name,Debit,Credit\nCash,1000,\nCapital,,1000\nOld Ledger,50,\nSuspense,,50\n';
   const closing = 'Account Name,Balance\nCash,900\nCapital,-1000\nRent Expense,100\nSuspence A/c,0\nOld Ledger,50\nSuspense,-50\n';

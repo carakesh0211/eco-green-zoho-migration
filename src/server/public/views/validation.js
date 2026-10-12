@@ -44,7 +44,8 @@
     OPENING_MISMATCH: 'Opening TB vs Closing TB opening',
   };
   const BASIS_WORDS = {
-    closing_columns: 'Opening TB file (closing balance columns)',
+    balance_sheet_only: 'Opening TB file — balance sheet items only (P&L closed to Reserve & Surplus)',
+    closing_columns: 'Opening TB file — all accounts (closing balance columns)',
     opening_columns: 'Opening TB file (opening balance columns)',
     debit_credit: 'Opening TB file (debit/credit columns)',
     balance: 'Opening TB file (balance column)',
@@ -112,7 +113,8 @@
       ledger: el('input', { type: 'file', accept: '.csv,.xlsx' }),
     };
     const basis = el('select', {}, [
-      el('option', { value: 'auto' }, 'Opening TB file (balance as at its report date)'),
+      el('option', { value: 'auto' }, 'Opening TB file — balance sheet items only (recommended)'),
+      el('option', { value: 'closing_columns' }, 'Opening TB file — all accounts, P&L included'),
       el('option', { value: 'opening_columns' }, 'Opening TB file — its opening (Op.) columns'),
       el('option', { value: 'closing_tb_opening' }, 'Opening (Op.) columns of the Closing TB'),
     ]);
@@ -261,11 +263,27 @@
             'missing, unmapped, duplicate, inconsistent'),
         ]),
       );
+      const yc = run.year_end_close;
+      if (yc) {
+        const lines = [
+          `${yc.pl_accounts} income and expense account(s) were left out of the opening: P&L balances do not carry forward.`,
+          yc.opening_stock ? `${yc.opening_stock.name} opens at last year's closing stock ₹${money(yc.opening_stock.carried)} (${yc.opening_stock.source}; the Opening TB showed ₹${money(yc.opening_stock.before)}).` : null,
+          yc.reserve ? `Year's ${yc.result === 'LOSS' ? 'loss' : 'profit'} ₹${money(yc.result_amount)} moved to ${yc.reserve.name}${yc.reserve.code ? ` (${yc.reserve.code})` : ''}: ₹${money(yc.reserve.before)} → ₹${money(yc.reserve.after)}.`
+            + (yc.reserve.agrees === true ? ' This agrees with the opening in the Closing TB.' : yc.reserve.agrees === false ? ` The Closing TB opening shows ₹${money(yc.reserve.closing_tb_opening)} — check.` : '')
+            : 'No Reserve & Surplus account was found to take the year\'s result.',
+          yc.unclassified ? `${yc.unclassified} row(s) sat above the first section heading and were kept as balance sheet items.` : null,
+        ].filter(Boolean);
+        head.append(el('div', { class: yc.reserve && yc.reserve.agrees !== false ? 'banner banner-ok' : 'step-blocker' }, [
+          el('strong', {}, 'Year-end close applied. '), lines.join(' '),
+        ]));
+      }
       const yearEnd = (run.exceptions.inconsistencies || []).filter((i) => i.type === 'OPENING_MISMATCH').length;
-      if (yearEnd && run.opening_basis !== 'closing_tb_opening_columns') {
+      if (yearEnd && !['closing_tb_opening_columns', 'balance_sheet_only'].includes(run.opening_basis)) {
         head.append(el('div', { class: 'step-blocker' }, [
           `${yearEnd} account(s) have an Opening TB balance different from the opening in the Closing TB. This is usually the year-end close `
           + '(income and expense accounts carried to Reserve & Surplus), so those accounts show a difference here. ',
+          canRun ? el('button', { type: 'button', class: 'linklike', onclick: () => rerun({ opening_basis: 'balance_sheet_only' }) }, 'Re-run with balance sheet items only') : null,
+          canRun ? ' · ' : null,
           canRun ? el('button', { type: 'button', class: 'linklike', onclick: () => rerun({ opening_basis: 'closing_tb_opening' }) }, 'Re-run using the Closing TB opening columns') : null,
         ]));
       }
