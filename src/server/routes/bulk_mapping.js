@@ -11,6 +11,7 @@
 // (approver|admin), which then re-applies the mapping in the background. Bot tokens may read
 // but never write through these routes.
 import express from 'express';
+import { gunzipSync } from 'node:zlib';
 import { nowIso } from '../../core/ids.js';
 import { currentRun } from '../../core/runs.js';
 import { loadMappingRules } from '../../core/mapping.js';
@@ -19,17 +20,29 @@ import { collectRunEntities, proposeForRun, sheetCsv, parseSheet, resolveSheet, 
 import { isBotUser } from './agent.js';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
+// A Books Contacts export of a large company runs to tens of MB (every customer, ~80 columns).
+// The browser gzips it before upload; this caps the decoded size.
+const MAX_REFERENCE_FILE_BYTES = 80 * 1024 * 1024;
 const KINDS = new Set(['accounts', 'vendors', 'customers']);
 
 function wrap(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
-function decode(b64, name) {
+function decode(b64, name, maxBytes = MAX_FILE_BYTES) {
   if (typeof b64 !== 'string' || b64 === '') throw new BooksExportError(`${name}: empty file`);
-  const buf = Buffer.from(b64, 'base64');
+  let buf = Buffer.from(b64, 'base64');
   if (buf.length === 0) throw new BooksExportError(`${name}: empty file`);
-  if (buf.length > MAX_FILE_BYTES) throw new BooksExportError(`${name}: larger than ${MAX_FILE_BYTES / 1024 / 1024} MB`);
+  // gzip is accepted transparently (magic 1f 8b), as for run imports; the decoded size counts.
+  if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+    try {
+      buf = gunzipSync(buf, { maxOutputLength: maxBytes });
+    } catch (err) {
+      if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw new BooksExportError(`${name}: larger than ${maxBytes / 1024 / 1024} MB`);
+      throw new BooksExportError(`${name}: compressed upload could not be read`);
+    }
+  }
+  if (buf.length > maxBytes) throw new BooksExportError(`${name}: larger than ${maxBytes / 1024 / 1024} MB`);
   return buf;
 }
 
@@ -99,7 +112,7 @@ export function createBulkMappingRouter({ store, audit, auth, archive }) {
       for (const f of files) {
         const name = String(f?.name ?? 'file');
         const kind = KINDS.has(f?.kind) ? f.kind : undefined;
-        const p = parseBooksExport(decode(f?.content, name), { fileName: name, kindHint: kind });
+        const p = parseBooksExport(decode(f?.content, name, MAX_REFERENCE_FILE_BYTES), { fileName: name, kindHint: kind });
         parsed.push(p);
         sources.push({ name, kind: p.kind === 'accounts' ? 'accounts' : (p.contactType ? `${p.contactType}s` : 'contacts'), rows: (p.accounts ?? p.contacts).length });
       }
