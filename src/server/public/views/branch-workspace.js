@@ -113,7 +113,7 @@
     const batchBuilt = approval === 'READY_FOR_APPROVAL' || approval === 'APPROVED';
     const s4 = {
       id: 'review', no: 4, title: 'Review postings',
-      explain: 'Look at the vouchers that would be posted to Zoho Books: what gets migrated, what is excluded, and the debit and credit totals. Nothing is posted at this step.',
+      explain: 'Look at the vouchers that would be posted to Zoho Books: what gets migrated, what is excluded, and the debit and credit totals, then click Build batch for approval. Nothing is posted at this step.',
       blockers: [],
       chips: [{ status: approval, label: `Voucher batch: ${approval}` }],
     };
@@ -194,6 +194,7 @@
     } else {
       s7.state = 'todo'; s7.short = 'Not run yet';
       if (migrated === 0) s7.blockers.push({ text: 'Nothing has been posted to Books yet, so there is nothing to prove.' });
+      if (postingDisabled) s7.blockers.push({ text: 'The Books reconciliation and balance proof run on posted vouchers, so they start once posting is enabled for go-live.' });
     }
 
     return [s1, s2, s3, s4, s5, s6, s7];
@@ -371,12 +372,18 @@
       },
       scope: (host) => legacy.renderCutoverSection(host, { branch, locked: true }),
       review: (host) => {
-        previewHandle = legacy.renderPreviewSection(host, { runId: latestRunId || '', locked: true });
+        previewHandle = legacy.renderPreviewSection(host, {
+          runId: latestRunId || '', locked: true, branch,
+          canBuild: hasRole('operator', 'admin'),
+          onBatchBuilt: () => { reloadWorkspace().catch(() => {}); },
+        });
       },
       approve: (host) =>
         legacy.renderApprovalSection(host, {
           branch,
           locked: true,
+          postingDisabled,
+          onChanged: () => { reloadWorkspace().catch(() => {}); },
           onBatchSelected: (batchId) => {
             selectedBatchId = batchId;
             if (queueHandle) queueHandle.setBatchId(batchId);
