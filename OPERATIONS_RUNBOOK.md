@@ -168,7 +168,11 @@ Steps (real data stays under `var/`, which is gitignored):
    `#/branches/:code/bulk-mapping`):
    - Upload the Zoho Books exports once (Chart of Accounts required; Vendors and Customers
      optional, CSV or XLSX). They are stored in the archive and shared by every branch; a later
-     partial upload replaces only the lists it contains.
+     partial upload replaces only the lists it contains. To load or refresh the full masters from
+     the command line (all contacts in one file, typed by its "Contact Type" column):
+     `node scripts/upload-books-reference.js --url <console> --proxy-auth --org <books org id>
+     --accounts <coa.csv> --contacts <contacts.csv>`. Refresh after the client adds accounts or
+     contacts in Books, then re-run **Create rules for all confident matches** on each branch.
    - Matching is by code first: a source ledger goes to the Books account whose
      "CF.Eco Green Account Code" lists it, and a party goes to the contact with that Vendor or
      Customer Number (else to an account tagged with it). Names are used only for the rest.
