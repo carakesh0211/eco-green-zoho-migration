@@ -13,6 +13,15 @@
 //   3. config.postingAuthorizationRef is a non-empty string (explicit human sign-off reference)
 //   4. config.orgAllowlist is a non-empty array
 //   5. config.organizationId is a member of config.orgAllowlist
+//   6. the store's claims are atomic, OR the test-organisation waiver holds. A store reporting
+//      `claimSemantics === 'BEST_EFFORT'` (the Catalyst Data Store adapter) refuses posting
+//      unless ALL THREE waiver conditions hold (see `bestEffortWaived`):
+//        a. BEST_EFFORT_POSTING_TEST_ORG is set and equals config.organizationId;
+//        b. config.orgAllowlist contains that organisation and nothing else;
+//        c. WORKER_MODE=singleton (one worker, so no racing claims).
+//      The waiver exists for a Zoho Books TEST organisation only (owner decision 13-10-2026),
+//      and the worker additionally looks the record up in Books before every live send. It is
+//      never a route to production: posting to a production organisation needs an atomic claim.
 //
 // Reads are governed separately by `assertOrgAllowed`: a live driver may only ever read the
 // organisation(s) it has been explicitly allow-listed for, so a dev/UAT deployment pointed at
@@ -49,15 +58,28 @@ export function isPostingEnabled(config) {
 }
 
 /**
- * Throws PostingDisabledError naming exactly which condition failed. Use before any write.
- * `opts.store` is optional (existing callers pass none); when given and the store reports
- * `claimSemantics === 'BEST_EFFORT'` (the Catalyst Data Store adapter's documented
- * non-atomic claim()/releaseClaim() — see src/adapters/store/catalyst.js), posting is
- * refused with reason `BEST_EFFORT_CLAIMS`: a queue item could be claimed by two racing
- * workers, and posting a financial record twice is not an acceptable failure mode even
- * once every other posting condition is otherwise satisfied.
+ * True only when the test-organisation waiver for BEST_EFFORT claims fully holds (truth
+ * table condition 6): BEST_EFFORT_POSTING_TEST_ORG equals organizationId, the allowlist is
+ * exactly that one organisation, and the worker runs as a singleton. Never throws.
  */
-export function assertPostingAllowed(config, { store } = {}) {
+export function bestEffortWaived(config, { workerMode } = {}) {
+  const org = String(config?.bestEffortPostingTestOrg ?? '').trim();
+  return org !== ''
+    && org === config?.organizationId
+    && Array.isArray(config?.orgAllowlist) && config.orgAllowlist.length === 1 && config.orgAllowlist[0] === org
+    && workerMode === 'singleton';
+}
+
+/**
+ * Throws PostingDisabledError naming exactly which condition failed. Use before any write.
+ * `opts.store` is optional; when given and the store reports `claimSemantics === 'BEST_EFFORT'`
+ * (the Catalyst Data Store adapter's documented non-atomic claim()/releaseClaim() — see
+ * src/adapters/store/catalyst.js), posting is refused with reason `BEST_EFFORT_CLAIMS` unless
+ * the test-organisation waiver holds (`bestEffortWaived`, which needs `opts.workerMode`): a
+ * queue item could otherwise be claimed by two racing workers, and posting a financial record
+ * twice is not an acceptable failure mode even once every other condition is satisfied.
+ */
+export function assertPostingAllowed(config, { store, workerMode } = {}) {
   if (!config || config.driver !== 'live') {
     throw new PostingDisabledError('driver is not "live"');
   }
@@ -73,11 +95,14 @@ export function assertPostingAllowed(config, { store } = {}) {
   if (!isOrgAllowlisted(config)) {
     throw new PostingDisabledError(`organizationId "${config.organizationId}" is not in orgAllowlist`);
   }
-  if (store?.claimSemantics === 'BEST_EFFORT') {
+  if (store?.claimSemantics === 'BEST_EFFORT' && !bestEffortWaived(config, { workerMode })) {
     throw new PostingDisabledError(
       'BEST_EFFORT_CLAIMS: store.claim()/releaseClaim() are not atomic on this adapter (see ' +
         'src/adapters/store/catalyst.js) — two racing workers could both win the same claim and ' +
-        'post the same voucher twice, so live posting is refused regardless of every other condition'
+        'post the same voucher twice. Live posting is refused unless the test-organisation waiver ' +
+        'holds: BEST_EFFORT_POSTING_TEST_ORG equals BOOKS_ORGANIZATION_ID, BOOKS_ORG_ALLOWLIST ' +
+        'contains that organisation and nothing else, and WORKER_MODE=singleton (test organisation ' +
+        'only; production needs an atomic claim)'
     );
   }
 }
@@ -87,13 +112,13 @@ export function assertPostingAllowed(config, { store } = {}) {
  * (never throws) — used by GET /api/health so an operator can see the whole picture in
  * one call instead of tripping conditions one at a time via assertPostingAllowed.
  */
-export function postingBlockedReasons(config, { store } = {}) {
+export function postingBlockedReasons(config, { store, workerMode } = {}) {
   const reasons = [];
   if (!config || config.driver !== 'live') reasons.push('DRIVER_NOT_LIVE');
   if (config?.postingEnabled !== true) reasons.push('POSTING_ENABLED_FALSE');
   if (!hasAuthorizationRef(config)) reasons.push('NO_AUTHORIZATION_REF');
   if (!isOrgAllowlisted(config)) reasons.push('ORG_NOT_ALLOWLISTED');
-  if (store?.claimSemantics === 'BEST_EFFORT') reasons.push('BEST_EFFORT_CLAIMS');
+  if (store?.claimSemantics === 'BEST_EFFORT' && !bestEffortWaived(config, { workerMode })) reasons.push('BEST_EFFORT_CLAIMS');
   return reasons;
 }
 
@@ -144,6 +169,7 @@ export function loadBooksConfig(env = process.env) {
     orgAllowlist,
     postingEnabled: env.POSTING_ENABLED === 'true',
     postingAuthorizationRef: env.POSTING_AUTHORIZATION_REF ?? '',
+    bestEffortPostingTestOrg: (env.BEST_EFFORT_POSTING_TEST_ORG ?? '').trim(),
     rateLimitPerMinute: parseIntEnv(env.BOOKS_RATE_LIMIT_PER_MINUTE, 100),
     maxConcurrency: parseIntEnv(env.BOOKS_MAX_CONCURRENCY, 2),
     requestTimeoutMs: parseIntEnv(env.BOOKS_REQUEST_TIMEOUT_MS, 30000),

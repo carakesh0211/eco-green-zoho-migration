@@ -172,7 +172,7 @@ export function createApp({
     } catch {
       postingEnabled = false;
     }
-    const postingBlockedBy = postingBlockedReasons(deps.books?.config, { store });
+    const postingBlockedBy = postingBlockedReasons(deps.books?.config, { store, workerMode });
     res.json({
       ok: true,
       environment,
