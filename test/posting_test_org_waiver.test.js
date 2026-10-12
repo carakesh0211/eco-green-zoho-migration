@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/adapters/store/memory.js';
 import { createAudit } from '../src/core/audit.js';
 import { assertPostingAllowed, postingBlockedReasons, bestEffortWaived } from '../src/books/guard.js';
-import { runQueueSlice } from '../src/worker/executor.js';
+import { runQueueSlice, recordIdOf } from '../src/worker/executor.js';
 
 const TEST_ORG = '60000000001';
 const OTHER_ORG = '60000000002';
@@ -157,7 +157,7 @@ async function seed(store, { batchId = 'BATCH-W', voucherId = 'V-1', referenceNu
 }
 
 /** Fake live client: counts create() calls; `lookup` decides what searchByMigrationTag returns. */
-function fakeLiveClient({ config = liveConfig(), lookup = async () => [] } = {}) {
+function fakeLiveClient({ config = liveConfig(), lookup = async () => [], created = { id: 'ZB-NEW-1' } } = {}) {
   const calls = { create: 0, search: 0 };
   return {
     calls,
@@ -170,7 +170,7 @@ function fakeLiveClient({ config = liveConfig(), lookup = async () => [] } = {})
       },
       async create() {
         calls.create += 1;
-        return { id: 'ZB-NEW-1' };
+        return created;
       },
     },
   };
@@ -281,6 +281,63 @@ test('executor (waiver): pre-send lookup throws -> no create(), item FAILED_RETR
     const row = await store.get('queue_items', item.id);
     assert.equal(row.status, 'FAILED_RETRYABLE');
     assert.equal(row.last_error_code, 'PRESEND_LOOKUP_FAILED');
+  } finally {
+    await base.close();
+  }
+});
+
+// ---- 5. Books record ids and the early posting check --------------------------------------
+
+test('recordIdOf: reads the id from Books create responses, list rows and the mock shape', () => {
+  assert.equal(recordIdOf({ code: 0, message: 'The journal entry has been created.', journal: { journal_id: '4222956000000999001' } }), '4222956000000999001');
+  assert.equal(recordIdOf({ code: 0, bill: { bill_id: 'B-1' } }), 'B-1');
+  assert.equal(recordIdOf({ code: 0, vendorpayment: { payment_id: 'P-1' } }), 'P-1');
+  assert.equal(recordIdOf({ journal_id: 'J-2', reference_number: '26/J/1' }), 'J-2');
+  assert.equal(recordIdOf({ id: 'ZB-NEW-1' }), 'ZB-NEW-1');
+  assert.equal(recordIdOf({ code: 0, message: 'ok' }), null);
+  assert.equal(recordIdOf(null), null);
+});
+
+test('executor (waiver): a real Books create response stores the journal id on the voucher', async () => {
+  const { base, store, ctx } = await makeCtx({ workerMode: 'singleton' });
+  try {
+    const { batchId, voucher } = await seed(store);
+    const { client } = fakeLiveClient({ created: { code: 0, message: 'The journal entry has been created.', journal: { journal_id: '4222956000000999001' } } });
+    await runQueueSlice(ctx, { client, batchId, workerId: 'w1' });
+    assert.equal((await store.get('vouchers', voucher.id)).zoho_record_id, '4222956000000999001');
+    const [attempt] = await store.find('api_attempts', {});
+    assert.equal(attempt.zoho_record_id, '4222956000000999001');
+  } finally {
+    await base.close();
+  }
+});
+
+test('executor (waiver): a list row carrying only journal_id is recorded when already in Books', async () => {
+  const { base, store, ctx } = await makeCtx({ workerMode: 'singleton' });
+  try {
+    const { batchId, voucher } = await seed(store);
+    const { client, calls } = fakeLiveClient({
+      lookup: async ({ sourceHash }) => [{ journal_id: '4222956000000999002', cf_migration_source_hash: sourceHash }],
+    });
+    await runQueueSlice(ctx, { client, batchId, workerId: 'w1' });
+    assert.equal(calls.create, 0);
+    assert.equal((await store.get('vouchers', voucher.id)).zoho_record_id, '4222956000000999002');
+  } finally {
+    await base.close();
+  }
+});
+
+test('executor: a refused post puts the item back in the queue and leaves the voucher untouched', async () => {
+  const { base, store, ctx } = await makeCtx({ workerMode: 'singleton' });
+  try {
+    const { batchId, item, voucher } = await seed(store);
+    const { client, calls } = fakeLiveClient({ config: liveConfig({ bestEffortPostingTestOrg: '' }) });
+    await assert.rejects(() => runQueueSlice(ctx, { client, batchId, workerId: 'w1' }), /BEST_EFFORT_CLAIMS/);
+    assert.equal(calls.create, 0);
+    assert.equal(calls.search, 0);
+    assert.equal((await store.get('queue_items', item.id)).status, 'QUEUED');
+    assert.notEqual((await store.get('vouchers', voucher.id)).migration_status, 'IN_FLIGHT');
+    assert.equal((await store.find('api_attempts', {})).length, 0);
   } finally {
     await base.close();
   }
