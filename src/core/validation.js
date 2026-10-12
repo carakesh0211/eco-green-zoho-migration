@@ -28,7 +28,18 @@ export class ValidationError extends Error {
 
 export const ROLES = Object.freeze(['opening', 'closing', 'ledger']);
 const ROLE_WORDS = { opening: 'Opening TB', closing: 'Closing TB', ledger: 'Ledger' };
-export const OPENING_BASIS = Object.freeze(['auto', 'closing_columns', 'opening_columns', 'closing_tb_opening']);
+export const OPENING_BASIS = Object.freeze(['auto', 'balance_sheet_only', 'closing_columns', 'opening_columns', 'closing_tb_opening']);
+
+// Top-level section headings of the Eco Green trial balance (unindented, no code). Rows under
+// ASSETS / LIABILITIES are balance sheet items; rows under INCOME / EXPENDITURE are P&L.
+const SECTION_WORDS = {
+  ASSETS: 'BS', ASSET: 'BS', LIABILITIES: 'BS', LIABILITY: 'BS', CAPITAL: 'BS', EQUITY: 'BS',
+  'CAPITAL AND LIABILITIES': 'BS', 'LIABILITIES AND CAPITAL': 'BS',
+  INCOME: 'PL', INCOMES: 'PL', REVENUE: 'PL', EXPENDITURE: 'PL', EXPENSES: 'PL', EXPENSE: 'PL',
+};
+const sectionOf = (raw) => SECTION_WORDS[String(raw ?? '').toUpperCase().replace(/&/g, ' AND ').replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim()] ?? null;
+const RESERVE_NAME = /reserves?\s*(&|and)?\s*surplus|retained\s*earnings|profit\s*(&|and)\s*loss\s*(a\/?c|account)/i;
+const OPENING_STOCK_NAME = /opening\s*stock/i;
 
 const key = (h) => String(h ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const nameKey = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -153,12 +164,16 @@ export function readTrialBalanceFile(bytes, { fileName, role, openingBasis = 'au
   const pairOf = { closing_columns: ['clDebit', 'clCredit'], opening_columns: ['opDebit', 'opCredit'], debit_credit: ['debit', 'credit'] };
 
   const rows = [];
+  let section = null; let sections = false;
   table.slice(headerRow + 1).forEach((r, i) => {
     const line = headerRow + i + 2;
     const code = c.code >= 0 ? codeText(r[c.code]) : '';
     const name = c.name >= 0 ? text(r[c.name]) : '';
     if (!code && !name) return;
     if (TOTAL_ROW.test(name) || TOTAL_ROW.test(code)) return;
+    // A section heading (ASSETS, LIABILITIES, INCOME, EXPENDITURE): unindented, no code.
+    const heading = !code && !/^\s/.test(String(r[c.name] ?? '')) ? sectionOf(name) : null;
+    if (heading) { section = heading; sections = true; return; }
     // Group headings in the Eco Green report carry a name but no code; skip them when the file has codes.
     if (c.code >= 0 && !code) return;
     const flags = [];
@@ -181,11 +196,60 @@ export function readTrialBalanceFile(bytes, { fileName, role, openingBasis = 'au
       if (cr < 0n) cr = -cr;
       return d - cr;
     };
-    rows.push({ line, code, name, balance, op: net('opDebit', 'opCredit'), tr: net('trDebit', 'trCredit'), cl: net('clDebit', 'clCredit'), flags });
+    rows.push({ line, code, name, section, balance, op: net('opDebit', 'opCredit'), tr: net('trDebit', 'trCredit'), cl: net('clDebit', 'clCredit'), flags });
   });
   if (rows.length === 0) throw new ValidationError('NO_ROWS', `${fileName} (${ROLE_WORDS[role]}): no account rows found under the header`);
   const columns = Object.fromEntries(Object.entries(c).filter(([, i]) => i >= 0).map(([k, i]) => [k, header[i]]));
-  return { fileName, sha256: sha256Bytes(bytes), role, basis, columns, hasCode: c.code >= 0, rows };
+  return { fileName, sha256: sha256Bytes(bytes), role, basis, columns, hasCode: c.code >= 0, sections, rows };
+}
+
+/**
+ * Opening TB -> balance sheet items only, as Eco Green's year-end close leaves them:
+ *   - every P&L account (INCOME / EXPENDITURE section) opens at zero;
+ *   - Opening Stock opens at last year's closing stock, read from the Closing TB's opening
+ *     (Op.) column of the same account;
+ *   - the year's result (P&L total less the closing stock carried) goes to Reserve & Surplus
+ *     (or the account given by reserveCode), so the opening still balances.
+ * Returns { file, close } where close describes every adjustment for the report.
+ */
+export function balanceSheetOpening(opening, closing, { reserveCode = null } = {}) {
+  if (!opening.sections) {
+    throw new ValidationError('BASIS_UNAVAILABLE', `${opening.fileName}: no ASSETS / LIABILITIES / INCOME / EXPENDITURE section headings, so balance sheet items cannot be told from P&L; use "all accounts" instead`);
+  }
+  const pl = opening.rows.filter((r) => r.section === 'PL');
+  const plNet = pl.reduce((a, r) => a + r.balance, 0n);
+  const closingOp = new Map(closing.rows.filter((r) => r.code && r.op !== null).map((r) => [normCode(r.code), r.op]));
+  const stock = pl.find((r) => OPENING_STOCK_NAME.test(r.name)) ?? null;
+  let carried = 0n; let stockSource = null;
+  if (stock) {
+    const op = stock.code ? closingOp.get(normCode(stock.code)) : undefined;
+    if (op !== undefined) { carried = op; stockSource = 'Closing TB opening column'; } else stockSource = 'not found: opened at zero';
+  }
+  const bs = opening.rows.filter((r) => r.section !== 'PL');
+  const reserve = reserveCode
+    ? bs.find((r) => r.code && normCode(r.code) === normCode(reserveCode)) ?? null
+    : bs.find((r) => RESERVE_NAME.test(r.name)) ?? null;
+  if (reserveCode && !reserve) throw new ValidationError('BAD_REQUEST', `reserve account ${reserveCode} is not a balance sheet account of ${opening.fileName}`);
+  const transfer = plNet - carried; // debit positive: a loss reduces the reserve's credit balance
+  const rows = opening.rows.map((r) => {
+    if (r === stock) return { ...r, balance: carried, yearEnd: 'STOCK_CARRIED', balanceBefore: r.balance };
+    if (r.section === 'PL') return { ...r, balance: 0n, yearEnd: 'PL_CLOSED', balanceBefore: r.balance };
+    if (r === reserve) return { ...r, balance: r.balance + transfer, yearEnd: 'RESERVE', balanceBefore: r.balance };
+    return r;
+  });
+  const reserveAfter = reserve ? reserve.balance + transfer : null;
+  const reserveCheck = reserve && reserve.code && closingOp.has(normCode(reserve.code)) ? closingOp.get(normCode(reserve.code)) : null;
+  const close = {
+    pl_accounts: pl.length,
+    pl_total: formatMoney(plNet),
+    result: plNet - carried > 0n ? 'LOSS' : plNet - carried < 0n ? 'PROFIT' : 'NIL',
+    result_amount: formatMoney(transfer < 0n ? -transfer : transfer),
+    opening_stock: stock ? { code: stock.code, name: stock.name.trim(), before: formatMoney(stock.balance), carried: formatMoney(carried), source: stockSource } : null,
+    reserve: reserve ? { code: reserve.code, name: reserve.name.trim(), before: formatMoney(reserve.balance), transfer: formatMoney(transfer), after: formatMoney(reserveAfter), closing_tb_opening: reserveCheck === null ? null : formatMoney(reserveCheck), agrees: reserveCheck === null ? null : reserveCheck === reserveAfter } : null,
+    unclassified: opening.rows.filter((r) => !r.section).length,
+    closed: pl.filter((r) => r !== stock && r.balance !== 0n).map((r) => ({ code: r.code, name: r.name.trim(), balance: formatMoney(r.balance) })),
+  };
+  return { file: { ...opening, basis: 'balance_sheet_only', rows }, close };
 }
 
 /** Read the transactional ledger: one row per account line. */
@@ -544,12 +608,12 @@ export function reconcile({ opening = null, closing, ledger }, { mappings = [], 
 }
 
 /** Read the three files and reconcile them. files: { opening?, closing, ledger } each { name, bytes }. */
-export function runValidation(files, { mappings = [], tolerance = '0.00', openingBasis = 'auto' } = {}) {
+export function runValidation(files, { mappings = [], tolerance = '0.00', openingBasis = 'auto', reserveCode = null } = {}) {
   if (!files.closing) throw new ValidationError('MISSING_FILE', 'The Closing TB file is required');
   if (!files.ledger) throw new ValidationError('MISSING_FILE', 'The Ledger file is required');
   if (!OPENING_BASIS.includes(openingBasis)) throw new ValidationError('BAD_REQUEST', `opening_basis must be one of ${OPENING_BASIS.join(', ')}`);
   const closing = readTrialBalanceFile(files.closing.bytes, { fileName: files.closing.name, role: 'closing' });
-  let opening = null;
+  let opening = null; let yearEndClose = null;
   // Without an Opening TB file, the Closing TB's own opening columns are the opening.
   if (openingBasis === 'auto' && !files.opening && closing.rows.some((r) => r.op !== null)) openingBasis = 'closing_tb_opening';
   if (openingBasis === 'closing_tb_opening') {
@@ -557,10 +621,20 @@ export function runValidation(files, { mappings = [], tolerance = '0.00', openin
     if (closing.rows.every((r) => r.op === null)) throw new ValidationError('BASIS_UNAVAILABLE', `${closing.fileName}: the Closing TB has no opening (Op.) columns`);
     opening = { ...closing, role: 'opening', basis: 'closing_tb_opening_columns', rows: closing.rows.map((r) => ({ ...r, balance: r.op ?? 0n, op: null, tr: null, cl: null, flags: [] })) };
   } else if (files.opening) {
-    opening = readTrialBalanceFile(files.opening.bytes, { fileName: files.opening.name, role: 'opening', openingBasis });
+    const bsOnly = openingBasis === 'balance_sheet_only';
+    opening = readTrialBalanceFile(files.opening.bytes, { fileName: files.opening.name, role: 'opening', openingBasis: bsOnly ? 'auto' : openingBasis });
+    // Default for an Opening TB with sections: balance sheet items only (P&L does not carry forward).
+    if (bsOnly || (openingBasis === 'auto' && opening.sections)) ({ file: opening, close: yearEndClose } = balanceSheetOpening(opening, closing, { reserveCode }));
+  } else if (openingBasis === 'balance_sheet_only') {
+    throw new ValidationError('MISSING_FILE', 'Balance sheet items only needs the Opening TB file');
   }
   const ledger = readLedgerFile(files.ledger.bytes, { fileName: files.ledger.name });
   const result = reconcile({ opening, closing, ledger }, { mappings, tolerance });
+  result.year_end_close = yearEndClose;
+  if (yearEndClose && !yearEndClose.reserve && yearEndClose.result !== 'NIL') {
+    result.exceptions.inconsistencies.push({ type: 'RESERVE_NOT_FOUND', file: 'Opening TB', line: null, account_code: '', account_name: '', detail: `no Reserve & Surplus account found to take the year's ${yearEndClose.result.toLowerCase()} of ${yearEndClose.result_amount}; choose the reserve account and re-run` });
+    result.summary.counts.inconsistencies = result.exceptions.inconsistencies.length;
+  }
   const describe = (f, extra) => (f ? { name: f.fileName, sha256: f.sha256, columns: f.columns, ...extra } : null);
   result.opening_basis = opening ? opening.basis : 'none';
   result.inputs = {

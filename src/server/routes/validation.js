@@ -89,9 +89,9 @@ export function createValidationRouter({ store, audit, auth, archive }) {
     return { event: ev, meta: parseAfter(ev) };
   }
 
-  async function execute(req, branch, files, { tolerance, openingBasis, rerunOf = null, inputUris = null }) {
+  async function execute(req, branch, files, { tolerance, openingBasis, reserveCode = null, rerunOf = null, inputUris = null }) {
     const mappings = await loadMappings();
-    const result = runValidation(files, { mappings, tolerance, openingBasis });
+    const result = runValidation(files, { mappings, tolerance, openingBasis, reserveCode });
     const id = `val-${branch}-${nowIso().replace(/[^0-9]/g, '').slice(0, 14)}-${randomBytes(3).toString('hex')}`;
     const inputs = {};
     for (const role of ROLES) {
@@ -146,7 +146,8 @@ export function createValidationRouter({ store, audit, auth, archive }) {
     if (!/^\d+(\.\d{1,2})?$/.test(tolerance)) throw new ValidationError('BAD_REQUEST', 'tolerance must be an amount like 0.00 or 1.00');
     const openingBasis = body?.opening_basis ?? 'auto';
     if (!OPENING_BASIS.includes(openingBasis)) throw new ValidationError('BAD_REQUEST', `opening_basis must be one of ${OPENING_BASIS.join(', ')}`);
-    return { tolerance, openingBasis };
+    const reserveCode = body?.reserve_code ? String(body.reserve_code).trim().slice(0, 40) || null : null;
+    return { tolerance, openingBasis, reserveCode };
   }
 
   router.get('/branches/:code/validation/runs', auth.authenticate(), inScope, wrap(async (req, res) => {
@@ -213,7 +214,7 @@ export function createValidationRouter({ store, audit, auth, archive }) {
       inputUris[role] = input.uri;
     }
     try {
-      const opts = options({ tolerance: req.body?.tolerance ?? previous.tolerance, opening_basis: req.body?.opening_basis ?? (previous.opening_basis === 'closing_tb_opening_columns' ? 'closing_tb_opening' : 'auto') });
+      const opts = options({ tolerance: req.body?.tolerance ?? previous.tolerance, opening_basis: req.body?.opening_basis ?? ({ closing_tb_opening_columns: 'closing_tb_opening', closing_columns: 'closing_columns' }[previous.opening_basis] ?? 'auto'), reserve_code: req.body?.reserve_code ?? previous.year_end_close?.reserve?.code ?? null });
       const doc = await execute(req, branch, files, { ...opts, rerunOf: req.params.id, inputUris });
       res.status(201).json(withoutLines(doc));
     } catch (err) {

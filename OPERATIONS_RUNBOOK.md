@@ -221,13 +221,18 @@ compared with the Closing TB within the chosen tolerance. A run never changes mi
 - **Party lines:** in the Eco Green ledger, a party line whose code is not a TB account goes to
   the control ledger named in `Status`.
 - **Opening balances** come from one of:
-  - the Opening TB file at its report date (default);
+  - the Opening TB file, **balance sheet items only** (default when the report has its
+    ASSETS / LIABILITIES / INCOME / EXPENDITURE section headings). P&L balances do not carry
+    forward, so the app applies the year-end close itself: every income and expense account
+    opens at zero; Opening Stock opens at last year's closing stock (read from the Closing
+    TB's Op. column of the same account); the year's result goes to Reserve & Surplus, found
+    by name (or named with `reserve_code`). The report shows each step and whether the
+    Reserve & Surplus figure agrees with the Closing TB opening. Branch 461: 84 P&L accounts
+    closed, profit ₹16,37,618.22 to Reserve & Surplus (agrees), 152 of 152 accounts reconcile;
+  - the Opening TB file, all accounts (P&L included). Income and expense accounts then
+    differ by the year-end close and are flagged `OPENING_MISMATCH`;
   - the Opening TB file's Op. columns;
   - the Closing TB's own Op. columns.
-
-  If the Opening TB is the 31 March report, income and expense accounts differ by the
-  year-end close. Each such account is flagged `OPENING_MISMATCH`, and the page offers a
-  re-run on the Closing TB opening. For branch 461 that re-run reconciles 152 of 152 accounts.
 - **Exception views:**
   - missing from Opening TB or Closing TB
   - not in the ledger (marked when the balance moved without transactions)
