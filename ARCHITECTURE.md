@@ -168,12 +168,25 @@ read-then-write and the store reports `claimSemantics: 'BEST_EFFORT'`. Consequen
 - `src/books/guard.js#assertPostingAllowed(config, { store })` refuses posting with reason
   `BEST_EFFORT_CLAIMS` whenever the store is not atomic — Catalyst-backed production posting is
   structurally disabled until an atomic lease exists (Catalyst Job/Cron target with a lease row, or a
-  different store for the queue).
+  different store for the queue). The worker's real send path (`src/worker/executor.js`) passes the
+  store and worker mode to this check before every live `create()`.
+- **Test-organisation waiver** (owner decision 13-10-2026). The `BEST_EFFORT_CLAIMS` refusal is
+  lifted only when all three hold (`guard.js#bestEffortWaived`): `BEST_EFFORT_POSTING_TEST_ORG`
+  equals `BOOKS_ORGANIZATION_ID`; `BOOKS_ORG_ALLOWLIST` contains that organisation and nothing else;
+  `WORKER_MODE=singleton`. It is for a Zoho Books TEST organisation only; production posting still
+  needs an atomic claim.
+- **Pre-send duplicate check.** With the live driver, the executor looks the voucher up in Books
+  (`searchByMigrationTag`) before every send: exactly one record tagged with the item's hash ->
+  not sent, item POSTED with that record id (`ALREADY_IN_BOOKS` on the audit event); more than one
+  tagged record, or any untagged record with the same reference number -> not sent, item
+  FAILED_FINAL with a P1 (`ALREADY_IN_BOOKS_AMBIGUOUS`); lookup error -> not sent, item
+  FAILED_RETRYABLE (`PRESEND_LOOKUP_FAILED`). Only an empty lookup leads to `create()`.
 - `src/worker/index.js` refuses to start on a Catalyst store unless `WORKER_MODE=singleton`, and a
   singleton refuses to start while another `WORKER.START` audit event (different `WORKER_ID`, no
   matching `WORKER.STOP`, within `WORKER_LEASE_MS`) exists — best-effort mutual exclusion, documented as
   such. The deployed dashboard runs with `WORKER_MODE=disabled`.
-- `/api/health` exposes `claimSemantics` and lists `BEST_EFFORT_CLAIMS` in `postingBlockedBy`.
+- `/api/health` exposes `claimSemantics` and lists `BEST_EFFORT_CLAIMS` in `postingBlockedBy`
+  unless the test-organisation waiver holds.
 
 
 ## 7. Team-operable console (increment 2)

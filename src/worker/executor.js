@@ -18,10 +18,39 @@ function now(ctx) {
  * mock driver has its own internal write guard (config.mockWritesEnabled); this choke
  * point only ever needs to fire for the live driver, but it fires unconditionally
  * before every live create() as defence in depth even though live.js#create() also
- * asserts it internally. */
-function assertClientPostingAllowed(client) {
+ * asserts it internally. The store and worker mode are passed so a BEST_EFFORT-claim store
+ * is refused here unless the test-organisation waiver holds (guard.js condition 6). */
+function assertClientPostingAllowed(client, ctx) {
   if (client.driver !== 'live') return;
-  assertPostingAllowed(client.config);
+  assertPostingAllowed(client.config, { store: ctx.store, workerMode: ctx.workerMode });
+}
+
+const MIGRATION_HASH_FIELD = 'cf_migration_source_hash';
+
+/** The migration tag on a Books record, wherever the response shape puts it; null if untagged. */
+function migrationHashOf(record) {
+  if (!record) return null;
+  if (record[MIGRATION_HASH_FIELD]) return record[MIGRATION_HASH_FIELD];
+  if (record.custom_field_hash?.[MIGRATION_HASH_FIELD]) return record.custom_field_hash[MIGRATION_HASH_FIELD];
+  const cf = record.custom_fields;
+  if (Array.isArray(cf)) {
+    const entry = cf.find((f) => f?.api_name === MIGRATION_HASH_FIELD || f?.placeholder === MIGRATION_HASH_FIELD);
+    if (entry?.value) return entry.value;
+  } else if (cf?.[MIGRATION_HASH_FIELD]) {
+    return cf[MIGRATION_HASH_FIELD];
+  }
+  return null;
+}
+
+/** Pre-send duplicate check for live posting: `ours` carry this item's migration tag;
+ * `suspects` are untagged records with the same reference number (e.g. keyed in by hand). */
+async function lookupBeforeSend(client, module, sourceHash, referenceNumber) {
+  const records = (await client.searchByMigrationTag({ module, sourceHash })) ?? [];
+  const ours = records.filter((r) => migrationHashOf(r) === sourceHash);
+  const suspects = referenceNumber
+    ? records.filter((r) => migrationHashOf(r) === null && r?.reference_number === referenceNumber)
+    : [];
+  return { ours, suspects };
 }
 
 /** Local full-jitter exponential backoff (limiter.js#fullJitterBackoff is not exported
@@ -135,17 +164,47 @@ async function processItem(ctx, { client, item, batchId, batchRow }) {
     created_at: nowTs,
   });
 
-  assertClientPostingAllowed(client);
+  assertClientPostingAllowed(client, ctx);
 
   let classification;
   let value;
   let thrown;
-  try {
-    value = await client.create(module, payload, { idempotencyKey: item.idempotency_key });
-    classification = { class: 'SUCCESS' };
-  } catch (err) {
-    thrown = err;
-    classification = err.classification ?? { class: 'UNKNOWN', reason: err.message };
+  let send = true;
+  if (client.driver === 'live') {
+    // Duplicate check before every live send: a record already carrying our tag means an
+    // earlier attempt landed; anything ambiguous is a P1, never a second post.
+    let found;
+    try {
+      found = await lookupBeforeSend(client, module, item.idempotency_key, payload?.reference_number);
+    } catch (err) {
+      thrown = err;
+      classification = { class: 'RETRYABLE', reason: 'PRESEND_LOOKUP_FAILED' };
+      send = false;
+    }
+    if (found) {
+      if (found.ours.length === 1 && found.suspects.length === 0) {
+        value = { id: found.ours[0].id };
+        classification = { class: 'SUCCESS', reason: 'ALREADY_IN_BOOKS' };
+        send = false;
+      } else if (found.ours.length > 1 || found.suspects.length > 0) {
+        thrown = new Error(
+          `Not sent: Books already has ${found.ours.length} record(s) tagged with this voucher's migration hash ` +
+            `and ${found.suspects.length} untagged record(s) with reference number "${payload?.reference_number ?? ''}". ` +
+            'Check Books by hand before re-queuing.'
+        );
+        classification = { class: 'NON_RETRYABLE', reason: 'ALREADY_IN_BOOKS_AMBIGUOUS' };
+        send = false;
+      }
+    }
+  }
+  if (send) {
+    try {
+      value = await client.create(module, payload, { idempotencyKey: item.idempotency_key });
+      classification = { class: 'SUCCESS' };
+    } catch (err) {
+      thrown = err;
+      classification = err.classification ?? { class: 'UNKNOWN', reason: err.message };
+    }
   }
 
   const finishedAt = now(ctx);
@@ -168,7 +227,13 @@ async function processItem(ctx, { client, item, batchId, batchRow }) {
       migration_status: 'POSTED', zoho_record_id: value?.id ?? null,
       attempt_count: attempts, updated_at: finishedAt,
     });
-    await auditItem(ctx, 'QUEUE.POSTED', { entityId: item.id, after: { zohoRecordId: value?.id }, branchCode: voucher.branch_code, batchId });
+    const alreadyInBooks = classification.reason === 'ALREADY_IN_BOOKS';
+    await auditItem(ctx, 'QUEUE.POSTED', {
+      entityId: item.id,
+      after: alreadyInBooks ? { zohoRecordId: value?.id, note: 'ALREADY_IN_BOOKS' } : { zohoRecordId: value?.id },
+      reason: alreadyInBooks ? 'ALREADY_IN_BOOKS: found in Books by the pre-send lookup; not sent again' : undefined,
+      branchCode: voucher.branch_code, batchId,
+    });
     return { circuitBreak: false, posted: true };
   }
 
