@@ -221,7 +221,7 @@
   const RETRANSFORM_STATES = new Set(['CLASSIFIED', 'TRANSFORMED', 'READY_FOR_APPROVAL']);
 
   /** Small confirm dialog (same markup as the other views' modals). */
-  function confirmModal({ title, intro, submitLabel, onConfirm }) {
+  function confirmModal({ title, intro, submitLabel, onConfirm, fields = [] }) {
     const previouslyFocused = document.activeElement;
     const overlay = el('div', { class: 'modal-overlay' });
     const errorP = el('p', { class: 'muted error-text', role: 'alert' }, '');
@@ -248,6 +248,7 @@
       el('div', { class: 'modal-box', role: 'dialog', 'aria-modal': 'true', 'aria-label': title }, [
         el('h3', {}, title),
         el('p', { class: 'muted' }, intro),
+        ...fields,
         errorP,
         el('div', { class: 'controls' }, [submit, el('button', { type: 'button', onclick: close }, 'Cancel')]),
       ])
@@ -603,11 +604,19 @@
           el('button', { type: 'button', onclick: () => reapplyMappingModal(latestRun) }, 'Re-apply mapping to the latest run')
         );
       }
+      if (hasRole('admin')) {
+        row.appendChild(el('button', { type: 'button', onclick: () => locationModal() }, 'Change Books location'));
+      }
       return el('div', {}, [row, reapplyStatus]);
     }
 
     function describeJob(job) {
       if (!job) return '';
+      if (job.trigger === 'location_change') {
+        if (job.stage === 'QUEUED' || job.stage === 'RUNNING') return `Changing the Books location and re-preparing every voucher of branch ${branch}… this can take a few minutes. You can leave this page.`;
+        if (job.stage === 'DONE') return `Books location changed to ${job.result?.after ?? ''}: ${n(job.result?.vouchersUpdated)} vouchers updated, ${n(job.result?.batchesSetAside?.length)} old batches set aside. Build the batches again in step 4.`;
+        return `Changing the Books location failed: ${job.error?.message ?? 'unknown error'}`;
+      }
       const who = job.trigger === 'mapping_approval' ? ' (started automatically after mapping approval)' : '';
       if (job.stage === 'QUEUED' || job.stage === 'RUNNING') return `Re-applying mapping to run ${job.runId}${who}… this can take a few minutes. You can leave this page.`;
       if (job.stage === 'DONE') return `Mapping re-applied${who}: ${n(job.result?.reset)} vouchers retried, ${n(job.result?.stillBlocked)} still blocked.`;
@@ -647,6 +656,45 @@
       if (!job) return;
       reapplyStatus.textContent = describeJob(job);
       if (job.stage === 'QUEUED' || job.stage === 'RUNNING') followJob(job.jobId);
+    }
+
+    function locationModal() {
+      const idInput = el('input', { type: 'text', inputmode: 'numeric', placeholder: 'e.g. 4222956000000042021', 'aria-label': 'Books location id' });
+      const nameInput = el('input', { type: 'text', placeholder: 'e.g. Branch 461', 'aria-label': 'Location name' });
+      const reasonInput = el('input', { type: 'text', placeholder: 'Why the location changes', 'aria-label': 'Reason' });
+      confirmModal({
+        title: 'Change Books location',
+        intro: `Sets the Zoho Books location for branch ${branch} and re-prepares every voucher with it. `
+          + 'Any approved batch loses its approval and the open batches are set aside: build them again in step 4 and have them approved again. '
+          + 'Only possible before anything of this branch is queued or posted. Nothing is posted to Zoho Books.',
+        fields: [
+          el('label', {}, ['Books location id ', idInput]),
+          el('label', {}, ['Location name (optional) ', nameInput]),
+          el('label', {}, ['Reason ', reasonInput]),
+        ],
+        submitLabel: 'Change location',
+        onConfirm: async (close, fail) => {
+          try {
+            const out = await api(`/api/branches/${encodeURIComponent(branch)}/location`, {
+              method: 'POST',
+              body: { location_id: idInput.value.trim(), location_name: nameInput.value.trim(), reason: reasonInput.value.trim() },
+            });
+            close();
+            if (out?.jobId) {
+              toast('Changing the Books location. This can take a few minutes.', 'success');
+              reapplyStatus.textContent = describeJob({ trigger: 'location_change', stage: 'RUNNING' });
+              followJob(out.jobId);
+            } else {
+              toast('Books location changed.', 'success');
+              await reloadWorkspace();
+            }
+          } catch (err) {
+            const msg = err.body?.message || err.message;
+            toast(msg, 'error');
+            fail(msg);
+          }
+        },
+      });
     }
 
     function reapplyMappingModal(run) {

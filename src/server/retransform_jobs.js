@@ -28,10 +28,12 @@ export function createRetransformJobs({ store, transform, runtime } = {}) {
 
   /**
    * Start (or join) the re-transform of one run. `ctx` is the request context the job runs
-   * under (actor, correlation id, audit); `trigger` records why it started.
+   * under (actor, correlation id, audit); `trigger` records why it started. `work`, when
+   * given, replaces the plain re-transform (e.g. a branch location change, which re-transforms
+   * as its last step); it runs under the same one-active-job-per-run rule.
    * Resolves to the job row once it is registered — not when it finishes.
    */
-  async function start(ctx, { runId, branchCode, trigger = 'manual' }) {
+  async function start(ctx, { runId, branchCode, trigger = 'manual', work = null }) {
     const activeId = activeByRun.get(runId);
     if (activeId && jobs.has(activeId) && ACTIVE.has(jobs.get(activeId).stage)) {
       return { job: jobs.get(activeId), joined: true };
@@ -50,7 +52,7 @@ export function createRetransformJobs({ store, transform, runtime } = {}) {
       job.stage = 'RUNNING';
       job.startedAt = nowIso();
       try {
-        job.result = await transform.retransformRun(ctx, { runId });
+        job.result = work ? await work() : await transform.retransformRun(ctx, { runId });
         job.stage = 'DONE';
       } catch (err) {
         job.stage = 'FAILED';

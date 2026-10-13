@@ -12,6 +12,7 @@ import { nowIso, uk, isIsoDate } from '../../core/ids.js';
 import * as exceptionsModule from '../../core/exceptions.js';
 import { isBotUser, botMayPerform } from './agent.js';
 import { refreshBranchSummary } from '../../core/branch_summary.js';
+import { checkLocationChange, changeBranchLocation } from '../../core/branch_location.js';
 
 const MAPPING_RULE_TYPES = ['MODULE_ROUTE', 'LEDGER_ACCOUNT', 'PARTY', 'PAYMENT_MODE', 'TAX'];
 const MAPPING_UPSERT_MAX_ROWS = 5000;
@@ -125,6 +126,52 @@ export function createMutateRouter({ store, audit, deps = {}, auth, retransformJ
       // Runs as a detached job (src/server/retransform_jobs.js): a real run takes minutes.
       const { job, joined } = await retransformJobs.start(ctxFor(req), { runId: run.id, branchCode: run.branch_code, trigger: 'manual' });
       res.status(202).json({ jobId: job.jobId, runId: run.id, stage: job.stage, joined });
+    })
+  );
+
+  // ---- change a branch's Zoho Books location (admin; before anything is queued or posted) ----
+  // Withdraws approvals, sets the open batches aside and re-transforms every run of the branch
+  // (src/core/branch_location.js). It touches every voucher, so it runs as the branch's latest
+  // run's re-transform job; the page follows it like a "Re-apply mapping".
+  router.post(
+    '/branches/:code/location',
+    auth.authenticate(),
+    auth.requireCorrelationId(),
+    botGate('change_location'),
+    auth.requireRole('admin'),
+    wrap(async (req, res) => {
+      const branchCode = req.params.code;
+      if (!auth.branchAllowed(req.user, branchCode)) {
+        return auth.deny(req, res, { status: 403, error: 'FORBIDDEN', reason: `BRANCH_SCOPE:${branchCode}` });
+      }
+      if (!retransformJobs) return notImplemented(res, 'transform');
+      const args = {
+        branchCode,
+        locationId: req.body?.location_id,
+        locationName: typeof req.body?.location_name === 'string' ? req.body.location_name.trim() || null : null,
+        reason: req.body?.reason,
+      };
+      let checked;
+      try {
+        checked = await checkLocationChange(ctxFor(req), args);
+      } catch (err) {
+        if (err?.code === 'NOT_FOUND') return res.status(404).json({ error: err.code, message: err.message });
+        if (err?.code === 'BAD_LOCATION_ID' || err?.code === 'REASON_REQUIRED') return res.status(400).json({ error: err.code, message: err.message });
+        if (err?.code === 'BATCH_IN_PROGRESS' || err?.code === 'VOUCHER_SENT') return res.status(409).json({ error: err.code, message: err.message });
+        throw err;
+      }
+      const latest = [...checked.runs].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+      if (!latest) {
+        const result = await changeBranchLocation(ctxFor(req), args);
+        await refreshSummary(branchCode);
+        return res.status(200).json({ result });
+      }
+      const ctx = ctxFor(req);
+      const { job, joined } = await retransformJobs.start(ctx, {
+        runId: latest.id, branchCode, trigger: 'location_change', work: () => changeBranchLocation(ctx, args),
+      });
+      if (joined) return res.status(409).json({ error: 'JOB_RUNNING', message: `A re-apply job is already running for run ${latest.id}; try again when it finishes`, jobId: job.jobId });
+      res.status(202).json({ jobId: job.jobId, runId: latest.id, stage: job.stage });
     })
   );
 
