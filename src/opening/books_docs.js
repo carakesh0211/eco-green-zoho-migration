@@ -91,6 +91,12 @@ export function documentBody(d, plan, res) {
   // Org-specific fields Books insists on (for example the GST invoice / bill type of a note that
   // has no original document), as settled at preflight; they never override what is set below.
   const extra = res.extras?.[d.kind] ?? {};
+  let refType = {};
+  if (d.kind === 'credit_note' || d.kind === 'vendor_credit') {
+    const t = referenceInvoiceType(res.gstTreatment?.[partyKey(d)]);
+    if (!t && !extra.reference_invoice_type) throw new OpeningPostError(`${d.number}: no GST treatment for ${partyKey(d)} ${d.partyName}; rerun preflight`);
+    if (t) refType = { reference_invoice_type: t };
+  }
   switch (d.kind) {
     case 'invoice':
       return {
@@ -100,7 +106,7 @@ export function documentBody(d, plan, res) {
       };
     case 'credit_note':
       return {
-        ...extra, customer_id: contactId, creditnote_number: d.number, reference_number: d.sourceRef, date, ...loc, ...exemption,
+        ...refType, ...extra, customer_id: contactId, creditnote_number: d.number, reference_number: d.sourceRef, date, ...loc, ...exemption,
         line_items: [{ account_id: res.offsetAccountId, name: 'Opening balance', description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
@@ -112,7 +118,7 @@ export function documentBody(d, plan, res) {
       };
     case 'vendor_credit':
       return {
-        ...extra, vendor_id: contactId, vendor_credit_number: d.number, reference_number: d.vendorInvoiceNo ?? d.sourceRef, date, ...loc,
+        ...refType, ...extra, vendor_id: contactId, vendor_credit_number: d.number, reference_number: d.vendorInvoiceNo ?? d.sourceRef, date, ...loc,
         line_items: [{ account_id: res.offsetAccountId, description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
@@ -131,6 +137,21 @@ export function documentBody(d, plan, res) {
     default:
       throw new OpeningPostError(`${d.number}: unknown document kind ${d.kind}`);
   }
+}
+
+/**
+ * GST "reference invoice type" Books needs on a credit note or vendor credit that has no original
+ * invoice / bill (codes 12069, 37034), from the party's GST treatment. Unregistered parties are
+ * B2C Others: these opening notes are intra-state (Tripura) and under the B2C Large threshold.
+ */
+export function referenceInvoiceType(gstTreatment) {
+  return {
+    business_gst: 'registered', business_registered_composition: 'registered', tax_deductor: 'registered',
+    business_registered_regular: 'registered',
+    business_none: 'b2c_others', consumer: 'b2c_others',
+    overseas: 'export_without_payment', business_sez: 'sez_without_payment', sez_developer: 'sez_without_payment',
+    deemed_export: 'deemed_export',
+  }[gstTreatment] ?? null;
 }
 
 /** True when an existing Books record is this document (same number and, for vendors, same vendor). */

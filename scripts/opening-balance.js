@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, ope
 import { join } from 'node:path';
 import { buildOpeningPlan, summarisePlan, toPaise } from '../src/opening/plan.js';
 import {
-  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance,
+  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, referenceInvoiceType,
   assertTestOrgPosting, OpeningPostError,
 } from '../src/opening/books_docs.js';
 import { formatMoney } from '../src/core/money.js';
@@ -262,7 +262,7 @@ async function cmdPreflight(o) {
   const notes = [];
   const res = {
     organizationId: config.organizationId, locationId: plan.locationId, docDate: o['doc-date'] ?? 'original',
-    accounts: {}, contacts: {}, offsetAccountId: null, advancePaidThroughId: o['advance-paid-through-id'] ?? null,
+    accounts: {}, contacts: {}, gstTreatment: {}, offsetAccountId: null, advancePaidThroughId: o['advance-paid-through-id'] ?? null,
     itemId: o['item-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? null, advancePaidThroughCurrencyId: null,
     extras: parseExtras(o),
   };
@@ -359,24 +359,43 @@ async function cmdPreflight(o) {
   for (const d of plan.documents) parties.set(partyKey(d), d);
   const unresolved = [];
   progress(`contacts: ${parties.size}…`);
+  // Parties with a credit note or vendor credit need their GST treatment (it sets the note's
+  // reference invoice type); name searches return it, overridden contacts are read once.
+  const needsGst = new Set(plan.documents.filter((d) => d.kind === 'credit_note' || d.kind === 'vendor_credit').map(partyKey));
   let seen = 0;
   for (const [key, d] of parties) {
     if (++seen % 20 === 0) progress(`contacts ${seen}/${parties.size}`);
-    if (overrides[key]) { res.contacts[key] = String(overrides[key]); continue; }
+    if (overrides[key]) {
+      res.contacts[key] = String(overrides[key]);
+      if (needsGst.has(key)) res.gstTreatment[key] = (await books.call('GET', `/contacts/${overrides[key]}`)).contact?.gst_treatment ?? null;
+      continue;
+    }
     const type = d.side === 'vendor' ? 'vendor' : 'customer';
     const hits = (await books.listAll('/contacts', 'contacts', { contact_type: type, contact_name_contains: d.partyName.slice(0, 40) }))
       .filter((c) => normName(c.contact_name) === normName(d.partyName) || normName(c.company_name) === normName(d.partyName));
-    if (hits.length === 1) res.contacts[key] = String(hits[0].contact_id);
-    else unresolved.push([key, d.partyName, hits.length, hits.map((c) => `${c.contact_id}:${c.contact_name}`).join(' | ')]);
+    if (hits.length === 1) {
+      res.contacts[key] = String(hits[0].contact_id);
+      res.gstTreatment[key] = hits[0].gst_treatment ?? null;
+    } else unresolved.push([key, d.partyName, hits.length, hits.map((c) => `${c.contact_id}:${c.contact_name}`).join(' | ')]);
   }
+  const noType = [...needsGst].filter((k) => res.contacts[k] && !referenceInvoiceType(res.gstTreatment[k]));
+  if (noType.length) problems.push(`${noType.length} parties with credit notes / vendor credits have no usable GST treatment in Books: ${noType.slice(0, 10).map((k) => `${k} (${res.gstTreatment[k] ?? 'none'})`).join(', ')}`);
+  const byType = {};
+  for (const k of needsGst) { const t = referenceInvoiceType(res.gstTreatment[k]) ?? 'unknown'; byType[t] = (byType[t] ?? 0) + 1; }
+  notes.push(`Credit note / vendor credit reference invoice type by party: ${JSON.stringify(byType)}`);
   if (unresolved.length) {
     problems.push(`${unresolved.length} parties have no single Books contact — fill contacts-to-map.csv into the --contacts file`);
     writeFileSync(join(out, 'contacts-to-map.csv'), toCsv(['Key', 'Eco Green name', 'Matches', 'Candidates'], unresolved));
   }
 
-  // Existing opening balance.
-  const ob = await books.call('GET', '/settings/openingbalances').catch(orStop(() => null));
-  if (ob?.opening_balance?.accounts?.length) notes.push(`Books already holds an opening balance dated ${ob.opening_balance.date} with ${ob.opening_balance.accounts.length} lines — post will stop at the GL step until that is reviewed`);
+  // Existing opening balance for this location (saved for review).
+  const ob = await books.call('GET', '/settings/openingbalances', { query: { location_id: plan.locationId } }).catch(orStop(() => null));
+  if (ob) writeFileSync(join(out, 'books-meta', 'opening-balance-existing.json'), JSON.stringify(ob, null, 2));
+  if (ob?.opening_balance?.accounts?.length) {
+    const same = res.offsetAccountId && Object.keys(res.accounts).length === plan.gl.length && (!plan.documents.some((d) => d.kind === 'vendor_advance') || res.advancePaidThroughCurrencyId)
+      ? sameOpeningBalance(ob.opening_balance.accounts, openingBalanceBody(plan, res), res.offsetAccountId) : false;
+    notes.push(`Books holds an opening balance dated ${ob.opening_balance.date} with ${ob.opening_balance.accounts.length} lines for this location: ${same ? 'it matches this plan' : 'it differs from this plan (post needs --replace-opening-balance; see books-meta/opening-balance-existing.json)'}`);
+  }
 
   progress(`preflight done: ${books.usage.calls} Books calls${books.usage.remaining !== null ? `, ${books.usage.remaining} left today` : ''}`);
   if (books.usage.remaining !== null) notes.push(`Books API calls left today: ${books.usage.remaining} of ${books.usage.limit ?? '?'}`);
@@ -485,7 +504,7 @@ async function cmdPost(o) {
 
 async function postGl(plan, res, books, log, o, counts) {
   const body = openingBalanceBody(plan, res);
-  const current = await books.call('GET', '/settings/openingbalances').catch(orStop(() => null));
+  const current = await books.call('GET', '/settings/openingbalances', { query: { location_id: plan.locationId } }).catch(orStop(() => null));
   const lines = current?.opening_balance?.accounts ?? [];
   if (lines.length) {
     if (sameOpeningBalance(lines, body, res.offsetAccountId)) {
