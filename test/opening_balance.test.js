@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { buildXlsx } from './helpers/xlsx_builder.js';
 import { buildOpeningPlan, summarisePlan, OpeningPlanError } from '../src/opening/plan.js';
 import {
-  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, referenceInvoiceType, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
+  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, openingBalanceLines, referenceInvoiceType, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
 } from '../src/opening/books_docs.js';
 import { assertPostingAllowed } from '../src/books/guard.js';
 
@@ -219,4 +219,24 @@ test('credit notes / vendor credits: GST reference invoice type from the party\'
   assert.equal(documentBody(cn, p, { ...RES, gstTreatment: { 'customer:H1': 'consumer' } }).reference_invoice_type, 'b2c_others');
   assert.throws(() => documentBody(cn, p, { ...RES, gstTreatment: {} }), /no GST treatment/);
   assert.equal(documentBody(p.documents.find((d) => d.sourceRef === 'J1'), p, RES).reference_invoice_type, undefined);
+});
+
+test('customer documents: the item-level exemption sits on the line only, never on the header', () => {
+  const p = plan999();
+  const res = { ...RES, taxExemptionId: 'EX-1' };
+  for (const ref of ['J1', 'C1']) {
+    const body = documentBody(p.documents.find((d) => d.sourceRef === ref), p, res);
+    assert.equal(body.tax_exemption_id, undefined, ref);
+    assert.equal(body.line_items[0].tax_exemption_id, 'EX-1', ref);
+  }
+});
+
+test('Opening Balances as Books returns them (grouped by account type) are flattened to lines', () => {
+  const grouped = [
+    { account_type: 'asset', accounts: [{ account_id: 'A77', debit_or_credit: 'debit', amount: 1000 }, { account_id: 'A52', debit_or_credit: 'debit', amount: 100 }] },
+    { account_type: 'equity', accounts: [{ account_id: 'A108', debit_or_credit: 'credit', amount: 2400 }] },
+    { account_type: 'liability', accounts: [{ account_id: 'OBA', debit_or_credit: 'debit', amount: 1300 }] },
+  ];
+  assert.equal(openingBalanceLines(grouped).length, 4);
+  assert.equal(sameOpeningBalance(grouped, openingBalanceBody(plan999(), RES), 'OBA'), true);
 });

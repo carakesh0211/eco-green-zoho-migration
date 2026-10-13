@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, ope
 import { join } from 'node:path';
 import { buildOpeningPlan, summarisePlan, toPaise } from '../src/opening/plan.js';
 import {
-  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, referenceInvoiceType,
+  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, openingBalanceLines, referenceInvoiceType,
   assertTestOrgPosting, OpeningPostError,
 } from '../src/opening/books_docs.js';
 import { formatMoney } from '../src/core/money.js';
@@ -394,7 +394,7 @@ async function cmdPreflight(o) {
   if (ob?.opening_balance?.accounts?.length) {
     const same = res.offsetAccountId && Object.keys(res.accounts).length === plan.gl.length && (!plan.documents.some((d) => d.kind === 'vendor_advance') || res.advancePaidThroughCurrencyId)
       ? sameOpeningBalance(ob.opening_balance.accounts, openingBalanceBody(plan, res), res.offsetAccountId) : false;
-    notes.push(`Books holds an opening balance dated ${ob.opening_balance.date} with ${ob.opening_balance.accounts.length} lines for this location: ${same ? 'it matches this plan' : 'it differs from this plan (post needs --replace-opening-balance; see books-meta/opening-balance-existing.json)'}`);
+    notes.push(`Books holds an opening balance dated ${ob.opening_balance.date} with ${openingBalanceLines(ob.opening_balance.accounts).length} lines for this location: ${same ? 'it matches this plan' : 'it differs from this plan (post needs --replace-opening-balance; see books-meta/opening-balance-existing.json)'}`);
   }
 
   progress(`preflight done: ${books.usage.calls} Books calls${books.usage.remaining !== null ? `, ${books.usage.remaining} left today` : ''}`);
@@ -505,7 +505,7 @@ async function cmdPost(o) {
 async function postGl(plan, res, books, log, o, counts) {
   const body = openingBalanceBody(plan, res);
   const current = await books.call('GET', '/settings/openingbalances', { query: { location_id: plan.locationId } }).catch(orStop(() => null));
-  const lines = current?.opening_balance?.accounts ?? [];
+  const lines = openingBalanceLines(current?.opening_balance?.accounts ?? []);
   if (lines.length) {
     if (sameOpeningBalance(lines, body, res.offsetAccountId)) {
       console.log(`Opening Balances: already in Books as planned (${body.accounts.length} lines); nothing to do`);
