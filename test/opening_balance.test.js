@@ -3,9 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildXlsx } from './helpers/xlsx_builder.js';
-import { buildOpeningPlan, summarisePlan, OpeningPlanError } from '../src/opening/plan.js';
+import { buildOpeningPlan, summarisePlan, OpeningPlanError, assignBooksNumbers, booksSafeNumber } from '../src/opening/plan.js';
 import {
-  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, openingBalanceLines, referenceInvoiceType, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
+  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, openingBalanceLines, openingBalanceDiff, referenceInvoiceType, MODULES, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
 } from '../src/opening/books_docs.js';
 import { assertPostingAllowed } from '../src/books/guard.js';
 
@@ -239,4 +239,33 @@ test('Opening Balances as Books returns them (grouped by account type) are flatt
   ];
   assert.equal(openingBalanceLines(grouped).length, 4);
   assert.equal(sameOpeningBalance(grouped, openingBalanceBody(plan999(), RES), 'OBA'), true);
+});
+
+test('Books numbers: safe characters, at most 16, unique within a module; existing numbers kept', () => {
+  assert.equal(booksSafeNumber('460/25/T 5960'), '460/25/T-5960');
+  const docs = [
+    { kind: 'bill', number: '460/25/K/1623' },
+    { kind: 'vendor_credit', number: '460/25/J/211444' },
+    { kind: 'vendor_credit', number: '460/25/J/211444' },
+    { kind: 'bill', number: '460/25/J/211444' },
+    { kind: 'bill', number: '460/24/211/428663' },
+  ];
+  assignBooksNumbers(docs);
+  assert.deepEqual(docs.map((d) => d.number), ['460/25/K/1623', '460/25/J/211444', '460/25J/211444-2', '460/25/J/211444', '460/24211/428663']);
+});
+
+test('Opening Balances in debit/credit columns compare correctly; differences are listed', () => {
+  const body = openingBalanceBody(plan999(), RES);
+  const columns = [
+    { account_id: 'A77', debit: 1000, credit: 0 },
+    { account_id: 'A108', debit: 0, credit: 2400 },
+    { account_id: 'A52', debit: '100.00', credit: '0.00' },
+  ];
+  assert.equal(sameOpeningBalance(columns, body), true);
+  const diff = openingBalanceDiff(columns.slice(1), body);
+  assert.deepEqual(diff, { onlyInBooks: [], onlyInPlan: ['A77|debit|1000.00'] });
+});
+
+test('vendor credits are listed under vendor_credits in Books answers', () => {
+  assert.equal(MODULES.vendor_credit.list, 'vendor_credits');
 });

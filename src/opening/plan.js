@@ -208,7 +208,7 @@ export function buildOpeningPlan(buffer, opts) {
     const sec = d.section;
     const kind = DEBIT_NOTE_TYPES.has(d.type) ? 'debit_note' : (d.amount < 0n || CREDIT_NOTE_TYPES.has(d.type) ? 'credit_note' : 'invoice');
     if (kind === 'credit_note' && d.amount > 0n) warnings.push(`customer ${sec.partyCode} ${d.number}: credit-note type with a debit amount; posted as a credit note of ${fmt(d.amount)}`);
-    const number = d.number === 'OPENING BALANCE' ? `OB-${sec.partyCode}-${d.date ?? asOf}` : d.number;
+    const number = /^OPENING\s*BALANCE/i.test(d.number) ? `OB/${sec.partyCode}` : d.number;
     documents.push({
       kind, side: 'customer', partyCode: sec.partyCode, partyName: sec.partyName, controlCode: sec.control.code, controlZoho: sec.control.zohoCode,
       number: `${branch}/${number}`, date: d.date ?? asOf, dueDate: d.dueDate ?? d.date ?? asOf, amount: d.amount < 0n ? -d.amount : d.amount,
@@ -285,7 +285,51 @@ export function buildOpeningPlan(buffer, opts) {
   const docNet = documents.reduce((a, d) => a + d.net, 0n);
   checks.push({ check: 'GL lines + documents balance (Dr = Cr)', expected: '0.00', actual: fmt(glNet + docNet), ok: glNet + docNet === 0n });
 
+  assignBooksNumbers(documents);
+  const tooLong = documents.filter((d) => d.number.length > BOOKS_NUMBER_MAX);
+  checks.push({ check: `Books document numbers: at most ${BOOKS_NUMBER_MAX} characters, letters / digits / - / only`, expected: '0', actual: String(tooLong.length), ok: tooLong.length === 0 });
+  const seen = new Set();
+  const dupes = documents.filter((d) => { const k = `${d.kind}|${d.number}`; const hit = seen.has(k); seen.add(k); return hit; });
+  checks.push({ check: 'Books document numbers: unique within each module', expected: '0', actual: String(dupes.length), ok: dupes.length === 0 });
+
   return { branch, asOf, locationId, gl, documents, checks, warnings, totals: { glNet, docNet, plNet: tb.plNet, closingStock, reserveNet } };
+}
+
+// Books document numbers: at most 16 characters of letters, digits, hyphen and slash (code
+// 71530), and unique within a module (one Eco Green voucher can carry several suppliers).
+export const BOOKS_NUMBER_MAX = 16;
+
+/** Books-safe form of a document number: other characters become '-'. */
+export function booksSafeNumber(n) {
+  return String(n).replace(/[^A-Za-z0-9/-]+/g, '-').replace(/-{2,}/g, '-').replace(/-$/, '');
+}
+
+/** Shorter form: the separator between a two-digit year and the voucher prefix goes (460/25/J/1 -> 460/25J/1). */
+function compactNumber(n) {
+  return n.replace(/^(\d+)\/(\d{2})\/([A-Za-z0-9]+)\//, '$1/$2$3/');
+}
+
+/**
+ * Gives every document its Books number in place (the Eco Green voucher stays in sourceRef):
+ * Books-safe, compacted when too long, and suffixed -2, -3 … when a module repeats a number.
+ */
+export function assignBooksNumbers(documents) {
+  const fit = (n) => (n.length > BOOKS_NUMBER_MAX ? compactNumber(n) : n);
+  const count = new Map();
+  for (const d of documents) {
+    const base = fit(booksSafeNumber(d.number));
+    const k = `${d.kind}|${base}`;
+    count.set(k, (count.get(k) ?? 0) + 1);
+  }
+  const used = new Map();
+  for (const d of documents) {
+    const base = fit(booksSafeNumber(d.number));
+    const k = `${d.kind}|${base}`;
+    const i = (used.get(k) ?? 0) + 1;
+    used.set(k, i);
+    d.number = count.get(k) > 1 && i > 1 ? fit(`${compactNumber(base)}-${i}`) : base;
+  }
+  return documents;
 }
 
 /** Plain summary for the report. */
