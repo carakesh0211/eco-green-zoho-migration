@@ -29,7 +29,7 @@ export const MODULES = Object.freeze({
   invoice: { path: 'invoices', list: 'invoices', key: 'invoice', id: 'invoice_id', number: 'invoice_number', search: 'invoice_number', sort: 'invoice_number', open: 'status/sent' },
   credit_note: { path: 'creditnotes', list: 'creditnotes', key: 'creditnote', id: 'creditnote_id', number: 'creditnote_number', search: 'creditnote_number', sort: 'creditnote_number', open: 'status/open' },
   bill: { path: 'bills', list: 'bills', key: 'bill', id: 'bill_id', number: 'bill_number', search: 'bill_number', sort: 'bill_number', open: 'status/open' },
-  vendor_credit: { path: 'vendorcredits', list: 'vendorcredits', key: 'vendor_credit', id: 'vendor_credit_id', number: 'vendor_credit_number', search: 'vendor_credit_number', sort: 'vendor_credit_number', open: 'status/open' },
+  vendor_credit: { path: 'vendorcredits', list: 'vendor_credits', key: 'vendor_credit', id: 'vendor_credit_id', number: 'vendor_credit_number', search: 'vendor_credit_number', sort: 'vendor_credit_number', open: 'status/open' },
   vendor_advance: { path: 'vendorpayments', list: 'vendorpayments', key: 'vendorpayment', id: 'payment_id', number: 'reference_number', search: 'reference_number', sort: 'reference_number', exactLookup: true, open: null },
 });
 
@@ -72,10 +72,20 @@ export function openingBalanceLines(accounts = []) {
 /** Lines of an Opening Balances entry as comparable keys (Books may answer with debit/credit columns). */
 export function openingBalanceKeys(accounts) {
   return accounts.map((a) => {
-    const dc = a.debit_or_credit ?? (Number(a.debit ?? 0) ? 'debit' : 'credit');
-    const amount = Number(a.amount ?? a.debit ?? a.credit ?? 0);
-    return `${a.account_id}|${dc}|${amount.toFixed(2)}`;
+    // Books may answer with debit/credit columns (one of them 0) instead of debit_or_credit+amount.
+    const debit = Number(a.debit ?? 0);
+    const credit = Number(a.credit ?? 0);
+    const dc = a.debit_or_credit ?? (debit ? 'debit' : 'credit');
+    const amount = a.amount !== undefined && a.amount !== null && a.amount !== '' ? Number(a.amount) : Math.max(debit, credit);
+    return `${a.account_id}|${dc}|${Math.abs(amount).toFixed(2)}`;
   }).filter((k) => !k.endsWith('|0.00')).sort();
+}
+
+/** What differs between Books' Opening Balances and the plan (for review when they do not match). */
+export function openingBalanceDiff(existing, body, ignoreAccountId = null) {
+  const a = openingBalanceKeys(openingBalanceLines(existing).filter((x) => String(x.account_id) !== String(ignoreAccountId)));
+  const b = openingBalanceKeys(body.accounts);
+  return { onlyInBooks: a.filter((k) => !b.includes(k)), onlyInPlan: b.filter((k) => !a.includes(k)) };
 }
 
 /**

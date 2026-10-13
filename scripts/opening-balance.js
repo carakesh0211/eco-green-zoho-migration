@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, ope
 import { join } from 'node:path';
 import { buildOpeningPlan, summarisePlan, toPaise } from '../src/opening/plan.js';
 import {
-  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, openingBalanceLines, referenceInvoiceType,
+  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, openingBalanceLines, openingBalanceDiff, referenceInvoiceType,
   assertTestOrgPosting, OpeningPostError,
 } from '../src/opening/books_docs.js';
 import { formatMoney } from '../src/core/money.js';
@@ -503,6 +503,7 @@ async function cmdPost(o) {
 }
 
 async function postGl(plan, res, books, log, o, counts) {
+  const out = need(o, 'out');
   const body = openingBalanceBody(plan, res);
   const current = await books.call('GET', '/settings/openingbalances', { query: { location_id: plan.locationId } }).catch(orStop(() => null));
   const lines = openingBalanceLines(current?.opening_balance?.accounts ?? []);
@@ -513,6 +514,10 @@ async function postGl(plan, res, books, log, o, counts) {
       counts.found += 1;
       return;
     }
+    const diff = openingBalanceDiff(lines, body, res.offsetAccountId);
+    mkdirSync(join(out, 'books-meta'), { recursive: true });
+    writeFileSync(join(out, 'books-meta', 'opening-balance-diff.json'), JSON.stringify({ ...diff, sample: lines.slice(0, 3) }, null, 2));
+    console.log(`Opening Balances differ: ${diff.onlyInBooks.length} line(s) only in Books, ${diff.onlyInPlan.length} only in the plan (books-meta/opening-balance-diff.json)`);
     if (o['replace-opening-balance'] !== 'true') {
       console.log(`Opening Balances: Books holds a different entry dated ${current.opening_balance.date} (${lines.length} lines); not changed. Rerun with --replace-opening-balance to replace it with this plan's ${body.accounts.length} lines.`);
       log({ key: 'gl', status: 'DIFFERS', lines: lines.length });
