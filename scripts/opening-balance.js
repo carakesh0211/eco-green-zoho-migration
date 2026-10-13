@@ -16,6 +16,7 @@
 //
 //   node scripts/opening-balance.js plan --file bills_invoices_460.xlsx --branch 460 \
 //        --as-of 2026-03-31 --closing-stock 3137148.13 --location 4222956000000042021 --out var/opening/460
+//        [--stock-code AL0052] (the Zoho account code the closing stock goes to; it must not be a stock account)
 //   node scripts/opening-balance.js preflight --out var/opening/460 --contacts contacts_460.json
 //   node scripts/opening-balance.js post --out var/opening/460 --confirm-org 60091274394 --only gl,invoice --per-kind 1
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, openSync, closeSync, unlinkSync } from 'node:fs';
@@ -82,6 +83,7 @@ function cmdPlan(o) {
     asOf: need(o, 'as-of'),
     closingStock: toPaise(need(o, 'closing-stock')),
     locationId: need(o, 'location'),
+    ...(o['stock-code'] ? { stockCode: o['stock-code'] } : {}),
   });
   const coa = o.coa ? readCoaCsv(o.coa) : new Map();
   const acct = (code) => (coa.get(code) ?? []).map((a) => `${a.name} (${a.type})`).join(' / ') || '';
@@ -281,6 +283,9 @@ async function cmdPreflight(o) {
     const { account: a, problem } = pickAccount(g.zohoCode, await accountsWhere({ account_code: g.zohoCode }));
     if (problem) { problems.push(problem); continue; }
     if (/^accounts_(receivable|payable)$/.test(a.account_type)) problems.push(`GL ${g.zohoCode} ${a.account_name} is ${a.account_type}; receivables/payables come from documents, not Opening Balances`);
+    // Books accepts an Opening Balances line on a stock account but drops it (stock value comes
+    // from items), leaving Opening Balance Adjustments out by that amount.
+    if (a.account_type === 'stock') problems.push(`GL ${g.zohoCode} ${a.account_name} is a stock account: Books drops Opening Balances lines on it; put the closing stock on a non-stock asset account (plan --stock-code)`);
     if (!a.currency_id) problems.push(`GL ${g.zohoCode} ${a.account_name}: Books returned no currency for this account`);
     res.accounts[g.zohoCode] = { account_id: String(a.account_id), currency_id: a.currency_id ? String(a.currency_id) : null, name: a.account_name, type: a.account_type };
   }
