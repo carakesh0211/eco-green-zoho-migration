@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { buildXlsx } from './helpers/xlsx_builder.js';
 import { buildOpeningPlan, summarisePlan, OpeningPlanError } from '../src/opening/plan.js';
 import {
-  openingBalanceBody, documentBody, sameDocument, postingQueue, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
+  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
 } from '../src/opening/books_docs.js';
 import { assertPostingAllowed } from '../src/books/guard.js';
 
@@ -153,4 +153,11 @@ test('post gate: shared posting guard, test organisation only, named on the comm
   assert.throws(() => assertTestOrgPosting({ ...ok, organizationId: '60065029674', orgAllowlist: ['60065029674'] }, '60065029674', assertPostingAllowed), /test organisation/);
   assert.throws(() => assertTestOrgPosting({ ...ok, orgAllowlist: [OPENING_TEST_ORG, '60065029674'] }, OPENING_TEST_ORG, assertPostingAllowed), /only/);
   assert.throws(() => assertTestOrgPosting(ok, undefined, assertPostingAllowed), /--confirm-org/);
+});
+
+test('account lookup: exactly one Books account per code, repeats of the same account collapse', () => {
+  const a = { account_id: '1', account_code: 'AL0081', account_name: 'Tds Receivable Py' };
+  assert.equal(pickAccount('AL0081', [a, { ...a }]).account.account_id, '1');
+  assert.match(pickAccount('AL0081', [a, { ...a, account_id: '2' }]).problem, /2 Books accounts/);
+  assert.match(pickAccount('AL0171', [a]).problem, /0 Books accounts/);
 });
