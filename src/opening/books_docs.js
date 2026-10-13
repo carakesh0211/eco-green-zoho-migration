@@ -46,7 +46,33 @@ export function openingBalanceBody(plan, res) {
     if (!a.currency_id) throw new OpeningPostError(`GL ${g.zohoCode}: no currency on the resolved Books account; rerun preflight`);
     return { account_id: a.account_id, currency_id: a.currency_id, debit_or_credit: g.net > 0n ? 'debit' : 'credit', exchange_rate: 1, amount: rupees(g.net) };
   });
+  // Vendor advances are paid out of a clearing account (Books will not pay out of Opening
+  // Balance Adjustments); its opening debit refills it, so it ends the opening at nil.
+  const advances = plan.documents.filter((d) => d.kind === 'vendor_advance').reduce((a, d) => a + d.amount, 0n);
+  if (advances > 0n && res.advancePaidThroughId) {
+    if (!res.advancePaidThroughCurrencyId) throw new OpeningPostError('advance clearing account: no currency resolved; rerun preflight');
+    lines.push({ account_id: res.advancePaidThroughId, currency_id: res.advancePaidThroughCurrencyId, debit_or_credit: 'debit', exchange_rate: 1, amount: rupees(advances) });
+  }
   return { date: plan.asOf, location_id: plan.locationId, accounts: lines };
+}
+
+/** Lines of an Opening Balances entry as comparable keys (Books may answer with debit/credit columns). */
+export function openingBalanceKeys(accounts) {
+  return accounts.map((a) => {
+    const dc = a.debit_or_credit ?? (Number(a.debit ?? 0) ? 'debit' : 'credit');
+    const amount = Number(a.amount ?? a.debit ?? a.credit ?? 0);
+    return `${a.account_id}|${dc}|${amount.toFixed(2)}`;
+  }).filter((k) => !k.endsWith('|0.00')).sort();
+}
+
+/**
+ * True when Books' current Opening Balances lines are exactly the ones this plan would post. The
+ * balancing line Books adds itself (Opening Balance Adjustments, `ignoreAccountId`) is left out.
+ */
+export function sameOpeningBalance(existing, body, ignoreAccountId = null) {
+  const a = openingBalanceKeys(existing.filter((x) => String(x.account_id) !== String(ignoreAccountId)));
+  const b = openingBalanceKeys(body.accounts);
+  return a.length === b.length && a.every((k, i) => k === b[i]);
 }
 
 /**
@@ -62,34 +88,40 @@ export function documentBody(d, plan, res) {
   const description = `Opening balance ${plan.asOf} – Eco Green ${d.sourceType} ${d.sourceRef}`;
   const exemption = res.taxExemptionId ? { tax_exemption_id: res.taxExemptionId } : {};
   const loc = { location_id: plan.locationId };
+  // Org-specific fields Books insists on (for example the GST invoice / bill type of a note that
+  // has no original document), as settled at preflight; they never override what is set below.
+  const extra = res.extras?.[d.kind] ?? {};
   switch (d.kind) {
     case 'invoice':
       return {
-        customer_id: contactId, invoice_number: d.number, reference_number: d.sourceRef, date, due_date: due, ...loc, ...exemption,
-        line_items: [{ item_id: res.itemId, description, quantity: 1, rate: amount, ...loc }],
+        ...extra, customer_id: contactId, invoice_number: d.number, reference_number: d.sourceRef, date, due_date: due, ...loc, ...exemption,
+        line_items: [{ item_id: res.itemId, description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
     case 'credit_note':
       return {
-        customer_id: contactId, creditnote_number: d.number, reference_number: d.sourceRef, date, ...loc, ...exemption,
-        line_items: [{ account_id: res.offsetAccountId, name: 'Opening balance', description, quantity: 1, rate: amount, ...loc }],
+        ...extra, customer_id: contactId, creditnote_number: d.number, reference_number: d.sourceRef, date, ...loc, ...exemption,
+        line_items: [{ account_id: res.offsetAccountId, name: 'Opening balance', description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
     case 'bill':
       return {
-        vendor_id: contactId, bill_number: d.number, reference_number: d.vendorInvoiceNo ?? d.sourceRef, date, due_date: due, ...loc,
+        ...extra, vendor_id: contactId, bill_number: d.number, reference_number: d.vendorInvoiceNo ?? d.sourceRef, date, due_date: due, ...loc,
         line_items: [{ account_id: res.offsetAccountId, description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
     case 'vendor_credit':
       return {
-        vendor_id: contactId, vendor_credit_number: d.number, reference_number: d.vendorInvoiceNo ?? d.sourceRef, date, ...loc,
+        ...extra, vendor_id: contactId, vendor_credit_number: d.number, reference_number: d.vendorInvoiceNo ?? d.sourceRef, date, ...loc,
         line_items: [{ account_id: res.offsetAccountId, description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
     case 'vendor_advance':
+      // Books pays only out of a cash or bank account (code 11016 otherwise); the clearing account
+      // it is paid through gets the same amount as an Opening Balances debit (openingBalanceBody).
+      if (!res.advancePaidThroughId) throw new OpeningPostError(`${d.number}: vendor advances need a cash/bank clearing account (--advance-paid-through-id at preflight)`);
       return {
-        vendor_id: contactId, amount, date, reference_number: d.number, paid_through_account_id: res.advancePaidThroughId ?? res.offsetAccountId,
+        ...extra, vendor_id: contactId, amount, date, reference_number: d.number, paid_through_account_id: res.advancePaidThroughId,
         description, ...loc,
       };
     case 'debit_note':
