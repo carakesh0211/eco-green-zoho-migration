@@ -56,6 +56,19 @@ export function openingBalanceBody(plan, res) {
   return { date: plan.asOf, location_id: plan.locationId, accounts: lines };
 }
 
+/**
+ * Books answers GET /settings/openingbalances with its lines grouped by account type (each group
+ * holding its own array of lines); flatten that to the lines themselves.
+ */
+export function openingBalanceLines(accounts = []) {
+  const out = [];
+  for (const a of accounts) {
+    if (a && a.account_id !== undefined) { out.push(a); continue; }
+    for (const v of Object.values(a ?? {})) if (Array.isArray(v)) out.push(...openingBalanceLines(v));
+  }
+  return out;
+}
+
 /** Lines of an Opening Balances entry as comparable keys (Books may answer with debit/credit columns). */
 export function openingBalanceKeys(accounts) {
   return accounts.map((a) => {
@@ -70,7 +83,7 @@ export function openingBalanceKeys(accounts) {
  * balancing line Books adds itself (Opening Balance Adjustments, `ignoreAccountId`) is left out.
  */
 export function sameOpeningBalance(existing, body, ignoreAccountId = null) {
-  const a = openingBalanceKeys(existing.filter((x) => String(x.account_id) !== String(ignoreAccountId)));
+  const a = openingBalanceKeys(openingBalanceLines(existing).filter((x) => String(x.account_id) !== String(ignoreAccountId)));
   const b = openingBalanceKeys(body.accounts);
   return a.length === b.length && a.every((k, i) => k === b[i]);
 }
@@ -86,6 +99,8 @@ export function documentBody(d, plan, res) {
   const due = res.docDate === 'asof' ? plan.asOf : (d.dueDate && d.dueDate >= date ? d.dueDate : date);
   const amount = rupees(d.amount);
   const description = `Opening balance ${plan.asOf} – Eco Green ${d.sourceType} ${d.sourceRef}`;
+  // An item-level exemption goes on the line; on a customer document's header Books reads it as a
+  // customer-level exemption and refuses it (code 110823).
   const exemption = res.taxExemptionId ? { tax_exemption_id: res.taxExemptionId } : {};
   const loc = { location_id: plan.locationId };
   // Org-specific fields Books insists on (for example the GST invoice / bill type of a note that
@@ -100,13 +115,13 @@ export function documentBody(d, plan, res) {
   switch (d.kind) {
     case 'invoice':
       return {
-        ...extra, customer_id: contactId, invoice_number: d.number, reference_number: d.sourceRef, date, due_date: due, ...loc, ...exemption,
+        ...extra, customer_id: contactId, invoice_number: d.number, reference_number: d.sourceRef, date, due_date: due, ...loc,
         line_items: [{ item_id: res.itemId, description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
     case 'credit_note':
       return {
-        ...refType, ...extra, customer_id: contactId, creditnote_number: d.number, reference_number: d.sourceRef, date, ...loc, ...exemption,
+        ...refType, ...extra, customer_id: contactId, creditnote_number: d.number, reference_number: d.sourceRef, date, ...loc,
         line_items: [{ account_id: res.offsetAccountId, name: 'Opening balance', description, quantity: 1, rate: amount, ...exemption, ...loc }],
         notes: description,
       };
