@@ -136,16 +136,33 @@ function planReport(plan, acct) {
 
 class UnknownOutcome extends Error {}
 class DailyLimit extends Error {}
+class RateBlocked extends Error {}
+
+// Books allows about 100 calls a minute per organisation, shared with every other client of the
+// org; staying well under it avoids the hour-long block (code 43) that follows a breach.
+const RATE_PER_MINUTE = 40;
+// Calls kept in hand from the org's daily allowance; the run stops cleanly below this.
+const DAILY_RESERVE = 25;
+// For optional reads: fall back on an ordinary error, but never on a rate block or the daily limit.
+const orStop = (fallback) => (err) => {
+  if (err instanceof RateBlocked || err instanceof DailyLimit) throw err;
+  return fallback(err);
+};
+const progress = (msg) => process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${msg}\n`);
 
 function booksClient(config) {
-  const limiter = createLimiter({ ratePerMinute: Math.min(config.rateLimitPerMinute, 90), maxConcurrency: 1 });
+  const limiter = createLimiter({ ratePerMinute: Math.min(config.rateLimitPerMinute, RATE_PER_MINUTE), maxConcurrency: 1 });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const usage = { calls: 0, remaining: null, limit: null };
   async function call(method, path, { query = {}, body } = {}) {
     const url = new URL(`${config.apiBase}${path}`);
     for (const [k, v] of Object.entries({ organization_id: config.organizationId, ...query })) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
     }
     const write = method !== 'GET';
+    if (usage.remaining !== null && usage.remaining < DAILY_RESERVE) {
+      throw new DailyLimit(`only ${usage.remaining} of today's ${usage.limit ?? '?'} Books API calls left`);
+    }
     for (let attempt = 1; ; attempt += 1) {
       const token = await getAccessToken(config);
       let res;
@@ -166,10 +183,22 @@ function booksClient(config) {
         await sleep(1000 * 2 ** attempt);
         continue;
       }
+      usage.calls += 1;
+      const remaining = Number(res.headers.get('x-rate-limit-remaining'));
+      if (Number.isFinite(remaining) && res.headers.get('x-rate-limit-remaining') !== null) {
+        usage.remaining = remaining;
+        usage.limit = Number(res.headers.get('x-rate-limit-limit')) || usage.limit;
+      }
       if (res.status === 429) {
+        const retryAfter = Number(res.headers.get('retry-after') ?? 0);
         if (/per day|daily/i.test(json?.message ?? '')) throw new DailyLimit(json.message);
-        if (attempt >= 6) throw new Error(`${method} ${path}: still rate-limited`);
-        await sleep(Math.max(5000, Number(res.headers.get('retry-after') ?? 0) * 1000));
+        // A long Retry-After (or Books code 43) is a block, not a pause: stop and say so.
+        if (json?.code === 43 || retryAfter > 60) {
+          throw new RateBlocked(`Books has blocked this organisation for ${retryAfter ? `${Math.round(retryAfter / 60)} min` : 'a while'} (code ${json?.code ?? '?'}: ${json?.message ?? 'too many requests'})`);
+        }
+        if (attempt >= 4) throw new RateBlocked(`${method} ${path}: still rate-limited after ${attempt} tries`);
+        progress(`rate-limited; waiting ${Math.max(10, retryAfter)} s`);
+        await sleep(Math.max(10, retryAfter) * 1000);
         continue;
       }
       if (res.status >= 500) {
@@ -196,7 +225,7 @@ function booksClient(config) {
       if (!j.page_context?.has_more_page) return [...out.values()];
     }
   }
-  return { call, listAll };
+  return { call, listAll, usage };
 }
 
 function liveConfig() {
@@ -223,12 +252,14 @@ async function cmdPreflight(o) {
     itemId: o['item-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? null,
   };
 
+  progress(`preflight: organisation ${config.organizationId}, ${plan.gl.length} GL codes, ${new Set(plan.documents.map(partyKey)).size} parties (about ${RATE_PER_MINUTE} calls a minute)`);
   // Location.
-  const locs = await books.listAll('/locations', 'locations').catch((e) => (problems.push(`locations: ${e.message}`), []));
+  const locs = await books.listAll('/locations', 'locations').catch(orStop((e) => (problems.push(`locations: ${e.message}`), [])));
   const loc = locs.find((l) => String(l.location_id) === plan.locationId);
   if (!loc) problems.push(`location ${plan.locationId} not found in organisation ${config.organizationId}`);
   else notes.push(`Location: ${loc.location_name} (${plan.locationId})`);
 
+  progress('accounts…');
   // Accounts: one exact-code lookup each (the full list pages unreliably, being sorted by type).
   const accountsWhere = async (query) => (await books.call('GET', '/chartofaccounts', { query: { filter_by: 'AccountType.All', ...query } })).chartofaccounts ?? [];
   for (const g of plan.gl) {
@@ -248,10 +279,11 @@ async function cmdPreflight(o) {
     notes.push(`Vendor advances paid through: ${pt ? `${pt.account_name} (${pt.account_type})` : '(unresolved)'} — Books may require a cash/bank account; confirm on the smoke test`);
   }
 
+  progress(`accounts done: ${Object.keys(res.accounts).length}/${plan.gl.length}`);
   // Opening item for invoice lines (Books invoices take items, not accounts).
   if (plan.documents.some((d) => d.kind === 'invoice')) {
     let item = null;
-    if (res.itemId) item = (await books.call('GET', `/items/${res.itemId}`).catch(() => null))?.item ?? null;
+    if (res.itemId) item = (await books.call('GET', `/items/${res.itemId}`).catch(orStop(() => null)))?.item ?? null;
     else {
       const items = await books.listAll('/items', 'items', { name: 'Opening Balance' });
       const hits = items.filter((i) => normName(i.name) === 'OPENINGBALANCE');
@@ -270,7 +302,7 @@ async function cmdPreflight(o) {
   if (plan.documents.some((d) => d.kind === 'debit_note')) problems.push('customer debit notes need an original Books invoice; resolve before posting');
 
   // Tax exemptions (listed for the operator; not required unless Books asks for one).
-  const ex = await books.call('GET', '/settings/taxexemptions').catch(() => null);
+  const ex = await books.call('GET', '/settings/taxexemptions').catch(orStop(() => null));
   for (const t of ex?.tax_exemptions ?? []) notes.push(`Tax exemption available: ${t.tax_exemption_code} — ${t.description ?? ''} (${t.tax_exemption_id}, ${t.type})`);
 
   // Contacts: overrides first, then an exact name match of the right type.
@@ -278,7 +310,10 @@ async function cmdPreflight(o) {
   const parties = new Map();
   for (const d of plan.documents) parties.set(partyKey(d), d);
   const unresolved = [];
+  progress(`contacts: ${parties.size}…`);
+  let seen = 0;
   for (const [key, d] of parties) {
+    if (++seen % 20 === 0) progress(`contacts ${seen}/${parties.size}`);
     if (overrides[key]) { res.contacts[key] = String(overrides[key]); continue; }
     const type = d.side === 'vendor' ? 'vendor' : 'customer';
     const hits = (await books.listAll('/contacts', 'contacts', { contact_type: type, contact_name_contains: d.partyName.slice(0, 40) }))
@@ -292,9 +327,11 @@ async function cmdPreflight(o) {
   }
 
   // Existing opening balance.
-  const ob = await books.call('GET', '/settings/openingbalances').catch(() => null);
+  const ob = await books.call('GET', '/settings/openingbalances').catch(orStop(() => null));
   if (ob?.opening_balance?.accounts?.length) notes.push(`Books already holds an opening balance dated ${ob.opening_balance.date} with ${ob.opening_balance.accounts.length} lines — post will stop at the GL step until that is reviewed`);
 
+  progress(`preflight done: ${books.usage.calls} Books calls${books.usage.remaining !== null ? `, ${books.usage.remaining} left today` : ''}`);
+  if (books.usage.remaining !== null) notes.push(`Books API calls left today: ${books.usage.remaining} of ${books.usage.limit ?? '?'}`);
   res.problems = problems;
   writeFileSync(join(out, 'resolution.json'), toJson(res));
   const md = [`# Branch ${plan.branch} — Preflight (${new Date().toISOString().slice(0, 10)})`, '', `Organisation ${config.organizationId}`, '', '## Resolved', '', ...notes.map((n) => `- ${n}`),
@@ -366,8 +403,8 @@ async function cmdPost(o) {
           log({ key: docKey(d), status: 'POSTED', id: String(rec[m.id]), amount: fmt(d.amount) });
           counts.posted += 1;
         } catch (err) {
-          if (err instanceof UnknownOutcome || err instanceof DailyLimit) {
-            log({ key: docKey(d), status: err instanceof DailyLimit ? 'DAILY_LIMIT' : 'UNKNOWN', error: err.message });
+          if (err instanceof UnknownOutcome || err instanceof DailyLimit || err instanceof RateBlocked) {
+            log({ key: docKey(d), status: err instanceof UnknownOutcome ? 'UNKNOWN' : 'NOT_SENT', error: err.message });
             throw err;
           }
           log({ key: docKey(d), status: 'FAILED', error: err.message });
@@ -381,11 +418,12 @@ async function cmdPost(o) {
           await books.call('POST', `/${m.path}/${rec[m.id]}/${m.open}`);
           log({ key: docKey(d), status: 'OPENED', id: String(rec[m.id]) });
         }
-        if ((counts.posted % 100) === 0) console.log(`  … ${counts.posted} posted`);
+        if ((counts.posted % 100) === 0) progress(`${counts.posted} posted${books.usage.remaining !== null ? `, ${books.usage.remaining} Books calls left today` : ''}`);
       }
     }
   } catch (err) {
-    if (err instanceof DailyLimit) console.log(`Books daily API limit reached — rerun the same command tomorrow; it resumes where it stopped. (${err.message})`);
+    if (err instanceof RateBlocked) console.log(`${err.message}. Wait it out, then rerun the same command; it resumes where it stopped.`);
+    else if (err instanceof DailyLimit) console.log(`Books daily API limit reached — rerun the same command tomorrow; it resumes where it stopped. (${err.message})`);
     else if (err instanceof UnknownOutcome) console.log(`Stopped on an unconfirmed write (${err.message}). Rerun: the document is looked up in Books before anything is re-sent.`);
     else throw err;
     return 2;
@@ -399,7 +437,7 @@ async function cmdPost(o) {
 
 async function postGl(plan, res, books, log, o, counts) {
   const body = openingBalanceBody(plan, res);
-  const current = await books.call('GET', '/settings/openingbalances').catch(() => null);
+  const current = await books.call('GET', '/settings/openingbalances').catch(orStop(() => null));
   const lines = current?.opening_balance?.accounts ?? [];
   if (lines.length) {
     const ours = new Set(body.accounts.map((a) => `${a.account_id}|${a.debit_or_credit}|${a.amount}`));
