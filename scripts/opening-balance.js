@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, ope
 import { join } from 'node:path';
 import { buildOpeningPlan, summarisePlan, toPaise } from '../src/opening/plan.js';
 import {
-  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue,
+  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount,
   assertTestOrgPosting, OpeningPostError,
 } from '../src/opening/books_docs.js';
 import { formatMoney } from '../src/core/money.js';
@@ -186,12 +186,14 @@ function booksClient(config) {
       return json;
     }
   }
-  async function listAll(path, listKey, query = {}) {
-    const out = [];
+  // Pages are only stable when the list is sorted on a unique column; records are de-duplicated
+  // by `idKey` either way.
+  async function listAll(path, listKey, query = {}, idKey = null) {
+    const out = new Map();
     for (let page = 1; ; page += 1) {
       const j = await call('GET', path, { query: { ...query, page, per_page: 200 } });
-      out.push(...(j[listKey] ?? []));
-      if (!j.page_context?.has_more_page) return out;
+      for (const r of j[listKey] ?? []) out.set(idKey ? String(r[idKey]) : `${out.size}`, r);
+      if (!j.page_context?.has_more_page) return [...out.values()];
     }
   }
   return { call, listAll };
@@ -227,24 +229,22 @@ async function cmdPreflight(o) {
   if (!loc) problems.push(`location ${plan.locationId} not found in organisation ${config.organizationId}`);
   else notes.push(`Location: ${loc.location_name} (${plan.locationId})`);
 
-  // Accounts by code.
-  const coa = await books.listAll('/chartofaccounts', 'chartofaccounts', { filter_by: 'AccountType.All' });
-  const byCode = new Map();
-  for (const a of coa) if (a.account_code) byCode.set(a.account_code, [...(byCode.get(a.account_code) ?? []), a]);
+  // Accounts: one exact-code lookup each (the full list pages unreliably, being sorted by type).
+  const accountsWhere = async (query) => (await books.call('GET', '/chartofaccounts', { query: { filter_by: 'AccountType.All', ...query } })).chartofaccounts ?? [];
   for (const g of plan.gl) {
-    const hits = byCode.get(g.zohoCode) ?? [];
-    if (hits.length !== 1) { problems.push(`GL ${g.zohoCode}: ${hits.length} Books accounts carry this code`); continue; }
-    const a = hits[0];
+    const { account: a, problem } = pickAccount(g.zohoCode, await accountsWhere({ account_code: g.zohoCode }));
+    if (problem) { problems.push(problem); continue; }
     if (/^accounts_(receivable|payable)$/.test(a.account_type)) problems.push(`GL ${g.zohoCode} ${a.account_name} is ${a.account_type}; receivables/payables come from documents, not Opening Balances`);
     res.accounts[g.zohoCode] = { account_id: String(a.account_id), name: a.account_name, type: a.account_type };
   }
   const offset = o['offset-account-id']
-    ? coa.find((a) => String(a.account_id) === o['offset-account-id'])
-    : coa.find((a) => normName(a.account_name) === 'OPENINGBALANCEADJUSTMENTS');
+    ? (await accountsWhere({ account_id: o['offset-account-id'] })).find((a) => String(a.account_id) === o['offset-account-id'])
+    : (await accountsWhere({ account_name: 'Opening Balance Adjustments' })).find((a) => normName(a.account_name) === 'OPENINGBALANCEADJUSTMENTS');
   if (!offset) problems.push('offset account (Opening Balance Adjustments) not found; pass --offset-account-id');
   else { res.offsetAccountId = String(offset.account_id); notes.push(`Offset account: ${offset.account_name} (${offset.account_id}, ${offset.account_type})`); }
   if (plan.documents.some((d) => d.kind === 'vendor_advance')) {
-    const pt = coa.find((a) => String(a.account_id) === (res.advancePaidThroughId ?? res.offsetAccountId));
+    const ptId = res.advancePaidThroughId ?? res.offsetAccountId;
+    const pt = ptId ? (await accountsWhere({ account_id: ptId })).find((a) => String(a.account_id) === ptId) : null;
     notes.push(`Vendor advances paid through: ${pt ? `${pt.account_name} (${pt.account_type})` : '(unresolved)'} — Books may require a cash/bank account; confirm on the smoke test`);
   }
 
@@ -339,13 +339,16 @@ async function cmdPost(o) {
       if (!m) throw new OpeningPostError(`no Books module for ${kind}`);
       // Existing documents with our numbers (authoritative over the local log).
       const prefix = `${plan.branch}/`;
-      const existing = (await books.listAll(`/${m.path}`, m.list, { [`${m.search}_startswith`]: prefix }))
+      const existing = (await books.listAll(`/${m.path}`, m.list, { [`${m.search}_startswith`]: prefix, sort_column: m.sort, sort_order: 'A' }, m.id))
         .filter((r) => String(r[m.number] ?? '').startsWith(prefix));
       console.log(`${kind}: ${docs.length} to check, ${existing.length} already in Books`);
       let failures = 0;
       for (const d of docs) {
         const contactId = res.contacts[partyKey(d)];
-        const hit = existing.find((r) => sameDocument(d, r, contactId));
+        let hit = existing.find((r) => sameDocument(d, r, contactId));
+        if (!hit && m.exactLookup) {
+          hit = ((await books.call('GET', `/${m.path}`, { query: { [m.search]: d.number } }))[m.list] ?? []).find((r) => sameDocument(d, r, contactId));
+        }
         if (hit) {
           counts.found += 1;
           if (hit.status === 'draft' && m.open) {

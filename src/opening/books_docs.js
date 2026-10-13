@@ -22,12 +22,15 @@ const rupees = (paise) => Number(formatMoney(paise < 0n ? -paise : paise));
 /** The order documents are posted in: invoices before notes, bills before credits/advances. */
 export const POST_ORDER = Object.freeze(['invoice', 'credit_note', 'debit_note', 'bill', 'vendor_credit', 'vendor_advance']);
 
+// `sort` keeps Books' paging stable (a list sorted on a non-unique column repeats some records
+// across pages and skips others); `exactLookup` modules have no number uniqueness in Books, so
+// each document is also looked up by its number right before it is created.
 export const MODULES = Object.freeze({
-  invoice: { path: 'invoices', list: 'invoices', key: 'invoice', id: 'invoice_id', number: 'invoice_number', search: 'invoice_number', open: 'status/sent' },
-  credit_note: { path: 'creditnotes', list: 'creditnotes', key: 'creditnote', id: 'creditnote_id', number: 'creditnote_number', search: 'creditnote_number', open: 'status/open' },
-  bill: { path: 'bills', list: 'bills', key: 'bill', id: 'bill_id', number: 'bill_number', search: 'bill_number', open: 'status/open' },
-  vendor_credit: { path: 'vendorcredits', list: 'vendorcredits', key: 'vendor_credit', id: 'vendor_credit_id', number: 'vendor_credit_number', search: 'vendor_credit_number', open: 'status/open' },
-  vendor_advance: { path: 'vendorpayments', list: 'vendorpayments', key: 'vendorpayment', id: 'payment_id', number: 'reference_number', search: 'reference_number', open: null },
+  invoice: { path: 'invoices', list: 'invoices', key: 'invoice', id: 'invoice_id', number: 'invoice_number', search: 'invoice_number', sort: 'invoice_number', open: 'status/sent' },
+  credit_note: { path: 'creditnotes', list: 'creditnotes', key: 'creditnote', id: 'creditnote_id', number: 'creditnote_number', search: 'creditnote_number', sort: 'creditnote_number', open: 'status/open' },
+  bill: { path: 'bills', list: 'bills', key: 'bill', id: 'bill_id', number: 'bill_number', search: 'bill_number', sort: 'bill_number', open: 'status/open' },
+  vendor_credit: { path: 'vendorcredits', list: 'vendorcredits', key: 'vendor_credit', id: 'vendor_credit_id', number: 'vendor_credit_number', search: 'vendor_credit_number', sort: 'vendor_credit_number', open: 'status/open' },
+  vendor_advance: { path: 'vendorpayments', list: 'vendorpayments', key: 'vendorpayment', id: 'payment_id', number: 'reference_number', search: 'reference_number', sort: 'reference_number', exactLookup: true, open: null },
 });
 
 /** Stable key for a document in the run log. */
@@ -102,6 +105,13 @@ export function sameDocument(d, record, contactId) {
   if (!m || String(record[m.number] ?? '') !== d.number) return false;
   if (d.side === 'vendor') return String(record.vendor_id ?? '') === String(contactId);
   return String(record.customer_id ?? '') === String(contactId);
+}
+
+/** One Books account per code; anything else is a problem for preflight to report. */
+export function pickAccount(code, rows) {
+  const hits = rows.filter((a) => a.account_code === code);
+  const seen = new Map(hits.map((a) => [String(a.account_id), a]));
+  return seen.size === 1 ? { account: [...seen.values()][0] } : { problem: `GL ${code}: ${seen.size} Books accounts carry this code` };
 }
 
 /** Documents in posting order, optionally limited to `perKind` of each kind (smoke test). */
