@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { buildXlsx } from './helpers/xlsx_builder.js';
 import { buildOpeningPlan, summarisePlan, OpeningPlanError } from '../src/opening/plan.js';
 import {
-  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
+  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
 } from '../src/opening/books_docs.js';
 import { assertPostingAllowed } from '../src/books/guard.js';
 
@@ -162,4 +162,47 @@ test('account lookup: exactly one Books account per code, repeats of the same ac
   assert.equal(pickAccount('AL0081', [a, { ...a }]).account.account_id, '1');
   assert.match(pickAccount('AL0081', [a, { ...a, account_id: '2' }]).problem, /2 Books accounts/);
   assert.match(pickAccount('AL0171', [a]).problem, /0 Books accounts/);
+});
+
+test('GST org: every invoice, credit note, bill and vendor credit line carries the tax exemption', () => {
+  const p = plan999();
+  const res = { ...RES, taxExemptionId: 'EX-1' };
+  for (const ref of ['J1', 'C1', '25/PB/7']) {
+    const body = documentBody(p.documents.find((d) => d.sourceRef === ref), p, res);
+    assert.equal(body.line_items[0].tax_exemption_id, 'EX-1', ref);
+  }
+});
+
+test('extra org fields (e.g. the GST type of a note with no original document) are added, never override', () => {
+  const p = plan999();
+  const res = { ...RES, extras: { credit_note: { reference_invoice_type: 'registered', creditnote_number: 'X' } } };
+  const cn = documentBody(p.documents.find((d) => d.sourceRef === 'C1'), p, res);
+  assert.equal(cn.reference_invoice_type, 'registered');
+  assert.equal(cn.creditnote_number, '999/C1');
+  assert.equal(documentBody(p.documents.find((d) => d.sourceRef === 'J1'), p, res).reference_invoice_type, undefined);
+});
+
+test('vendor advances: paid out of a cash/bank clearing account that Opening Balances refills', () => {
+  const p = plan999();
+  const adv = p.documents.find((d) => d.kind === 'vendor_advance');
+  assert.throws(() => documentBody(adv, p, RES), /cash\/bank clearing account/);
+  const res = { ...RES, advancePaidThroughId: 'CLR-1', advancePaidThroughCurrencyId: 'INR-1' };
+  assert.equal(documentBody(adv, p, res).paid_through_account_id, 'CLR-1');
+  const body = openingBalanceBody(p, res);
+  assert.deepEqual(body.accounts.at(-1), { account_id: 'CLR-1', currency_id: 'INR-1', debit_or_credit: 'debit', exchange_rate: 1, amount: 100 });
+  assert.throws(() => openingBalanceBody(p, { ...res, advancePaidThroughCurrencyId: null }), /no currency/);
+});
+
+test('Opening Balances already in Books: same lines (Books\' own balancing line aside) count as posted', () => {
+  const body = openingBalanceBody(plan999(), RES);
+  const inBooks = [
+    { account_id: 'A77', debit_or_credit: 'debit', amount: 1000 },
+    { account_id: 'A108', debit_or_credit: 'credit', amount: 2400 },
+    { account_id: 'A52', debit_or_credit: 'debit', amount: 100 },
+    { account_id: 'OBA', debit_or_credit: 'debit', amount: 1300 },
+  ];
+  assert.equal(sameOpeningBalance(inBooks, body, 'OBA'), true);
+  assert.equal(sameOpeningBalance(inBooks, body), false);
+  assert.equal(sameOpeningBalance(inBooks.slice(1), body, 'OBA'), false);
+  assert.equal(sameOpeningBalance([{ account_id: 'A77', debit: '1000', credit: '0' }, ...inBooks.slice(1)], body, 'OBA'), true);
 });

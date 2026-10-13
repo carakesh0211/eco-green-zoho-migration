@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, ope
 import { join } from 'node:path';
 import { buildOpeningPlan, summarisePlan, toPaise } from '../src/opening/plan.js';
 import {
-  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount,
+  POST_ORDER, MODULES, docKey, partyKey, openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance,
   assertTestOrgPosting, OpeningPostError,
 } from '../src/opening/books_docs.js';
 import { formatMoney } from '../src/core/money.js';
@@ -237,6 +237,20 @@ function liveConfig() {
 
 // ---- preflight -----------------------------------------------------------------------------
 
+/** --extra-invoice / --extra-credit-note / --extra-bill / --extra-vendor-credit / --extra-vendor-advance: JSON objects of body fields. */
+function parseExtras(o) {
+  const out = {};
+  for (const kind of ['invoice', 'credit_note', 'bill', 'vendor_credit', 'vendor_advance']) {
+    const raw = o[`extra-${kind.replace('_', '-')}`];
+    if (!raw) continue;
+    let v;
+    try { v = JSON.parse(raw); } catch { throw new Error(`--extra-${kind.replace('_', '-')} must be a JSON object`); }
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`--extra-${kind.replace('_', '-')} must be a JSON object`);
+    out[kind] = v;
+  }
+  return out;
+}
+
 const normName = (s) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 async function cmdPreflight(o) {
@@ -249,7 +263,8 @@ async function cmdPreflight(o) {
   const res = {
     organizationId: config.organizationId, locationId: plan.locationId, docDate: o['doc-date'] ?? 'original',
     accounts: {}, contacts: {}, offsetAccountId: null, advancePaidThroughId: o['advance-paid-through-id'] ?? null,
-    itemId: o['item-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? null,
+    itemId: o['item-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? null, advancePaidThroughCurrencyId: null,
+    extras: parseExtras(o),
   };
 
   progress(`preflight: organisation ${config.organizationId}, ${plan.gl.length} GL codes, ${new Set(plan.documents.map(partyKey)).size} parties (about ${RATE_PER_MINUTE} calls a minute)`);
@@ -275,9 +290,16 @@ async function cmdPreflight(o) {
   if (!offset) problems.push('offset account (Opening Balance Adjustments) not found; pass --offset-account-id');
   else { res.offsetAccountId = String(offset.account_id); notes.push(`Offset account: ${offset.account_name} (${offset.account_id}, ${offset.account_type})`); }
   if (plan.documents.some((d) => d.kind === 'vendor_advance')) {
-    const ptId = res.advancePaidThroughId ?? res.offsetAccountId;
+    // Books pays only out of cash or bank (code 11016); the clearing account gets the advances back
+    // as an Opening Balances debit, so it ends the opening at nil.
+    const ptId = res.advancePaidThroughId;
     const pt = ptId ? (await accountsWhere({ account_id: ptId })).find((a) => String(a.account_id) === ptId) : null;
-    notes.push(`Vendor advances paid through: ${pt ? `${pt.account_name} (${pt.account_type})` : '(unresolved)'} — Books may require a cash/bank account; confirm on the smoke test`);
+    if (!pt) problems.push('vendor advances: pass --advance-paid-through-id <a cash or bank clearing account, e.g. "Opening Advances Clearing">');
+    else if (!/^(cash|bank)$/.test(pt.account_type)) problems.push(`vendor advances: ${pt.account_name} is ${pt.account_type}; Books pays only out of a cash or bank account`);
+    else {
+      res.advancePaidThroughCurrencyId = pt.currency_id ? String(pt.currency_id) : null;
+      notes.push(`Vendor advances paid through: ${pt.account_name} (${pt.account_type}); Opening Balances debits it by the same total`);
+    }
   }
 
   progress(`accounts done: ${Object.keys(res.accounts).length}/${plan.gl.length}`);
@@ -303,8 +325,33 @@ async function cmdPreflight(o) {
   if (plan.documents.some((d) => d.kind === 'debit_note')) problems.push('customer debit notes need an original Books invoice; resolve before posting');
 
   // Tax exemptions (listed for the operator; not required unless Books asks for one).
+  // Tax exemption: Books (GST) wants a tax or an exemption on every invoice and bill line (code 110802).
   const ex = await books.call('GET', '/settings/taxexemptions').catch(orStop(() => null));
-  for (const t of ex?.tax_exemptions ?? []) notes.push(`Tax exemption available: ${t.tax_exemption_code} — ${t.description ?? ''} (${t.tax_exemption_id}, ${t.type})`);
+  const exemptions = ex?.tax_exemptions ?? [];
+  for (const t of exemptions) notes.push(`Tax exemption available: ${t.tax_exemption_code} — ${t.description ?? ''} (${t.tax_exemption_id}, ${t.type})`);
+  if (!res.taxExemptionId) {
+    const hits = exemptions.filter((t) => /OPENING/i.test(`${t.tax_exemption_code} ${t.description ?? ''}`));
+    if (hits.length === 1) res.taxExemptionId = String(hits[0].tax_exemption_id);
+  }
+  if (res.taxExemptionId) notes.push(`Tax exemption used on every line: ${res.taxExemptionId}`);
+  else problems.push('no tax exemption: create one in Books (Settings → Taxes → Tax Exemptions, code OPENING BALANCE, type Item) or pass --tax-exemption-id');
+
+  // What Books' own forms expect for notes without an original document (GST invoice / bill
+  // type): the edit pages are saved for review and any field mentioning a type is listed.
+  mkdirSync(join(out, 'books-meta'), { recursive: true });
+  for (const [label, path] of [['creditnote', '/creditnotes/editpage'], ['vendorcredit', '/vendorcredits/editpage']]) {
+    const page = await books.call('GET', path).catch(orStop(() => null));
+    if (!page) continue;
+    writeFileSync(join(out, 'books-meta', `${label}-editpage.json`), JSON.stringify(page, null, 2));
+    const keys = new Set();
+    const walk = (v, prefix) => {
+      if (Array.isArray(v)) return v.slice(0, 3).forEach((x) => walk(x, prefix));
+      if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { if (/type/i.test(k)) keys.add(`${prefix}${k}`); walk(x, `${prefix}${k}.`); }
+    };
+    walk(page, '');
+    notes.push(`${label} edit page: type fields ${[...keys].slice(0, 25).join(', ') || '(none)'}`);
+  }
+  for (const [kind, fields] of Object.entries(res.extras)) notes.push(`Extra ${kind} fields: ${JSON.stringify(fields)}`);
 
   // Contacts: overrides first, then an exact name match of the right type.
   const overrides = o.contacts ? JSON.parse(readFileSync(o.contacts, 'utf8')) : {};
@@ -441,11 +488,22 @@ async function postGl(plan, res, books, log, o, counts) {
   const current = await books.call('GET', '/settings/openingbalances').catch(orStop(() => null));
   const lines = current?.opening_balance?.accounts ?? [];
   if (lines.length) {
-    const ours = new Set(body.accounts.map((a) => `${a.account_id}|${a.debit_or_credit}|${a.amount}`));
-    const theirs = lines.filter((a) => Number(a.debit ?? 0) || Number(a.credit ?? 0) || Number(a.amount ?? 0));
-    console.log(`Opening Balances: Books already holds ${theirs.length} lines dated ${current.opening_balance.date}; not overwritten. Compare with gl.csv (${ours.size} lines) and clear it in Books if it is not this plan.`);
-    log({ key: 'gl', status: 'EXISTS', lines: theirs.length });
-    counts.skipped += 1;
+    if (sameOpeningBalance(lines, body, res.offsetAccountId)) {
+      console.log(`Opening Balances: already in Books as planned (${body.accounts.length} lines); nothing to do`);
+      log({ key: 'gl', status: 'FOUND', lines: body.accounts.length });
+      counts.found += 1;
+      return;
+    }
+    if (o['replace-opening-balance'] !== 'true') {
+      console.log(`Opening Balances: Books holds a different entry dated ${current.opening_balance.date} (${lines.length} lines); not changed. Rerun with --replace-opening-balance to replace it with this plan's ${body.accounts.length} lines.`);
+      log({ key: 'gl', status: 'DIFFERS', lines: lines.length });
+      counts.skipped += 1;
+      return;
+    }
+    await books.call('PUT', '/settings/openingbalances', { body });
+    log({ key: 'gl', status: 'REPLACED', lines: body.accounts.length });
+    counts.posted += 1;
+    console.log(`Opening Balances replaced: ${body.accounts.length} lines`);
     return;
   }
   const j = await books.call('POST', '/settings/openingbalances', { body });
