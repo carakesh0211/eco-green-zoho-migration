@@ -95,7 +95,7 @@ test('plan: refuses a missing opening date', () => {
 
 const RES = {
   docDate: 'original', offsetAccountId: 'ACC-OBA', itemId: 'ITEM-OB', taxExemptionId: null,
-  accounts: { AL0077: { account_id: 'A77' }, AL0108: { account_id: 'A108' }, AL0052: { account_id: 'A52' } },
+  accounts: { AL0077: { account_id: 'A77', currency_id: 'INR-1' }, AL0108: { account_id: 'A108', currency_id: 'INR-1' }, AL0052: { account_id: 'A52', currency_id: 'INR-1' } },
   contacts: { 'customer:H1': 'C1', 'customer:H2': 'C2', 'customer:011': 'C11', 'vendor:SU1': 'V1', 'vendor:SU2': 'V2' },
 };
 
@@ -104,11 +104,13 @@ test('Opening Balances body: one line per GL code, Dr/Cr by sign, at the branch 
   assert.equal(body.date, '2026-03-31');
   assert.equal(body.location_id, LOC);
   assert.deepEqual(body.accounts, [
-    { account_id: 'A77', debit_or_credit: 'debit', exchange_rate: 1, amount: 1000 },
-    { account_id: 'A108', debit_or_credit: 'credit', exchange_rate: 1, amount: 2400 },
-    { account_id: 'A52', debit_or_credit: 'debit', exchange_rate: 1, amount: 100 },
+    { account_id: 'A77', currency_id: 'INR-1', debit_or_credit: 'debit', exchange_rate: 1, amount: 1000 },
+    { account_id: 'A108', currency_id: 'INR-1', debit_or_credit: 'credit', exchange_rate: 1, amount: 2400 },
+    { account_id: 'A52', currency_id: 'INR-1', debit_or_credit: 'debit', exchange_rate: 1, amount: 100 },
   ]);
   assert.throws(() => openingBalanceBody(plan999(), { ...RES, accounts: {} }), OpeningPostError);
+  // An account resolved without its currency is refused here, not by Books (code 22006).
+  assert.throws(() => openingBalanceBody(plan999(), { ...RES, accounts: { ...RES.accounts, AL0077: { account_id: 'A77' } } }), /no currency/);
 });
 
 test('document bodies: each module, its own number, the offset account and the location', () => {

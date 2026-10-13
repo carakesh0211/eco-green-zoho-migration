@@ -42,7 +42,9 @@ export function openingBalanceBody(plan, res) {
   const lines = plan.gl.map((g) => {
     const a = res.accounts[g.zohoCode];
     if (!a?.account_id) throw new OpeningPostError(`GL ${g.zohoCode}: no Books account resolved`);
-    return { account_id: a.account_id, debit_or_credit: g.net > 0n ? 'debit' : 'credit', exchange_rate: 1, amount: rupees(g.net) };
+    // Books refuses an Opening Balances line without its account's currency (code 22006).
+    if (!a.currency_id) throw new OpeningPostError(`GL ${g.zohoCode}: no currency on the resolved Books account; rerun preflight`);
+    return { account_id: a.account_id, currency_id: a.currency_id, debit_or_credit: g.net > 0n ? 'debit' : 'credit', exchange_rate: 1, amount: rupees(g.net) };
   });
   return { date: plan.asOf, location_id: plan.locationId, accounts: lines };
 }
