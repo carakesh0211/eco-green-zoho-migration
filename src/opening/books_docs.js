@@ -76,7 +76,9 @@ export function openingBalanceKeys(accounts) {
     const debit = Number(a.debit ?? 0);
     const credit = Number(a.credit ?? 0);
     const dc = a.debit_or_credit ?? (debit ? 'debit' : 'credit');
-    const amount = a.amount !== undefined && a.amount !== null && a.amount !== '' ? Number(a.amount) : Math.max(debit, credit);
+    // …or, as the test org answers, debit_or_credit with the amount in bcy_amount.
+    const given = [a.amount, a.bcy_amount].find((v) => v !== undefined && v !== null && v !== '');
+    const amount = given !== undefined ? Number(given) : Math.max(debit, credit);
     return `${a.account_id}|${dc}|${Math.abs(amount).toFixed(2)}`;
   }).filter((k) => !k.endsWith('|0.00')).sort();
 }

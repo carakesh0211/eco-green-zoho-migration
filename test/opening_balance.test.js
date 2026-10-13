@@ -269,3 +269,15 @@ test('Opening Balances in debit/credit columns compare correctly; differences ar
 test('vendor credits are listed under vendor_credits in Books answers', () => {
   assert.equal(MODULES.vendor_credit.list, 'vendor_credits');
 });
+
+test('Opening Balances as the test org returns them (debit_or_credit + bcy_amount) match the plan', () => {
+  const body = openingBalanceBody(plan999(), RES);
+  const books = [{ accounts: [
+    { account_id: 'A77', debit_or_credit: 'debit', bcy_amount: 1000 },
+    { account_id: 'A108', debit_or_credit: 'credit', bcy_amount: 2400 },
+    { account_id: 'A52', debit_or_credit: 'debit', bcy_amount: 100 },
+    { account_id: 'OBA', debit_or_credit: 'debit', bcy_amount: 1300 },
+  ] }];
+  assert.equal(sameOpeningBalance(books, body, 'OBA'), true);
+  assert.deepEqual(openingBalanceDiff(books, body, 'OBA'), { onlyInBooks: [], onlyInPlan: [] });
+});
