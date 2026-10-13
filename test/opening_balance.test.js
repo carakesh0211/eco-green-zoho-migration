@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { buildXlsx } from './helpers/xlsx_builder.js';
 import { buildOpeningPlan, summarisePlan, OpeningPlanError } from '../src/opening/plan.js';
 import {
-  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
+  openingBalanceBody, documentBody, sameDocument, postingQueue, pickAccount, sameOpeningBalance, referenceInvoiceType, assertTestOrgPosting, OpeningPostError, OPENING_TEST_ORG,
 } from '../src/opening/books_docs.js';
 import { assertPostingAllowed } from '../src/books/guard.js';
 
@@ -97,6 +97,7 @@ const RES = {
   docDate: 'original', offsetAccountId: 'ACC-OBA', itemId: 'ITEM-OB', taxExemptionId: null,
   accounts: { AL0077: { account_id: 'A77', currency_id: 'INR-1' }, AL0108: { account_id: 'A108', currency_id: 'INR-1' }, AL0052: { account_id: 'A52', currency_id: 'INR-1' } },
   contacts: { 'customer:H1': 'C1', 'customer:H2': 'C2', 'customer:011': 'C11', 'vendor:SU1': 'V1', 'vendor:SU2': 'V2' },
+  gstTreatment: { 'customer:H1': 'business_gst', 'customer:011': 'business_gst' },
 };
 
 test('Opening Balances body: one line per GL code, Dr/Cr by sign, at the branch location', () => {
@@ -205,4 +206,17 @@ test('Opening Balances already in Books: same lines (Books\' own balancing line 
   assert.equal(sameOpeningBalance(inBooks, body), false);
   assert.equal(sameOpeningBalance(inBooks.slice(1), body, 'OBA'), false);
   assert.equal(sameOpeningBalance([{ account_id: 'A77', debit: '1000', credit: '0' }, ...inBooks.slice(1)], body, 'OBA'), true);
+});
+
+test('credit notes / vendor credits: GST reference invoice type from the party\'s GST treatment', () => {
+  assert.equal(referenceInvoiceType('business_gst'), 'registered');
+  assert.equal(referenceInvoiceType('consumer'), 'b2c_others');
+  assert.equal(referenceInvoiceType('overseas'), 'export_without_payment');
+  assert.equal(referenceInvoiceType(undefined), null);
+  const p = plan999();
+  const cn = p.documents.find((d) => d.sourceRef === 'C1');
+  assert.equal(documentBody(cn, p, RES).reference_invoice_type, 'registered');
+  assert.equal(documentBody(cn, p, { ...RES, gstTreatment: { 'customer:H1': 'consumer' } }).reference_invoice_type, 'b2c_others');
+  assert.throws(() => documentBody(cn, p, { ...RES, gstTreatment: {} }), /no GST treatment/);
+  assert.equal(documentBody(p.documents.find((d) => d.sourceRef === 'J1'), p, RES).reference_invoice_type, undefined);
 });
