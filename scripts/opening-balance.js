@@ -266,7 +266,8 @@ async function cmdPreflight(o) {
     const { account: a, problem } = pickAccount(g.zohoCode, await accountsWhere({ account_code: g.zohoCode }));
     if (problem) { problems.push(problem); continue; }
     if (/^accounts_(receivable|payable)$/.test(a.account_type)) problems.push(`GL ${g.zohoCode} ${a.account_name} is ${a.account_type}; receivables/payables come from documents, not Opening Balances`);
-    res.accounts[g.zohoCode] = { account_id: String(a.account_id), name: a.account_name, type: a.account_type };
+    if (!a.currency_id) problems.push(`GL ${g.zohoCode} ${a.account_name}: Books returned no currency for this account`);
+    res.accounts[g.zohoCode] = { account_id: String(a.account_id), currency_id: a.currency_id ? String(a.currency_id) : null, name: a.account_name, type: a.account_type };
   }
   const offset = o['offset-account-id']
     ? (await accountsWhere({ account_id: o['offset-account-id'] })).find((a) => String(a.account_id) === o['offset-account-id'])
