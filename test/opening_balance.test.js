@@ -281,3 +281,15 @@ test('Opening Balances as the test org returns them (debit_or_credit + bcy_amoun
   assert.equal(sameOpeningBalance(books, body, 'OBA'), true);
   assert.deepEqual(openingBalanceDiff(books, body, 'OBA'), { onlyInBooks: [], onlyInPlan: [] });
 });
+
+test('unregistered vendors: no tax exemption on their bills and vendor credits', () => {
+  const p = plan999();
+  const bill = p.documents.find((d) => d.kind === 'bill');
+  const reg = { ...RES, taxExemptionId: 'EX-1', gstTreatment: { ...RES.gstTreatment, 'vendor:SU1': 'business_gst' } };
+  assert.equal(documentBody(bill, p, reg).line_items[0].tax_exemption_id, 'EX-1');
+  const unreg = { ...RES, taxExemptionId: 'EX-1', gstTreatment: { ...RES.gstTreatment, 'vendor:SU1': 'business_none' } };
+  assert.equal(documentBody(bill, p, unreg).line_items[0].tax_exemption_id, undefined);
+  // customers keep it whatever their treatment (Books accepts an item exemption on their lines)
+  const cn = p.documents.find((d) => d.sourceRef === 'C1');
+  assert.equal(documentBody(cn, p, { ...unreg, gstTreatment: { 'customer:H1': 'consumer' } }).line_items[0].tax_exemption_id, 'EX-1');
+});

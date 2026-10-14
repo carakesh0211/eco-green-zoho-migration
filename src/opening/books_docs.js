@@ -113,7 +113,9 @@ export function documentBody(d, plan, res) {
   const description = `Opening balance ${plan.asOf} – Eco Green ${d.sourceType} ${d.sourceRef}`;
   // An item-level exemption goes on the line; on a customer document's header Books reads it as a
   // customer-level exemption and refuses it (code 110823).
-  const exemption = res.taxExemptionId ? { tax_exemption_id: res.taxExemptionId } : {};
+  // Books refuses any exemption on an unregistered vendor's documents (code 71510): no GST applies.
+  const unregisteredVendor = d.side === 'vendor' && UNREGISTERED.has(res.gstTreatment?.[partyKey(d)]);
+  const exemption = res.taxExemptionId && !unregisteredVendor ? { tax_exemption_id: res.taxExemptionId } : {};
   const loc = { location_id: plan.locationId };
   // Org-specific fields Books insists on (for example the GST invoice / bill type of a note that
   // has no original document), as settled at preflight; they never override what is set below.
@@ -180,6 +182,9 @@ export function referenceInvoiceType(gstTreatment) {
     deemed_export: 'deemed_export',
   }[gstTreatment] ?? null;
 }
+
+/** GST treatments of parties that are not GST-registered. */
+export const UNREGISTERED = new Set(['business_none', 'consumer']);
 
 /** True when an existing Books record is this document (same number and, for vendors, same vendor). */
 export function sameDocument(d, record, contactId) {
