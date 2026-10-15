@@ -67,7 +67,7 @@ test('creditRequests: debit note set off against a bill when both are in Books',
 
 // ---- CLI against a fake Books ----------------------------------------------------------------
 
-function fakeBooks() {
+function fakeBooks({ contactAccount = 'AR' } = {}) {
   const posted = [];
   const store = { customerpayments: [], journals: [], vendorpayments: [], bills: [] };
   const accounts = [
@@ -90,6 +90,7 @@ function fakeBooks() {
         const id = url.searchParams.get('account_id');
         return send({ chartofaccounts: accounts.filter((a) => (code ? a.account_code === code : a.account_id === id)) });
       }
+      if (p.startsWith('/contacts/')) return send({ contact: { contact_id: p.split('/')[2], gst_treatment: 'consumer', account_id: contactAccount, account_name: contactAccount === 'AR' ? 'Sundry Debtors' : 'Accounts Receivable' } });
       if (p === '/contacts') return send({ contacts: [{ contact_id: 'C1', contact_name: 'UPI TERMINAL', gst_treatment: 'consumer' }], page_context: { has_more_page: false } });
       if (p === '/invoices') return send({ invoices: [{ invoice_id: 'INV-900', invoice_number: '460/25/S-900' }], page_context: { has_more_page: false } });
       const mod = p.slice(1);
@@ -125,7 +126,7 @@ function run(args, base) {
   });
 }
 
-test('txn-post: preflight resolves, post creates payment + clearing journal, rerun finds them', async () => {
+function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'txn-post-'));
   const out = join(dir, 'txn');
   const opening = join(dir, 'opening');
@@ -136,15 +137,36 @@ test('txn-post: preflight resolves, post creates payment + clearing journal, rer
     accounts: [{ account: 'UR_REC', name: 'CHQ RECD' }, { account: 'IE611', name: 'UPI CHARGES' }],
     postings: [{
       key: '26/J/1', kind: 'receipt', date: '2026-05-01', description: 'Receipt J/1 – UPI TERMINAL', amount: '100.00',
-      party: { side: 'customer', code: 'H1', name: 'UPI TERMINAL' },
+      party: { side: 'customer', code: 'H1', name: 'UPI TERMINAL', control: '002001' },
       offset: [{ account: 'IE611', amount: '1.00' }, { account: 'UR_REC', amount: '99.00' }],
       applications: [{ doc: '25/S/900', party: 'H1', amount: '15.00', source: 'opening' }], unapplied: '85.00',
     }],
   }));
   writeFileSync(join(out, 'accounts_zoho.csv'), 'account,eco_code,name,lines,zoho_code\nUR_REC,UR_REC,CHQ,1,AL0069\nIE611,IE611,UPI,1,IE215\n');
   writeFileSync(join(opening, 'plan.json'), JSON.stringify({
-    locationId: 'LOC', documents: [{ kind: 'invoice', side: 'customer', partyCode: 'H1', partyName: 'UPI TERMINAL', controlZoho: 'FRP0013G', number: '460/25/S-900', sourceRef: '25/S 900' }],
+    locationId: 'LOC', documents: [{ kind: 'invoice', side: 'customer', partyCode: 'H1', partyName: 'UPI TERMINAL', controlCode: '002001', controlZoho: 'FRP0013G', number: '460/25/S-900', sourceRef: '25/S 900' }],
   }));
+  return { out, opening };
+}
+
+test('txn-post preflight: a contact without its Eco Green group account stops the run (unless skipped)', async () => {
+  const { out, opening } = fixture();
+  const { server, base } = await fakeBooks({ contactAccount: 'DEFAULT-AR' });
+  try {
+    const args = ['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'];
+    const pre = await run(args, base);
+    assert.equal(pre.code, 1, pre.text);
+    assert.match(pre.text, /1 contacts do not carry their Eco Green group's receivable \/ payable account/);
+    assert.match(readFileSync(join(out, 'contact-controls.csv'), 'utf8'), /customer:H1,UPI TERMINAL,002001,FRP0013G Sundry Debtors,Accounts Receivable/);
+    const skipped = await run([...args, '--contact-controls', 'skip'], base);
+    assert.equal(skipped.code, 0, skipped.text);
+  } finally {
+    server.close();
+  }
+});
+
+test('txn-post: preflight resolves, post creates payment + clearing journal, rerun finds them', async () => {
+  const { out, opening } = fixture();
   const { server, posted, base } = await fakeBooks();
   try {
     const pre = await run(['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'], base);

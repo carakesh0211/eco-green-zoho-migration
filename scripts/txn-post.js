@@ -3,6 +3,7 @@
 //
 //   node scripts/txn-post.js preflight --out var/txn/460 --account-map var/txn/460/accounts_zoho.csv \
 //     --opening var/opening/460 --clearing-account-id <Opening Advances Clearing id> [--contacts contacts.json]
+//     [--contact-controls skip]   (test organisation only: do not require contacts to carry their group's account)
 //   node scripts/txn-post.js post --out var/txn/460 --confirm-org 60091274394 [--only bill,journal,receipt,payment,credit] [--per-kind 1]
 //
 // Pass 1: every voucher is posted; receipts / payments are applied to the documents already in
@@ -127,9 +128,12 @@ async function cmdPreflight(o) {
   const parties = partiesOf(plan, opening.documents);
   const codes = new Set([...plan.accounts.map((a) => res.accountMap[a.account]).filter(Boolean)]);
   for (const a of plan.accounts) if (!res.accountMap[a.account]) problems.push(`ledger ${a.account} ${a.name} has no Zoho code in the account map`);
+  // Production contacts carry their group's receivable / payable account, so documents and payments
+  // land on it; preflight checks that (--contact-controls skip for the test organisation).
+  const checkContacts = (o['contact-controls'] ?? 'check') !== 'skip';
   const partyControl = new Map();
   for (const [key, p] of parties) {
-    if (!p.journal) continue; // payments and bills take Books' own receivable / payable account
+    if (!p.journal && !checkContacts) continue; // payments and bills take the contact's own account
     const c = groupZoho.get(p.control);
     if (!c) { problems.push(`${key} ${p.name}: ledger group ${p.control || '(none)'} has no Zoho control account (--control-map)`); continue; }
     partyControl.set(key, c);
@@ -145,7 +149,7 @@ async function cmdPreflight(o) {
     const a = res.accounts[code];
     if (!a) continue;
     if (!/^accounts_(receivable|payable)$/.test(a.type)) problems.push(`control ${code} ${a.name} for ${key} is ${a.type}, not a receivable / payable account`);
-    res.controls[key] = a.account_id;
+    if (parties.get(key).journal) res.controls[key] = a.account_id;
   }
   if (!res.clearingAccountId) problems.push('pass --clearing-account-id (Opening Advances Clearing)');
   else {
@@ -161,6 +165,7 @@ async function cmdPreflight(o) {
   const overrides = o.contacts ? readJson(o.contacts) : {};
   Object.assign(res.contacts, overrides);
   const unresolved = [];
+  const wrongControl = [];
   const billVendors = new Set(plan.postings.filter((p) => p.kind === 'bill').map((p) => `vendor:${p.party.code}`));
   progress(`contacts: ${parties.size}…`);
   for (const [key, p] of parties) {
@@ -169,10 +174,19 @@ async function cmdPreflight(o) {
         .filter((c) => normName(c.contact_name) === normName(p.name) || normName(c.company_name) === normName(p.name));
       if (hits.length === 1) { res.contacts[key] = String(hits[0].contact_id); res.gstTreatment[key] = hits[0].gst_treatment ?? null; } else unresolved.push([key, p.name, hits.length, hits.map((c) => `${c.contact_id}:${c.contact_name}`).join(' | ')]);
     }
-    if (billVendors.has(key) && res.contacts[key] && !(key in res.gstTreatment)) {
-      res.gstTreatment[key] = (await books.call('GET', `/contacts/${res.contacts[key]}`)).contact?.gst_treatment ?? null;
+    const want = res.accounts[partyControl.get(key)];
+    if (res.contacts[key] && ((checkContacts && want) || (billVendors.has(key) && !(key in res.gstTreatment)))) {
+      const c = (await books.call('GET', `/contacts/${res.contacts[key]}`)).contact ?? {};
+      if (!(key in res.gstTreatment)) res.gstTreatment[key] = c.gst_treatment ?? null;
+      if (checkContacts && want && String(c.account_id ?? '') !== want.account_id) {
+        wrongControl.push([key, p.name, p.control, `${partyControl.get(key)} ${want.name}`, c.account_name || '(none)']);
+      }
     }
   }
+  if (wrongControl.length) {
+    problems.push(`${wrongControl.length} contacts do not carry their Eco Green group's receivable / payable account — see contact-controls.csv (documents and payments would land on the wrong control)`);
+    writeFileSync(join(out, 'contact-controls.csv'), toCsv(['Key', 'Party', 'Eco Green group', 'Expected account', 'Contact has'], wrongControl));
+  } else if (checkContacts) notes.push('Every contact carries its Eco Green group\'s receivable / payable account');
   if (unresolved.length) {
     problems.push(`${unresolved.length} parties have no single Books contact — fill contacts-to-map.csv into a --contacts JSON file ({"customer:H1": "<contact id>"})`);
     writeFileSync(join(out, 'contacts-to-map.csv'), toCsv(['Key', 'Eco Green name', 'Matches', 'Candidates'], unresolved));
