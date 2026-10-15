@@ -84,7 +84,7 @@ export function readLedgerRows(rows, opts = {}) {
   const c = {
     prefix: col('c_prefix'), no: col('n_tran_no'), code: col('c_act_code'), date: col('d_date'), amount: col('n_amount'),
     name: col('c_name'), type: col('n_type'), remarks: col('c_remarks'), custRef: col('cust_pay_ref_no'),
-    suppRef: col('supp_pay_ref_no'), owner: col('to be pushed by'), year: col('c_year'),
+    suppRef: col('supp_pay_ref_no'), owner: col('to be pushed by'), year: col('c_year'), group: col('c_grp_no'),
   };
   const out = [];
   for (const r of rows.slice(1)) {
@@ -94,6 +94,8 @@ export function readLedgerRows(rows, opts = {}) {
       year: text(r[c.year]), prefix: text(r[c.prefix]), no: text(r[c.no]),
       code: text(r[c.code]), account: accountKey(r[c.code], r[c.name], type), name: text(r[c.name]),
       type, party: PARTY_TYPES.get(type) ?? null,
+      // TB control (Sundry Debtors / Creditors group) = last 6 digits of the ledger group, e.g. 1002002022 -> 002022
+      control: text(r[c.group]).slice(-6),
       date: ledgerDate(r[c.date], opts), rawDate: r[c.date], amount: toPaise(r[c.amount]),
       remarks: text(r[c.remarks]), custRef: text(r[c.custRef]), suppRef: text(r[c.suppRef]),
       owner: text(r[c.owner]).toUpperCase(),
@@ -123,7 +125,7 @@ export function groupVouchers(lines) {
     v.total = v.lines.reduce((t, l) => t + l.amount, 0n);
     const parties = new Map();
     for (const l of v.lines.filter((x) => x.party)) {
-      const p = parties.get(l.code) ?? { code: l.code, name: l.name, side: l.party, net: 0n };
+      const p = parties.get(l.code) ?? { code: l.code, name: l.name, side: l.party, control: l.control, net: 0n };
       p.net += l.amount;
       parties.set(l.code, p);
     }
@@ -148,12 +150,12 @@ export function classifyVoucher(v) {
   const glOffset = v.gl.map((l) => ({ account: l.account, code: l.code, name: l.name, contact: contactOf(l), amount: l.amount }));
   if (v.parties.length === 1) {
     const p = v.parties[0];
-    const base = { party: { code: p.code, name: p.name, side: p.side }, amount: abs(p.net), offset: glOffset, direct: glOffset.length === 1 };
+    const base = { party: { code: p.code, name: p.name, side: p.side, control: p.control }, amount: abs(p.net), offset: glOffset, direct: glOffset.length === 1 };
     if (p.side === 'customer' && p.net < 0n) return { kind: 'receipt', ...base };
     if (p.side === 'vendor' && p.net > 0n) return { kind: 'payment', ...base };
     if (p.side === 'vendor' && p.net < 0n) return { kind: 'bill', ...base };
   }
-  return { kind: 'journal', lines: v.liveLines.map((l) => ({ account: l.account, code: l.code, name: l.name, party: l.party, contact: l.party ? l.code : contactOf(l), amount: l.amount })) };
+  return { kind: 'journal', lines: v.liveLines.map((l) => ({ account: l.account, code: l.code, name: l.name, party: l.party, control: l.party ? l.control : undefined, contact: l.party ? l.code : contactOf(l), amount: l.amount })) };
 }
 
 const KIND_LABEL = { receipt: 'Receipt', payment: 'Payment', bill: 'Bill', journal: 'Journal' };

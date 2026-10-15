@@ -70,13 +70,17 @@ function readAccountMap(path) {
 /** Parties our postings touch: key -> { side, code, name }. */
 function partiesOf(plan, openingDocs) {
   const out = new Map();
-  const add = (side, code, name) => { if (!out.has(`${side}:${code}`)) out.set(`${side}:${code}`, { side, code, name }); };
+  const add = (side, code, name, control, journal) => {
+    const p = out.get(`${side}:${code}`) ?? { side, code, name, control, journal: false };
+    p.journal ||= journal;
+    out.set(`${side}:${code}`, p);
+  };
   for (const p of plan.postings) {
-    if (p.party) add(p.party.side, p.party.code, p.party.name);
-    for (const l of p.lines ?? []) if (l.party) add(l.party, l.code, l.name);
+    if (p.party) add(p.party.side, p.party.code, p.party.name, p.party.control, false);
+    for (const l of p.lines ?? []) if (l.party) add(l.party, l.code, l.name, l.control, true);
     if ([...(p.lines ?? []), ...(p.offset ?? [])].some((l) => l.contact === INTER_BRANCH_CONTACT)) {
       const ho = openingDocs.find((d) => d.partyCode === INTER_BRANCH_CONTACT);
-      add('customer', INTER_BRANCH_CONTACT, ho?.partyName ?? 'Frankross Admin - Kolkata');
+      add('customer', INTER_BRANCH_CONTACT, ho?.partyName ?? 'Frankross Admin - Kolkata', '002000', false);
     }
   }
   return out;
@@ -115,15 +119,19 @@ async function cmdPreflight(o) {
 
   // Accounts: every mapped ledger, the party controls, the clearing account.
   const accountsWhere = async (query) => (await books.call('GET', '/chartofaccounts', { query: { filter_by: 'AccountType.All', ...query } })).chartofaccounts ?? [];
-  const controlCode = new Map();
-  for (const d of opening.documents) if (!controlCode.has(`${d.side}:${d.partyCode}`)) controlCode.set(`${d.side}:${d.partyCode}`, d.controlZoho);
-  const defaults = { customer: o['customer-control'] ?? 'FRP0013G', vendor: o['vendor-control'] ?? 'FRP0040G' };
+  // Journal party lines post to the party's own control: its Eco Green ledger group (e.g. 001005
+  // Sundry Creditors-Expenses) -> the Zoho account the opening used for that group (--control-map
+  // adds groups the opening did not have, {"002013": "<zoho code>"}).
+  const groupZoho = new Map(opening.documents.map((d) => [d.controlCode, d.controlZoho]));
+  for (const [g, z] of Object.entries(o['control-map'] ? readJson(o['control-map']) : {})) groupZoho.set(g, z);
   const parties = partiesOf(plan, opening.documents);
   const codes = new Set([...plan.accounts.map((a) => res.accountMap[a.account]).filter(Boolean)]);
   for (const a of plan.accounts) if (!res.accountMap[a.account]) problems.push(`ledger ${a.account} ${a.name} has no Zoho code in the account map`);
   const partyControl = new Map();
   for (const [key, p] of parties) {
-    const c = controlCode.get(key) ?? defaults[p.side];
+    if (!p.journal) continue; // payments and bills take Books' own receivable / payable account
+    const c = groupZoho.get(p.control);
+    if (!c) { problems.push(`${key} ${p.name}: ledger group ${p.control || '(none)'} has no Zoho control account (--control-map)`); continue; }
     partyControl.set(key, c);
     codes.add(c);
   }
