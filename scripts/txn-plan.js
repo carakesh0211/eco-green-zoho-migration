@@ -4,6 +4,8 @@
 //   node scripts/txn-plan.js --branch 460 --ledger <Ledger_..._V2.xlsx> --opening var/opening/460/plan.json \
 //     --supplier <supplier_payment_details_act.csv> --customer <invoice_receipt_det_act_460.csv> \
 //     --from 2026-04-01 --to 2026-07-05 --out var/txn/460 [--account-map accounts.csv] [--excel-dates asis]
+//     [--gl-parties H30066,H58907]   (party codes kept as GL ledgers in Books: their lines post to the
+//                                     account map's code, and their opening is on that ledger)
 //
 // Writes to --out: plan.json, report.md, applications.csv, exceptions.csv and accounts.csv
 // (every ledger our postings touch; fill zoho_code and pass it back as --account-map) and
@@ -52,8 +54,11 @@ function main() {
   const o = parseArgs(process.argv.slice(2));
   const out = need(o, 'out');
   const wb = readXlsx(readFileSync(need(o, 'ledger')));
-  const lines = readLedgerRows(wb.sheets[0].rows, { excelDates: o['excel-dates'] ?? 'swapped' });
-  const openingDocs = o.opening ? JSON.parse(readFileSync(o.opening, 'utf8')).documents : [];
+  const glParties = new Set((o['gl-parties'] ?? '').split(',').map((x) => x.trim()).filter(Boolean));
+  const lines = readLedgerRows(wb.sheets[0].rows, { excelDates: o['excel-dates'] ?? 'swapped', glParties });
+  // their opening balance is on the GL ledger, not an open item of a customer / vendor
+  const isGl = (d) => glParties.has(d.partyCode);
+  const openingDocs = (o.opening ? JSON.parse(readFileSync(o.opening, 'utf8')).documents : []).filter((d) => !isGl(d));
   const supplierAlloc = o.supplier ? readSupplierAllocations(readFileSync(o.supplier, 'utf8')) : [];
   const customerSettle = o.customer ? readCustomerSettlements(readFileSync(o.customer, 'utf8')) : [];
   const accountMap = o['account-map'] ? readAccountMap(o['account-map']) : null;

@@ -156,3 +156,9 @@ test('buildTxnPlan: dates outside the window, unbalanced vouchers and unmapped l
   const failed = plan.checks.filter((c) => !c.ok).map((c) => c.name);
   assert.deepEqual(failed, ['dates inside the window', 'every voucher balances', 'every ledger mapped to a Zoho account']);
 });
+
+test('glParties: a party code kept as a GL ledger posts as a ledger (receipt becomes a journal)', () => {
+  const ls = readLedgerRows([HDR, row(211, 1, 'H1', '01/05/26', -100, 'HDFC TERMINAL', 4), row(211, 1, 'UR_REC', '01/05/26', 100, 'CHQ', 0)], { glParties: new Set(['H1']) });
+  assert.deepEqual([ls[0].party, ls[0].account, ls[0].glParty], [null, 'H1', true]);
+  assert.equal(classifyVoucher(groupVouchers(ls).get('26/211/1')).kind, 'journal');
+});

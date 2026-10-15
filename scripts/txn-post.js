@@ -215,7 +215,10 @@ async function cmdPreflight(o) {
   const want = (doc, party, side, kind, source) => {
     const k = `${doc}|${party}`;
     if (wanted.has(k) || source === 'ours') return;
-    const numbers = [docNumbers.get(k), idx.get(k)?.number, /^\d{2}\/[^/]+\/-?\d+$/.test(doc) ? booksNumber(plan.branch, doc) : null].filter(Boolean);
+    const conv = /^\d{2}\/[^/]+\/-?\d+$/.test(doc);
+    // live bills / vendor credits carry the plain Eco Green number (e.g. 40514)
+    const plain = conv && (kind === 'bill' || kind === 'vendor_credit') ? String(Number(doc.split('/')[2])) : null;
+    const numbers = [docNumbers.get(k), idx.get(k)?.number, conv ? booksNumber(plan.branch, doc) : null, plain].filter(Boolean);
     wanted.set(k, { kind, side, source, numbers: [...new Set(numbers)] });
   };
   for (const p of plan.postings) {
@@ -239,6 +242,22 @@ async function cmdPreflight(o) {
         const hits = (byNumber.get(n) ?? []).filter((r) => !contact || String(r.customer_id ?? r.vendor_id ?? contact) === contact);
         if (hits.length === 1) { res.docs[k] = { module: m.path, id: String(hits[0][m.id]), number: n }; break; }
       }
+    }
+  }
+  // not in the branch-prefixed lists (e.g. plain-numbered bills): exact number on the party's contact
+  const byKind = Object.fromEntries(DOC_MODULES.map((m) => [m.kind, m]));
+  const outsidePrefix = (w) => w.numbers.filter((n) => !n.startsWith(`${plan.branch}/`));
+  const pending = [...wanted].filter(([k, w]) => !res.docs[k] && outsidePrefix(w).length);
+  if (pending.length) progress(`exact lookups for ${pending.length} documents…`);
+  for (const [k, w] of pending) {
+    const m = byKind[w.kind];
+    const contact = res.contacts[`${w.side}:${k.split('|')[1]}`];
+    if (!contact) continue;
+    const contactField = w.side === 'vendor' ? 'vendor_id' : 'customer_id';
+    for (const n of outsidePrefix(w)) {
+      const rows = ((await books.call('GET', `/${m.path}`, { query: { [m.number]: n, [contactField]: contact } }))[m.list] ?? [])
+        .filter((r) => String(r[m.number]) === n && String(r[contactField] ?? contact) === contact);
+      if (rows.length === 1) { res.docs[k] = { module: m.path, id: String(rows[0][m.id]), number: n }; break; }
     }
   }
   const missing = [...wanted].filter(([k]) => !res.docs[k]);

@@ -122,3 +122,11 @@ test('compareTb: any receivable / payable account (by Books id) counts as a cont
   assert.ok(rows.every((r) => r.ok));
   assert.equal(rows.controlGroup.ok, true);
 });
+
+test('glParties in the reconciliation: opening on the ledger account, Eco Green integrity still by group', () => {
+  const ls = readLedgerRows([HDR, row(211, 1, 'H1', -100, 'HDFC TERMINAL', 4, 1002002022), row(211, 1, 903, 100, 'INDUSIND', 1, 1002003003)], { glParties: new Set(['H1']) });
+  const { exp } = expectedBooks({ opening, lines: ls, accountMap: { ...accountMap, H1: 'AL0300' }, groupZoho, glParties: new Set(['H1']) });
+  assert.equal(exp.get('AL0300'), P(10 - 100));
+  assert.equal(exp.get('FRP0020G'), undefined);
+  assert.equal(tbCodeOf(ls[0], new Map()), '002022');
+});

@@ -38,7 +38,7 @@ export function readClosingTb(rows) {
 
 /** Ledger line -> closing TB code. */
 export function tbCodeOf(l, byName) {
-  if (l.party || l.type === 3 || l.account === INTER_BRANCH) return l.control || '';
+  if (l.party || l.glParty || l.type === 3 || l.account === INTER_BRANCH) return l.control || '';
   if (l.account.startsWith('NAME:')) return byName.get(norm(l.account.slice(5))) ?? l.account;
   return /^\d+$/.test(l.code) ? l.code.padStart(6, '0') : l.code;
 }
@@ -65,10 +65,11 @@ export function zohoCodeOf(l, accountMap, groupZoho) {
 }
 
 /** B. expected Books net per Zoho code: opening plan + posted lines. */
-export function expectedBooks({ opening, lines, accountMap, groupZoho }) {
+export function expectedBooks({ opening, lines, accountMap, groupZoho, glParties = new Set() }) {
   const exp = new Map();
   for (const g of opening.gl) addTo(exp, g.zohoCode, BigInt(g.net));
-  for (const d of opening.documents) addTo(exp, d.controlZoho, BigInt(d.net));
+  // parties kept as GL ledgers: their opening sits on the ledger's own account
+  for (const d of opening.documents) addTo(exp, glParties.has(d.partyCode) ? (accountMap[d.partyCode] ?? `${d.partyCode} (no Zoho code)`) : d.controlZoho, BigInt(d.net));
   const unmapped = new Map();
   for (const l of lines) {
     const z = zohoCodeOf(l, accountMap, groupZoho);

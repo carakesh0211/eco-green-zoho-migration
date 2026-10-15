@@ -89,11 +89,13 @@ export function readLedgerRows(rows, opts = {}) {
   const out = [];
   for (const r of rows.slice(1)) {
     if (r.every((x) => x === null || x === '')) continue;
-    const type = Number(r[c.type]);
+    // parties kept as GL ledgers in Books (e.g. card / UPI terminal collection accounts)
+    const glParty = opts.glParties?.has(text(r[c.code]));
+    const type = glParty ? 0 : Number(r[c.type]);
     out.push({
       year: text(r[c.year]), prefix: text(r[c.prefix]), no: text(r[c.no]),
       code: text(r[c.code]), account: accountKey(r[c.code], r[c.name], type), name: text(r[c.name]),
-      type, party: PARTY_TYPES.get(type) ?? null,
+      type, party: PARTY_TYPES.get(type) ?? null, glParty: Boolean(glParty),
       // TB control (Sundry Debtors / Creditors group) = last 6 digits of the ledger group, e.g. 1002002022 -> 002022
       control: text(r[c.group]).slice(-6),
       date: ledgerDate(r[c.date], opts), rawDate: r[c.date], amount: toPaise(r[c.amount]),
