@@ -104,7 +104,7 @@ export const BOOKS_CONTROL_NAMES = ['name:Accounts Receivable', 'name:Accounts P
  * own control accounts are compared as one group: their split across accounts is listed but only
  * the group total must tie (each party is reconciled in part C).
  */
-export function compareTb(exp, books, controls = new Set(), controlIds = new Set()) {
+export function compareTb(exp, books, controls = new Set(), controlIds = new Set(), { strict = false } = {}) {
   const isControl = (k) => controls.has(k) || BOOKS_CONTROL_NAMES.includes(k) || controlIds.has(books.get(k)?.id);
   const rows = [];
   for (const key of new Set([...exp.keys(), ...books.keys()])) {
@@ -112,7 +112,7 @@ export function compareTb(exp, books, controls = new Set(), controlIds = new Set
     const b = books.get(key)?.net ?? 0n;
     if (e === 0n && b === 0n) continue;
     const control = isControl(key);
-    rows.push({ code: key, name: books.get(key)?.name ?? '', expected: e, books: b, diff: b - e, control, ok: control || abs(b - e) <= TOLERANCE });
+    rows.push({ code: key, name: books.get(key)?.name ?? '', expected: e, books: b, diff: b - e, control, ok: (control && !strict) || abs(b - e) <= TOLERANCE });
   }
   const c = rows.filter((r) => r.control);
   const group = { expected: c.reduce((t, r) => t + r.expected, 0n), books: c.reduce((t, r) => t + r.books, 0n) };
@@ -179,7 +179,7 @@ export function reconReport({ branch, asOf, integrity, tb, unmapped, parties }) 
     for (const r of bad(integrity)) L.push(`| ${r.code} | ${r.name} | ${fmt(r.tb)} | ${fmt(r.ledger)} | ${fmt(r.diff)} |`);
     L.push('');
   }
-  const plain = tb.filter((r) => !r.control);
+  const plain = tb.filter((r) => !r.control || !r.ok);
   const g = tb.controlGroup ?? { expected: 0n, books: 0n, diff: 0n, ok: true };
   L.push('## B. Zoho Books trial balance vs opening + posted lines', '', `${plain.length - bad(plain).length}/${plain.length} accounts tie (other than receivable / payable controls).`, '');
   if (bad(plain).length) {

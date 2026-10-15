@@ -6,6 +6,9 @@
 //   node scripts/txn-recon.js report --out var/recon/460 --to 2026-07-05 --closing-tb <Closing_tb.xlsx> \
 //       --ledger <Ledger V2.xlsx> --opening var/opening/460 --txn var/txn/460 [--control-map map.json] [--posted ours|all]
 //       [--controls <contacts editpage json>]   (default: controls.json saved by fetch)
+//       [--account-map <accounts-all.csv>]      (with --posted all: every ledger, Smart Pharma's too)
+//       [--strict-controls]                     (each receivable / payable account must tie on its own:
+//                                                production, where contacts carry their group's account)
 //       writes recon.md, integrity.csv, tb.csv, parties.csv to --out (no Books calls)
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -73,7 +76,7 @@ function cmdReport(o) {
   const opening = readJson(join(openingDir, 'plan.json'));
   const lines = readLedgerRows(readXlsx(readFileSync(need(o, 'ledger'))).sheets[0].rows);
   const tb = readClosingTb(readXlsx(readFileSync(need(o, 'closing-tb'))).sheets[0].rows);
-  const accountMap = readAccountMap(join(txn, 'accounts_zoho.csv'));
+  const accountMap = readAccountMap(o['account-map'] ?? join(txn, 'accounts_zoho.csv'));
   const groupZoho = new Map(opening.documents.map((d) => [d.controlCode, d.controlZoho]));
   for (const [g, z] of Object.entries(o['control-map'] ? readJson(o['control-map']) : {})) groupZoho.set(g, z);
   const contacts = {
@@ -86,7 +89,7 @@ function cmdReport(o) {
   const { exp, unmapped } = expectedBooks({ opening, lines: posted, accountMap, groupZoho });
   const controlsFile = o.controls ?? join(out, 'controls.json');
   if (!existsSync(controlsFile)) throw new Error(`${controlsFile} not found: rerun fetch, or pass --controls <contacts editpage json>`);
-  const tbRows = compareTb(exp, readBooksTb(readJson(join(out, 'tb.json'))), new Set(groupZoho.values()), controlAccountIds(readJson(controlsFile)));
+  const tbRows = compareTb(exp, readBooksTb(readJson(join(out, 'tb.json'))), new Set(groupZoho.values()), controlAccountIds(readJson(controlsFile)), { strict: o['strict-controls'] === 'true' });
   const parties = compareParties({
     opening, posted, all: lines, contacts,
     customers: readJson(join(out, 'customers.json')).customerbalances, vendors: readJson(join(out, 'vendors.json')).vendorbalances,

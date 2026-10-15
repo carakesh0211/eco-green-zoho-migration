@@ -15,6 +15,19 @@ export class TxnPostError extends Error {
 }
 
 export const BOOKS_NUMBER_MAX = 16;
+
+/**
+ * Posting guard for a branch's transactions (CLI, one poster per plan folder): the application's
+ * own guard (live driver, POSTING_ENABLED, written authorization reference, organisation on the
+ * allowlist), an allowlist naming only this organisation, and the operator typing its id.
+ */
+export function assertBranchPosting(config, confirmedOrg, assertPostingAllowed) {
+  assertPostingAllowed(config);
+  if (config.orgAllowlist.length !== 1 || config.orgAllowlist[0] !== config.organizationId) {
+    throw new TxnPostError(`BOOKS_ORG_ALLOWLIST must contain only the organisation being posted to (${config.organizationId})`);
+  }
+  if (confirmedOrg !== config.organizationId) throw new TxnPostError(`pass --confirm-org ${config.organizationId} to post to this organisation`);
+}
 const paise = (v) => (typeof v === 'bigint' ? v : toPaise(v));
 const rupees = (v) => Number(formatMoney(paise(v)));
 const UNREGISTERED = new Set(['business_none', 'consumer']);

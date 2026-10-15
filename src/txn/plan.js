@@ -358,7 +358,7 @@ export function buildTxnPlan({ branch, lines, supplierAlloc = [], customerSettle
         if (amt > 0n) {
           cr.open -= amt;
           it.open -= amt;
-          creditApplications.push({ credit: pr.credit, doc: pr.debit, party, amount: amt, creditSource: cr.source, ref });
+          creditApplications.push({ credit: pr.credit, doc: pr.debit, party, side: it.side, amount: amt, creditSource: cr.source, ref });
         }
       }
     }

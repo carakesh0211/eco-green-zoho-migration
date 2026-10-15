@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { booksNumber, voucherRequests, creditRequests, splitApplications, isDirect } from '../src/txn/books.js';
+import { booksNumber, voucherRequests, creditRequests, splitApplications, isDirect, assertBranchPosting } from '../src/txn/books.js';
 
 const res = {
   locationId: 'LOC', clearingAccountId: 'CLR', taxExemptionId: 'EX',
@@ -22,6 +22,15 @@ const res = {
 test('booksNumber: Smart Pharma convention <branch>/<yy>/<prefix>/<6 digits>', () => {
   assert.equal(booksNumber('460', '26/S/2474'), '460/26/S/002474');
   assert.equal(booksNumber('460', '26/Q/-3909'), '460/26/Q/-003909');
+});
+
+test('assertBranchPosting: the allowlist must name only the target organisation, and the operator confirms it', () => {
+  const ok = () => {};
+  const cfg = { organizationId: '600', orgAllowlist: ['600'] };
+  assert.doesNotThrow(() => assertBranchPosting(cfg, '600', ok));
+  assert.throws(() => assertBranchPosting(cfg, '601', ok), /--confirm-org 600/);
+  assert.throws(() => assertBranchPosting({ organizationId: '600', orgAllowlist: ['600', '601'] }, '600', ok), /only the organisation/);
+  assert.throws(() => assertBranchPosting(cfg, '600', () => { throw new Error('POSTING_ENABLED is not strictly boolean true'); }), /POSTING_ENABLED/);
 });
 
 test('receipt via clearing: customer payment applied to Books documents + clearing journal', () => {
@@ -67,7 +76,8 @@ test('creditRequests: debit note set off against a bill when both are in Books',
 
 // ---- CLI against a fake Books ----------------------------------------------------------------
 
-function fakeBooks({ contactAccount = 'AR' } = {}) {
+function fakeBooks({ contactAccount = 'AR', spInvoice = false } = {}) {
+  const state = { spInvoice };
   const posted = [];
   const store = { customerpayments: [], journals: [], vendorpayments: [], bills: [] };
   const accounts = [
@@ -92,7 +102,14 @@ function fakeBooks({ contactAccount = 'AR' } = {}) {
       }
       if (p.startsWith('/contacts/')) return send({ contact: { contact_id: p.split('/')[2], gst_treatment: 'consumer', account_id: contactAccount, account_name: contactAccount === 'AR' ? 'Sundry Debtors' : 'Accounts Receivable' } });
       if (p === '/contacts') return send({ contacts: [{ contact_id: 'C1', contact_name: 'UPI TERMINAL', gst_treatment: 'consumer' }], page_context: { has_more_page: false } });
-      if (p === '/invoices') return send({ invoices: [{ invoice_id: 'INV-900', invoice_number: '460/25/S-900' }], page_context: { has_more_page: false } });
+      if (p === '/invoices') return send({ invoices: [{ invoice_id: 'INV-900', invoice_number: '460/25/S-900' }, ...(state.spInvoice ? [{ invoice_id: 'INV-SP10', invoice_number: '460/26/S/000010', customer_id: 'C1' }] : [])], page_context: { has_more_page: false } });
+      const one = /^\/(customerpayments|vendorpayments)\/(.+)$/.exec(p);
+      if (one) {
+        const rec = store[one[1]].find((r) => r.payment_id === one[2]);
+        if (req.method === 'PUT') { const b = JSON.parse(body); Object.assign(rec, b); posted.push([`${one[1]}:PUT`, b]); return send({ payment: rec }); }
+        const applied = (rec.invoices ?? []).reduce((t, x) => t + x.amount_applied, 0);
+        return send({ payment: { ...rec, unused_amount: rec.amount - applied } });
+      }
       const mod = p.slice(1);
       if (store[mod] && req.method === 'GET') return send({ [mod]: store[mod], page_context: { has_more_page: false } });
       if (store[mod] && req.method === 'POST') {
@@ -107,7 +124,7 @@ function fakeBooks({ contactAccount = 'AR' } = {}) {
       res2.end(JSON.stringify({ code: 1, message: `no route ${req.method} ${p}` }));
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, posted, base: `http://127.0.0.1:${server.address().port}` })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, posted, state, base: `http://127.0.0.1:${server.address().port}` })));
 }
 
 function run(args, base) {
@@ -139,7 +156,7 @@ function fixture() {
       key: '26/J/1', kind: 'receipt', date: '2026-05-01', description: 'Receipt J/1 – UPI TERMINAL', amount: '100.00',
       party: { side: 'customer', code: 'H1', name: 'UPI TERMINAL', control: '002001' },
       offset: [{ account: 'IE611', amount: '1.00' }, { account: 'UR_REC', amount: '99.00' }],
-      applications: [{ doc: '25/S/900', party: 'H1', amount: '15.00', source: 'opening' }], unapplied: '85.00',
+      applications: [{ doc: '25/S/900', party: 'H1', amount: '15.00', source: 'opening' }, { doc: '26/S/10', party: 'H1', amount: '60.00', source: 'smartpharma' }], unapplied: '25.00',
     }],
   }));
   writeFileSync(join(out, 'accounts_zoho.csv'), 'account,eco_code,name,lines,zoho_code\nUR_REC,UR_REC,CHQ,1,AL0069\nIE611,IE611,UPI,1,IE215\n');
@@ -185,6 +202,29 @@ test('txn-post: preflight resolves, post creates payment + clearing journal, rer
     assert.equal(again.code, 0, again.text);
     assert.equal(posted.length, 2, 'nothing posted twice');
     assert.match(again.text, /posted 0, already in Books 2/);
+  } finally {
+    server.close();
+  }
+});
+
+test('txn-post apply: a Smart Pharma invoice that reaches Books after the post is applied to the payment', async () => {
+  const { out, opening } = fixture();
+  const { server, posted, state, base } = await fakeBooks();
+  try {
+    const pre = ['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'];
+    assert.equal((await run(pre, base)).code, 0);
+    assert.equal((await run(['post', '--out', out, '--confirm-org', '60091274394'], base)).code, 0);
+    assert.deepEqual(posted[0][1].invoices, [{ invoice_id: 'INV-900', amount_applied: 15 }], 'Smart Pharma invoice not in Books yet');
+
+    state.spInvoice = true; // Smart Pharma pushes 460/26/S/000010
+    const again = await run(pre, base);
+    assert.match(again.text, /Smart Pharma 1\/1/);
+    const ap = await run(['apply', '--out', out, '--confirm-org', '60091274394'], base);
+    assert.equal(ap.code, 0, ap.text);
+    const put = posted.find(([m]) => m === 'customerpayments:PUT');
+    assert.deepEqual(put[1].invoices, [{ invoice_id: 'INV-900', amount_applied: 15 }, { invoice_id: 'INV-SP10', amount_applied: 60 }]);
+    const twice = await run(['apply', '--out', out, '--confirm-org', '60091274394'], base);
+    assert.match(twice.text, /payments updated 0, unchanged 1/);
   } finally {
     server.close();
   }

@@ -1,16 +1,23 @@
 #!/usr/bin/env node
-// Post a branch's planned transactions (scripts/txn-plan.js) to the Zoho Books TEST organisation.
+// Post a branch's planned transactions (scripts/txn-plan.js) to Zoho Books.
 //
 //   node scripts/txn-post.js preflight --out var/txn/460 --account-map var/txn/460/accounts_zoho.csv \
-//     --opening var/opening/460 --clearing-account-id <Opening Advances Clearing id> [--contacts contacts.json]
+//     --opening var/opening/460 --clearing-account-id <cash clearing account id> [--contacts contacts.json]
 //     [--contact-controls skip]   (test organisation only: do not require contacts to carry their group's account)
-//   node scripts/txn-post.js post --out var/txn/460 --confirm-org 60091274394 [--only bill,journal,receipt,payment,credit] [--per-kind 1]
+//     [--doc-numbers docs.csv]    ("doc,party,books_number" for documents not numbered by convention)
+//     [--allow-missing-docs]      (leave amounts for opening documents not in Books as advances)
+//   node scripts/txn-post.js post  --out var/txn/460 --confirm-org <organisation id> [--only bill,journal,receipt,payment,credit] [--per-kind 1]
+//   node scripts/txn-post.js apply --out var/txn/460 --confirm-org <organisation id> [--limit 1]
 //
-// Pass 1: every voucher is posted; receipts / payments are applied to the documents already in
-// Books (opening documents, our bills). What Eco Green settled against Smart Pharma's documents
-// waits as unused credit (waiting.csv) for pass 2, once their documents are in Books.
+// Documents payments are applied to are found by number: Smart Pharma's convention
+// <branch>/<yy>/<prefix>/<000000>, the opening's own number, or --doc-numbers. post applies every
+// receipt / payment to those already in Books; what is left waits as unused credit, and apply adds
+// it once the documents are in Books (e.g. Smart Pharma's pushed later), then makes the pending
+// credit / debit note set-offs.
 // Each voucher carries the reference <branch>/<yy>/<prefix>/<000000>; anything already in Books
 // under it is not posted again, so a stopped run is simply run again.
+// Posting needs the application's guard (live driver, POSTING_ENABLED, authorization reference),
+// BOOKS_ORG_ALLOWLIST naming only the target organisation, and --confirm-org with its id.
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, openSync, closeSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseCsv } from '../src/core/csv.js';
@@ -19,9 +26,11 @@ import { loadBooksConfig, assertPostingAllowed } from '../src/books/guard.js';
 import {
   UnknownOutcome, DailyLimit, RateBlocked, RATE_PER_MINUTE, progress, booksClient, liveConfig,
 } from '../src/books/rest.js';
-import { pickAccount, assertTestOrgPosting } from '../src/opening/books_docs.js';
+import { pickAccount } from '../src/opening/books_docs.js';
 import { refKey, toPaise, INTER_BRANCH_CONTACT } from '../src/txn/plan.js';
-import { voucherRequests, creditRequests, splitApplications, booksNumber, TxnPostError } from '../src/txn/books.js';
+import {
+  voucherRequests, creditRequests, splitApplications, booksNumber, TxnPostError, assertBranchPosting,
+} from '../src/txn/books.js';
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
@@ -193,27 +202,54 @@ async function cmdPreflight(o) {
   }
   if (billVendors.size && !res.taxExemptionId) problems.push('bills need a tax exemption id (--tax-exemption-id or the opening resolution)');
 
-  // Opening documents the payments are applied to (pass 1), found by their Books number.
+  // Documents the payments are applied to: opening items and Smart Pharma's documents, found by
+  // number (Smart Pharma's convention <branch>/<yy>/<prefix>/<000000>, the opening's own number,
+  // or --doc-numbers "key,party,books_number" overrides), on the party's own contact.
   const idx = openingIndex(opening.documents);
-  const wanted = new Map();
-  for (const p of plan.postings) for (const a of p.applications ?? []) if (a.source === 'opening') wanted.set(`${a.doc}|${a.party}`, idx.get(`${a.doc}|${a.party}`));
-  for (const c of plan.creditApplications ?? []) for (const k of [`${c.credit}|${c.party}`, `${c.doc}|${c.party}`]) if (idx.has(k)) wanted.set(k, idx.get(k));
-  const kinds = new Set([...wanted.values()].filter(Boolean).map((d) => d.kind));
+  const docNumbers = new Map();
+  if (o['doc-numbers']) {
+    const { rows } = parseCsv(readFileSync(o['doc-numbers'], 'utf8'));
+    for (const [key, party, number] of rows) if (number?.trim()) docNumbers.set(`${key.trim()}|${party.trim()}`, number.trim());
+  }
+  const wanted = new Map(); // "doc|party" -> { kind, side, source, numbers: [] }
+  const want = (doc, party, side, kind, source) => {
+    const k = `${doc}|${party}`;
+    if (wanted.has(k) || source === 'ours') return;
+    const numbers = [docNumbers.get(k), idx.get(k)?.number, /^\d{2}\/[^/]+\/-?\d+$/.test(doc) ? booksNumber(plan.branch, doc) : null].filter(Boolean);
+    wanted.set(k, { kind, side, source, numbers: [...new Set(numbers)] });
+  };
+  for (const p of plan.postings) {
+    for (const a of p.applications ?? []) want(a.doc, a.party, p.party.side, p.kind === 'receipt' ? 'invoice' : 'bill', a.source);
+  }
+  for (const c of plan.creditApplications ?? []) {
+    const side = c.side ?? (idx.get(`${c.credit}|${c.party}`)?.side) ?? 'vendor';
+    want(c.credit, c.party, side, side === 'vendor' ? 'vendor_credit' : 'credit_note', c.creditSource);
+    want(c.doc, c.party, side, side === 'vendor' ? 'bill' : 'invoice', idx.has(`${c.doc}|${c.party}`) ? 'opening' : 'smartpharma');
+  }
+  const kinds = new Set([...wanted.values()].map((w) => w.kind));
   for (const m of DOC_MODULES.filter((x) => kinds.has(x.kind))) {
-    progress(`opening ${m.path}…`);
-    const prefix = `${plan.branch}/`;
-    const rows = await books.listAll(`/${m.path}`, m.list, { [`${m.number}_startswith`]: prefix, sort_column: m.number, sort_order: 'A' }, m.id);
-    const byNumber = new Map(rows.map((r) => [String(r[m.number]), r]));
-    for (const [k, d] of wanted) {
-      if (!d || d.kind !== m.kind) continue;
-      const r = byNumber.get(d.number);
-      if (r) res.docs[k] = { module: m.path, id: String(r[m.id]), number: d.number };
+    progress(`${m.path}: looking up ${[...wanted.values()].filter((w) => w.kind === m.kind).length} documents…`);
+    const rows = await books.listAll(`/${m.path}`, m.list, { [`${m.number}_startswith`]: `${plan.branch}/`, sort_column: m.number, sort_order: 'A' }, m.id);
+    const byNumber = new Map();
+    for (const r of rows) byNumber.set(String(r[m.number]), [...(byNumber.get(String(r[m.number])) ?? []), r]);
+    for (const [k, w] of wanted) {
+      if (w.kind !== m.kind) continue;
+      const contact = res.contacts[`${w.side}:${k.split('|')[1]}`];
+      for (const n of w.numbers) {
+        const hits = (byNumber.get(n) ?? []).filter((r) => !contact || String(r.customer_id ?? r.vendor_id ?? contact) === contact);
+        if (hits.length === 1) { res.docs[k] = { module: m.path, id: String(hits[0][m.id]), number: n }; break; }
+      }
     }
   }
-  const missing = [...wanted].filter(([k, d]) => !d || !res.docs[k]);
-  if (missing.length) problems.push(`${missing.length} opening documents to apply to are not in Books, e.g. ${missing.slice(0, 5).map(([k, d]) => `${k} (${d?.number ?? 'not in the opening plan'})`).join(', ')}`);
-  const waiting = plan.postings.flatMap((p) => (p.applications ?? []).filter((a) => a.source === 'smartpharma'));
-  notes.push(`Applications waiting for Smart Pharma documents (pass 2): ${waiting.length}, ${formatMoney(waiting.reduce((t, a) => t + toPaise(a.amount), 0n))}`);
+  const missing = [...wanted].filter(([k]) => !res.docs[k]);
+  writeFileSync(join(out, 'documents-not-found.csv'), toCsv(['doc', 'party', 'source', 'numbers_tried'], missing.map(([k, w]) => [...k.split('|'), w.source, w.numbers.join(' ')])));
+  const missingOpening = missing.filter(([, w]) => w.source === 'opening');
+  if (missingOpening.length && o['allow-missing-docs'] !== 'true') problems.push(`${missingOpening.length} opening documents to apply to are not in Books (documents-not-found.csv; --doc-numbers to name them, or --allow-missing-docs to leave those amounts as advances)`);
+  const found = (src) => [...wanted].filter(([k, w]) => w.source === src && res.docs[k]).length;
+  const total = (src) => [...wanted.values()].filter((w) => w.source === src).length;
+  notes.push(`Documents to apply to: opening ${found('opening')}/${total('opening')}, Smart Pharma ${found('smartpharma')}/${total('smartpharma')} (not yet in Books: applied later with "apply")`);
+  const waiting = plan.postings.flatMap((p) => (p.applications ?? []).filter((a) => a.source !== 'ours' && !res.docs[`${a.doc}|${a.party}`]));
+  notes.push(`Applications waiting for documents not yet in Books: ${waiting.length}, ${formatMoney(waiting.reduce((t, a) => t + toPaise(a.amount), 0n))}`);
 
   progress(`preflight done: ${books.usage.calls} Books calls${books.usage.remaining !== null ? `, ${books.usage.remaining} left today` : ''}`);
   if (books.usage.remaining !== null) notes.push(`Books API calls left today: ${books.usage.remaining} of ${books.usage.limit ?? '?'}`);
@@ -221,7 +257,7 @@ async function cmdPreflight(o) {
   writeFileSync(join(out, 'resolution.json'), JSON.stringify(res, null, 2));
   const md = [`# Branch ${plan.branch} — transaction preflight (${new Date().toISOString().slice(0, 10)})`, '', `Organisation ${config.organizationId}, location ${res.locationId}`, '',
     '## Resolved', '', ...notes.map((n) => `- ${n}`), `- Accounts: ${Object.keys(res.accounts).length}/${codes.size}`, `- Contacts: ${[...parties.keys()].filter((k) => res.contacts[k]).length}/${parties.size}`,
-    `- Opening documents to apply to: ${Object.keys(res.docs).length}/${wanted.size}`, '', '## Problems', '', ...(problems.length ? problems.map((p) => `- ${p}`) : ['- none — ready for the smoke test']), ''].join('\n');
+    `- Documents to apply to found in Books: ${Object.keys(res.docs).length}/${wanted.size}`, '', '## Problems', '', ...(problems.length ? problems.map((p) => `- ${p}`) : ['- none — ready for the smoke test']), ''].join('\n');
   writeFileSync(join(out, 'preflight.md'), md);
   console.log(md);
   return problems.length ? 1 : 0;
@@ -236,7 +272,7 @@ async function cmdPost(o) {
   const plan = readJson(join(out, 'plan.json'));
   const res = readJson(join(out, 'resolution.json'));
   const config = loadBooksConfig(process.env);
-  assertTestOrgPosting(config, o['confirm-org'], assertPostingAllowed);
+  assertBranchPosting(config, o['confirm-org'], assertPostingAllowed);
   if (res.organizationId !== config.organizationId) throw new TxnPostError('resolution.json was made for another organisation; rerun preflight');
   if (res.problems?.length) throw new TxnPostError(`preflight has ${res.problems.length} open problems; rerun preflight once they are fixed`);
   if (plan.checks.some((c) => !c.ok)) throw new TxnPostError('the plan has failed checks');
@@ -342,10 +378,109 @@ async function cmdPost(o) {
   return counts.failed ? 1 : 0;
 }
 
+
+// ---- apply (pass 2) ------------------------------------------------------------------------------
+
+/**
+ * Applications whose documents reached Books after the payment was posted (e.g. Smart Pharma's
+ * documents pushed later): adds them to the payments already in Books, never beyond a payment's
+ * unused amount, then makes the pending credit / debit note set-offs. Rerun preflight first, so
+ * the documents are resolved.
+ */
+async function cmdApply(o) {
+  const out = need(o, 'out');
+  const plan = readJson(join(out, 'plan.json'));
+  const res = readJson(join(out, 'resolution.json'));
+  const config = loadBooksConfig(process.env);
+  assertBranchPosting(config, o['confirm-org'], assertPostingAllowed);
+  if (res.organizationId !== config.organizationId) throw new TxnPostError('resolution.json was made for another organisation; rerun preflight');
+  const books = booksClient(config);
+  const logPath = join(out, 'post-log.jsonl');
+  const log = (e) => appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), ...e }) + '\n');
+  const lockPath = join(out, 'post.lock');
+  let lock;
+  try { lock = openSync(lockPath, 'wx'); } catch { throw new TxnPostError(`${lockPath} exists: another post is running (delete it only if none is)`); }
+  const counts = { applied: 0, unchanged: 0, credits: 0, failed: 0 };
+  const limit = o.limit ? Number(o.limit) : Infinity;
+  try {
+    const prefix = `${plan.branch}/`;
+    const bills = await books.listAll('/bills', 'bills', { bill_number_startswith: prefix, sort_column: 'bill_number', sort_order: 'A' }, 'bill_id');
+    for (const p of plan.postings.filter((x) => x.kind === 'bill')) {
+      const hit = bills.find((b) => String(b.bill_number) === booksNumber(plan.branch, p.key));
+      if (hit) res.docs[`${p.key}|${p.party.code}`] = { module: 'bills', id: String(hit.bill_id) };
+    }
+    const MOD = {
+      receipt: { path: 'customerpayments', key: 'payment', docs: 'invoices', docId: 'invoice_id', contact: 'customer_id', through: 'account_id' },
+      payment: { path: 'vendorpayments', key: 'vendorpayment', docs: 'bills', docId: 'bill_id', contact: 'vendor_id', through: 'paid_through_account_id' },
+    };
+    let done = 0;
+    for (const kind of ['receipt', 'payment']) {
+      const m = MOD[kind];
+      const todo = plan.postings.filter((p) => p.kind === kind && splitApplications(p, res).now.length);
+      if (!todo.length) continue;
+      const existing = new Map((await books.listAll(`/${m.path}`, m.path, { reference_number_startswith: prefix, sort_column: 'date', sort_order: 'A' }, 'payment_id'))
+        .map((r) => [String(r.reference_number), r]));
+      for (const p of todo) {
+        if (done >= limit) break;
+        const ref = booksNumber(plan.branch, p.key);
+        const row = existing.get(ref);
+        if (!row) continue; // not posted yet: post makes it with its applications
+        const rec = (await books.call('GET', `/${m.path}/${row.payment_id}`))[m.key] ?? {};
+        const have = new Set((rec[m.docs] ?? []).map((d) => String(d[m.docId])));
+        let unused = toPaise(rec.unused_amount ?? 0);
+        const add = [];
+        for (const a of splitApplications(p, res).now) {
+          if (have.has(a.id) || unused <= 0n) continue;
+          const amt = toPaise(a.amount) < unused ? toPaise(a.amount) : unused;
+          add.push({ [m.docId]: a.id, amount_applied: Number(formatMoney(amt)) });
+          unused -= amt;
+        }
+        if (!add.length) { counts.unchanged += 1; continue; }
+        const body = {
+          [m.contact]: String(rec[m.contact]), amount: Number(rec.amount), date: rec.date, reference_number: rec.reference_number,
+          description: rec.description ?? '', [m.through]: String(rec[m.through] ?? ''), payment_mode: rec.payment_mode,
+          [m.docs]: [...(rec[m.docs] ?? []).map((d) => ({ [m.docId]: String(d[m.docId]), amount_applied: Number(d.amount_applied) })), ...add],
+        };
+        try {
+          await books.call('PUT', `/${m.path}/${row.payment_id}`, { body });
+          log({ key: p.key, part: 'apply', status: 'APPLIED', id: String(row.payment_id), added: add.length });
+          counts.applied += 1;
+          done += 1;
+        } catch (err) {
+          if (err instanceof UnknownOutcome || err instanceof DailyLimit || err instanceof RateBlocked) throw err;
+          log({ key: p.key, part: 'apply', status: 'FAILED', error: err.message });
+          console.log(`  FAILED ${p.key} apply: ${err.message}`);
+          if (++counts.failed >= Number(o['max-failures'] ?? 5)) throw new TxnPostError(`${counts.failed} apply failures; stopping — see ${logPath}`);
+        }
+      }
+    }
+    for (const c of creditRequests(plan, res)) {
+      const [path, field] = c.path.includes('vendorcredits') ? ['vendorcredits', 'bills_credited'] : ['creditnotes', 'invoices_credited'];
+      const rec = Object.values((await books.call('GET', `/${path}/${c.path.split('/')[2]}`)) ?? {}).find((v) => v && typeof v === 'object' && v[field]);
+      const target = c.body.bills?.[0]?.bill_id ?? c.body.invoices?.[0]?.invoice_id;
+      if ((rec?.[field] ?? []).some((x) => String(x.bill_id ?? x.invoice_id) === target)) continue;
+      await books.call('POST', c.path, { body: c.body });
+      log({ key: c.key, part: 'credit', status: 'POSTED' });
+      counts.credits += 1;
+    }
+  } catch (err) {
+    if (err instanceof RateBlocked || err instanceof DailyLimit || err instanceof UnknownOutcome) {
+      console.log(`Stopped: ${err.message}. Rerun the same command; payments already updated are left as they are.`);
+      return 2;
+    }
+    throw err;
+  } finally {
+    closeSync(lock);
+    unlinkSync(lockPath);
+    console.log(`payments updated ${counts.applied}, unchanged ${counts.unchanged}, credit set-offs ${counts.credits}, failed ${counts.failed}; log: ${logPath}`);
+  }
+  return counts.failed ? 1 : 0;
+}
+
 const { cmd, opts } = parseArgs(process.argv.slice(2));
-const run = { preflight: cmdPreflight, post: cmdPost }[cmd];
+const run = { preflight: cmdPreflight, post: cmdPost, apply: cmdApply }[cmd];
 if (!run) {
-  console.error('usage: txn-post.js preflight|post [options] (see the header of this file)');
+  console.error('usage: txn-post.js preflight|post|apply [options] (see the header of this file)');
   process.exit(64);
 }
 Promise.resolve()

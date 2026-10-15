@@ -6,7 +6,9 @@
 //     --from 2026-04-01 --to 2026-07-05 --out var/txn/460 [--account-map accounts.csv] [--excel-dates asis]
 //
 // Writes to --out: plan.json, report.md, applications.csv, exceptions.csv and accounts.csv
-// (every ledger our postings touch; fill zoho_code and pass it back as --account-map).
+// (every ledger our postings touch; fill zoho_code and pass it back as --account-map) and
+// accounts-all.csv (every ledger in the file, Smart Pharma's too — the reconciliation's map once
+// both sides are in Books).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readXlsx } from '../src/sources/ecogreen/xlsx.js';
@@ -77,6 +79,16 @@ function main() {
   writeFileSync(join(out, 'accounts.csv'), toCsv(
     ['account', 'eco_code', 'name', 'lines', 'zoho_code'],
     plan.accounts.map((a) => [a.account, a.code, a.name, a.lines, accountMap?.get(a.account) ?? '']),
+  ));
+  const all = new Map();
+  for (const l of lines.filter((x) => !x.party)) {
+    const a = all.get(l.account) ?? { account: l.account, code: l.code, name: l.name, ours: 0, smartPharma: 0 };
+    if (l.owner === 'ZOHO') a.ours += 1; else a.smartPharma += 1;
+    all.set(l.account, a);
+  }
+  writeFileSync(join(out, 'accounts-all.csv'), toCsv(
+    ['account', 'eco_code', 'name', 'lines_ours', 'lines_smart_pharma', 'zoho_code'],
+    [...all.values()].sort((a, b) => a.account.localeCompare(b.account)).map((a) => [a.account, a.code, a.name, a.ours, a.smartPharma, accountMap?.get(a.account) ?? '']),
   ));
   process.stdout.write(planReport(plan));
   if (plan.checks.some((c) => !c.ok)) process.exitCode = 2;
