@@ -81,14 +81,14 @@ function cmdReport(o) {
 
   const integrity = ecoIntegrity(lines, tb);
   const { exp, unmapped } = expectedBooks({ opening, lines: posted, accountMap, groupZoho });
-  const tbRows = compareTb(exp, readBooksTb(readJson(join(out, 'tb.json'))));
+  const tbRows = compareTb(exp, readBooksTb(readJson(join(out, 'tb.json'))), new Set(groupZoho.values()));
   const parties = compareParties({
     opening, posted, all: lines, contacts,
     customers: readJson(join(out, 'customers.json')).customerbalances, vendors: readJson(join(out, 'vendors.json')).vendorbalances,
   });
 
   writeFileSync(join(out, 'integrity.csv'), toCsv(['tb_code', 'account', 'tb_movement', 'ledger', 'difference', 'ok'], integrity.map((r) => [r.code, r.name, r.tb, r.ledger, r.diff, r.ok])));
-  writeFileSync(join(out, 'tb.csv'), toCsv(['zoho_code', 'account', 'expected', 'books', 'difference', 'ok'], tbRows.map((r) => [r.code, r.name, r.expected, r.books, r.diff, r.ok])));
+  writeFileSync(join(out, 'tb.csv'), toCsv(['zoho_code', 'account', 'expected', 'books', 'difference', 'control_account', 'ok'], tbRows.map((r) => [r.code, r.name, r.expected, r.books, r.diff, r.control, r.ok])));
   writeFileSync(join(out, 'parties.csv'), toCsv(
     ['side', 'code', 'party', 'expected', 'books', 'difference', 'ok', 'books_open_documents', 'books_unused_credits', 'eco_green_closing', 'smart_pharma_part'],
     parties.rows.map((r) => [r.side, r.code, r.name, r.expected, r.books, r.diff, r.ok, r.open, r.credits, r.ecoClosing, r.smartPharma]),
@@ -96,7 +96,7 @@ function cmdReport(o) {
   const md = reconReport({ branch: opening.branch ?? '', asOf: need(o, 'to'), integrity, tb: tbRows, unmapped, parties });
   writeFileSync(join(out, 'recon.md'), md);
   console.log(md);
-  return [integrity, tbRows, parties.rows].some((rows) => rows.some((r) => !r.ok)) ? 2 : 0;
+  return [integrity, tbRows, parties.rows].some((rows) => rows.some((r) => !r.ok)) || !tbRows.controlGroup.ok ? 2 : 0;
 }
 
 const { cmd, opts } = parseArgs(process.argv.slice(2));

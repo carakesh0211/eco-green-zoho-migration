@@ -8,7 +8,7 @@
 //   C. Parties: each customer / vendor net balance in Books vs opening documents + posted lines;
 //      Eco Green's own closing per party (all lines) alongside, the difference being Smart Pharma's.
 import { formatMoney } from '../core/money.js';
-import { toPaise, INTER_BRANCH } from './plan.js';
+import { toPaise, INTER_BRANCH, INTER_BRANCH_CONTACT } from './plan.js';
 
 const fmt = (p) => formatMoney(p);
 const text = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -16,6 +16,8 @@ const norm = (s) => text(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
 const abs = (p) => (p < 0n ? -p : p);
 export const TOLERANCE = 100n; // ₹1
 const addTo = (m, k, v) => m.set(k, (m.get(k) ?? 0n) + v);
+/** "side:code" of the Books contact a ledger line posts to (HO / inter-branch -> customer 000), or null. */
+const partyOf = (l) => (l.party ? `${l.party}:${l.code}` : l.account === INTER_BRANCH ? `customer:${INTER_BRANCH_CONTACT}` : null);
 
 /** Closing TB report rows -> Map(code -> { code, name, op, tran, cl }), Dr − Cr, duplicates summed. */
 export function readClosingTb(rows) {
@@ -93,15 +95,31 @@ export function readBooksTb(json) {
   return out;
 }
 
-export function compareTb(exp, books, names = new Map()) {
+// Books' own receivable / payable accounts: documents and payments land on these (or on the
+// contact's receivable / payable account), not necessarily on the Eco Green group's account.
+export const BOOKS_CONTROL_NAMES = ['name:Accounts Receivable', 'name:Accounts Payable', 'name:Advance from Customers', 'name:Advance to Vendors'];
+
+/**
+ * Rows per Zoho account. `controls` (Zoho codes of the receivable / payable groups) and Books'
+ * own control accounts are compared as one group: their split across accounts is listed but only
+ * the group total must tie (each party is reconciled in part C).
+ */
+export function compareTb(exp, books, controls = new Set()) {
+  const isControl = (k) => controls.has(k) || BOOKS_CONTROL_NAMES.includes(k);
   const rows = [];
   for (const key of new Set([...exp.keys(), ...books.keys()])) {
     const e = exp.get(key) ?? 0n;
     const b = books.get(key)?.net ?? 0n;
     if (e === 0n && b === 0n) continue;
-    rows.push({ code: key, name: books.get(key)?.name ?? names.get(key) ?? '', expected: e, books: b, diff: b - e, ok: abs(b - e) <= TOLERANCE });
+    const control = isControl(key);
+    rows.push({ code: key, name: books.get(key)?.name ?? '', expected: e, books: b, diff: b - e, control, ok: control || abs(b - e) <= TOLERANCE });
   }
-  return rows.sort((a, b) => (a.ok === b.ok ? a.code.localeCompare(b.code) : a.ok ? 1 : -1));
+  const c = rows.filter((r) => r.control);
+  const group = { expected: c.reduce((t, r) => t + r.expected, 0n), books: c.reduce((t, r) => t + r.books, 0n) };
+  group.diff = group.books - group.expected;
+  group.ok = abs(group.diff) <= TOLERANCE;
+  rows.sort((a, b) => (a.ok === b.ok ? a.code.localeCompare(b.code) : a.ok ? 1 : -1));
+  return Object.assign(rows, { controlGroup: group });
 }
 
 /**
@@ -118,8 +136,8 @@ export function compareParties({ opening, posted, all, contacts, customers, vend
     addTo(eco, k, BigInt(d.net));
     names.set(k, d.partyName);
   }
-  for (const l of posted) if (l.party) { addTo(exp, `${l.party}:${l.code}`, l.amount); names.set(`${l.party}:${l.code}`, l.name); }
-  for (const l of all) if (l.party) { addTo(eco, `${l.party}:${l.code}`, l.amount); names.set(`${l.party}:${l.code}`, l.name); }
+  for (const l of posted) { const k = partyOf(l); if (k) { addTo(exp, k, l.amount); if (!names.has(k)) names.set(k, l.name); } }
+  for (const l of all) { const k = partyOf(l); if (k) { addTo(eco, k, l.amount); if (!names.has(k)) names.set(k, l.name); } }
   const byContact = new Map(Object.entries(contacts).map(([k, id]) => [String(id), k]));
   const books = new Map();
   const extra = [];
@@ -156,10 +174,19 @@ export function reconReport({ branch, asOf, integrity, tb, unmapped, parties }) 
     for (const r of bad(integrity)) L.push(`| ${r.code} | ${r.name} | ${fmt(r.tb)} | ${fmt(r.ledger)} | ${fmt(r.diff)} |`);
     L.push('');
   }
-  L.push('## B. Zoho Books trial balance vs opening + posted lines', '', `${tb.length - bad(tb).length}/${tb.length} accounts tie.`, '');
-  if (bad(tb).length) {
+  const plain = tb.filter((r) => !r.control);
+  const g = tb.controlGroup ?? { expected: 0n, books: 0n, diff: 0n, ok: true };
+  L.push('## B. Zoho Books trial balance vs opening + posted lines', '', `${plain.length - bad(plain).length}/${plain.length} accounts tie (other than receivable / payable controls).`, '');
+  if (bad(plain).length) {
     L.push('| Zoho code | Account | Expected (Dr+/Cr−) | Books | Difference |', '|---|---|---:|---:|---:|');
-    for (const r of bad(tb)) L.push(`| ${r.code} | ${r.name} | ${fmt(r.expected)} | ${fmt(r.books)} | ${fmt(r.diff)} |`);
+    for (const r of bad(plain)) L.push(`| ${r.code} | ${r.name} | ${fmt(r.expected)} | ${fmt(r.books)} | ${fmt(r.diff)} |`);
+    L.push('');
+  }
+  L.push(`Receivable / payable control accounts as a group: expected ${fmt(g.expected)}, Books ${fmt(g.books)}, difference ${fmt(g.diff)} – ${g.ok ? 'ties' : '**does not tie**'}.`, '');
+  const split = tb.filter((r) => r.control && abs(r.diff) > TOLERANCE);
+  if (split.length) {
+    L.push('Split across the control accounts (Eco Green group account vs where Books holds it):', '', '| Zoho code | Account | Eco Green group | Books | Difference |', '|---|---|---:|---:|---:|');
+    for (const r of split) L.push(`| ${r.code} | ${r.name} | ${fmt(r.expected)} | ${fmt(r.books)} | ${fmt(r.diff)} |`);
     L.push('');
   }
   if (unmapped.size) {

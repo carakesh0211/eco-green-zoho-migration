@@ -94,3 +94,23 @@ test('compareParties: Books net vs opening + posted; Eco Green closing and Smart
   assert.match(md, /2\/2 parties tie/);
   assert.match(md, /Smart Pharma's documents for 1 parties/);
 });
+
+test('compareTb with controls: split across receivable / payable accounts is listed, the group total must tie', () => {
+  const exp = new Map([['FRP0013G', P(100)], ['AL0054', P(-100)]]);
+  const books = new Map([['name:Accounts Receivable', { name: 'Accounts Receivable', net: P(100) }], ['AL0054', { name: 'Bank', net: P(-100) }]]);
+  const rows = compareTb(exp, books, new Set(['FRP0013G']));
+  assert.ok(rows.every((r) => r.ok));
+  assert.deepEqual([rows.controlGroup.expected, rows.controlGroup.books, rows.controlGroup.ok], [P(100), P(100), true]);
+  const off = compareTb(exp, new Map([['name:Accounts Receivable', { net: P(90) }], ['AL0054', { net: P(-100) }]]), new Set(['FRP0013G']));
+  assert.equal(off.controlGroup.ok, false);
+  assert.match(reconReport({ branch: '9', asOf: 'x', integrity: [], tb: off, unmapped: new Map(), parties: { rows: [], extra: [] } }), /does not tie/);
+});
+
+test('compareParties: HO / inter-branch lines belong to contact 000', () => {
+  const ho = readLedgerRows([HDR, row('J', 9, 0, 75, 'FRANKROSS ADMIN', 3, 1002002000), row('J', 9, 903, -75, 'INDUSIND', 1, 1002003003)]);
+  const { rows } = compareParties({
+    opening: { documents: [] }, posted: ho, all: ho, contacts: { 'customer:000': 'HO' },
+    customers: [{ customer_id: 'HO', customer_name: 'Frankross Admin', bcy_balance: 75 }], vendors: [],
+  });
+  assert.deepEqual(rows.map((r) => [r.side, r.code, r.expected, r.ok]), [['customer', '000', P(75), true]]);
+});
