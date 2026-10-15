@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readLedgerRows } from '../src/txn/plan.js';
 import {
-  readClosingTb, ecoIntegrity, expectedBooks, readBooksTb, compareTb, compareParties, reconReport, tbCodeOf,
+  readClosingTb, ecoIntegrity, expectedBooks, readBooksTb, compareTb, compareParties, reconReport, tbCodeOf, controlAccountIds,
 } from '../src/txn/recon.js';
 
 const HDR = ['c_br_code', 'c_year', 'c_prefix', 'n_tran_no', 'c_act_code', 'd_date', 'n_amount', 'c_opp_act_code', 'c_ref_br_code', 'n_pk', 'c_name', 'n_type', 'c_grp_no', 'c_remarks', 'cust_pay_ref_no', 'supp_pay_ref_no', 'To be pushed by '];
@@ -113,4 +113,12 @@ test('compareParties: HO / inter-branch lines belong to contact 000', () => {
     customers: [{ customer_id: 'HO', customer_name: 'Frankross Admin', bcy_balance: 75 }], vendors: [],
   });
   assert.deepEqual(rows.map((r) => [r.side, r.code, r.expected, r.ok]), [['customer', '000', P(75), true]]);
+});
+
+test('compareTb: any receivable / payable account (by Books id) counts as a control', () => {
+  const exp = new Map([['FRP0013G', P(100)], ['AL0054', P(-100)]]);
+  const books = new Map([['FRP0014G', { name: 'Sundry Debtors-Retail', id: '14', net: P(100) }], ['AL0054', { name: 'Bank', id: '54', net: P(-100) }]]);
+  const rows = compareTb(exp, books, new Set(['FRP0013G']), controlAccountIds({ ar_account_list: [{ account_id: '14' }], ap_account_list: [] }));
+  assert.ok(rows.every((r) => r.ok));
+  assert.equal(rows.controlGroup.ok, true);
 });

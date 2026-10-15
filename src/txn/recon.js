@@ -84,7 +84,7 @@ export function readBooksTb(json) {
     for (const n of nodes ?? []) {
       if (n.account_id) {
         const key = text(n.account_code) || `name:${text(n.name)}`;
-        const e = out.get(key) ?? { name: text(n.name), net: 0n };
+        const e = out.get(key) ?? { name: text(n.name), id: String(n.account_id), net: 0n };
         e.net += toPaise(n.net_debit_total === '' ? 0 : n.net_debit_total) - toPaise(n.net_credit_total === '' ? 0 : n.net_credit_total);
         out.set(key, e);
       }
@@ -104,8 +104,8 @@ export const BOOKS_CONTROL_NAMES = ['name:Accounts Receivable', 'name:Accounts P
  * own control accounts are compared as one group: their split across accounts is listed but only
  * the group total must tie (each party is reconciled in part C).
  */
-export function compareTb(exp, books, controls = new Set()) {
-  const isControl = (k) => controls.has(k) || BOOKS_CONTROL_NAMES.includes(k);
+export function compareTb(exp, books, controls = new Set(), controlIds = new Set()) {
+  const isControl = (k) => controls.has(k) || BOOKS_CONTROL_NAMES.includes(k) || controlIds.has(books.get(k)?.id);
   const rows = [];
   for (const key of new Set([...exp.keys(), ...books.keys()])) {
     const e = exp.get(key) ?? 0n;
@@ -120,6 +120,11 @@ export function compareTb(exp, books, controls = new Set()) {
   group.ok = abs(group.diff) <= TOLERANCE;
   rows.sort((a, b) => (a.ok === b.ok ? a.code.localeCompare(b.code) : a.ok ? 1 : -1));
   return Object.assign(rows, { controlGroup: group });
+}
+
+/** Receivable / payable account ids from a contact edit page (ar_account_list / ap_account_list). */
+export function controlAccountIds(editpage) {
+  return new Set([...(editpage?.ar_account_list ?? []), ...(editpage?.ap_account_list ?? [])].map((a) => String(a.account_id)));
 }
 
 /**

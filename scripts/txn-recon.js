@@ -5,6 +5,7 @@
 //       read only: saves the Books trial balance, customer balances and vendor balances
 //   node scripts/txn-recon.js report --out var/recon/460 --to 2026-07-05 --closing-tb <Closing_tb.xlsx> \
 //       --ledger <Ledger V2.xlsx> --opening var/opening/460 --txn var/txn/460 [--control-map map.json] [--posted ours|all]
+//       [--controls <contacts editpage json>]   (default: controls.json saved by fetch)
 //       writes recon.md, integrity.csv, tb.csv, parties.csv to --out (no Books calls)
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,7 +15,7 @@ import { formatMoney } from '../src/core/money.js';
 import { booksClient, liveConfig, progress } from '../src/books/rest.js';
 import { readLedgerRows } from '../src/txn/plan.js';
 import {
-  readClosingTb, ecoIntegrity, expectedBooks, readBooksTb, compareTb, compareParties, reconReport,
+  readClosingTb, ecoIntegrity, expectedBooks, readBooksTb, compareTb, compareParties, reconReport, controlAccountIds,
 } from '../src/txn/recon.js';
 
 function parseArgs(argv) {
@@ -44,6 +45,8 @@ async function cmdFetch(o) {
   const books = booksClient(liveConfig());
   const q = { to_date: need(o, 'to'), location_id: need(o, 'location') };
   writeFileSync(join(out, 'tb.json'), JSON.stringify(await books.call('GET', '/reports/trialbalance', { query: q }), null, 2));
+  // every receivable / payable account (the contact form lists them all)
+  writeFileSync(join(out, 'controls.json'), JSON.stringify(await books.call('GET', '/contacts/editpage', { query: { contact_type: 'customer' } }), null, 2));
   for (const [file, path, key] of [['customers.json', '/reports/customerbalances', 'customerbalances'], ['vendors.json', '/reports/vendorbalances', 'vendorbalances']]) {
     const all = [];
     for (let page = 1; ; page += 1) {
@@ -81,7 +84,9 @@ function cmdReport(o) {
 
   const integrity = ecoIntegrity(lines, tb);
   const { exp, unmapped } = expectedBooks({ opening, lines: posted, accountMap, groupZoho });
-  const tbRows = compareTb(exp, readBooksTb(readJson(join(out, 'tb.json'))), new Set(groupZoho.values()));
+  const controlsFile = o.controls ?? join(out, 'controls.json');
+  if (!existsSync(controlsFile)) throw new Error(`${controlsFile} not found: rerun fetch, or pass --controls <contacts editpage json>`);
+  const tbRows = compareTb(exp, readBooksTb(readJson(join(out, 'tb.json'))), new Set(groupZoho.values()), controlAccountIds(readJson(controlsFile)));
   const parties = compareParties({
     opening, posted, all: lines, contacts,
     customers: readJson(join(out, 'customers.json')).customerbalances, vendors: readJson(join(out, 'vendors.json')).vendorbalances,
