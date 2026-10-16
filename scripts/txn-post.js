@@ -508,8 +508,9 @@ if (!run) {
 }
 Promise.resolve()
   .then(() => run(opts))
-  .then((code) => process.exit(code ?? 0))
+  // exitCode, not process.exit(): exiting with fetch sockets still open crashes Node on Windows (0xC0000409)
+  .then((code) => { process.exitCode = code ?? 0; })
   .catch((err) => {
     console.error(`${cmd}: ${err.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   });
