@@ -1,5 +1,16 @@
 # WORKDRIVE_INGESTION.md — WorkDrive Inbox Contract
 
+> **Branch extract sync (implemented, `scripts/workdrive-sync.js`).** The branch folders under
+> `WORKDRIVE_FOLDER_ID` (e.g. `branch-extract_data/tripura/461`) are watched: files new or changed
+> since the last pull (WorkDrive file id + modified time + size, `var/workdrive/state.json`) are
+> downloaded into `var/raw<br>/`, zips unpacked, the changed branches planned
+> (`scripts/branch-ready.js`), and `Migration Tracker.csv` (one row per branch: files received and
+> missing, status, voucher counts, problems) is written back into the root folder. Run once, with
+> `--every <minutes>`, or from the OS scheduler; `--dry-run` lists what would be pulled. Token:
+> `scripts/workdrive-token.js <Self Client grant code>` (scopes `WorkDrive.files.READ,WorkDrive.files.CREATE`)
+> stores it in `.env.workdrive`. The manifest-based contract below remains the design for the
+> hosted worker.
+
 Status: **in progress (wave 1)**. Describes the inbox contract implemented against
 `CONTRACTS.md` §I and `DATA_CONTRACT.md`. No WorkDrive credential is configured in this
 environment (CONFIRMED); the WorkDrive adapter is a stub. All statements about the real

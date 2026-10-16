@@ -16,6 +16,7 @@
 import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 function parseArgs(argv) {
   const opts = {};
@@ -50,7 +51,7 @@ function prepare(b, o) {
   };
   const row = { branch: b, files, missing: Object.entries(files).filter(([, v]) => !v).map(([k]) => k) };
   if (!files.ledger) return { ...row, status: 'NO LEDGER' };
-  const args = ['scripts/txn-plan.js', '--branch', b, '--ledger', files.ledger, '--from', o.from, '--to', o.to, '--out', join('var', 'txn', b)];
+  const args = [fileURLToPath(new URL('./txn-plan.js', import.meta.url)), '--branch', b, '--ledger', files.ledger, '--from', o.from, '--to', o.to, '--out', join('var', 'txn', b)];
   for (const [flag, v] of [['supplier', files.supplier], ['customer', files.customer], ['closing-tb', files.closingTb], ['opening', files.opening],
     ['coa', o.coa], ['account-map', o['account-map']], ['gl-parties', o['gl-parties']]]) if (v) args.push(`--${flag}`, v);
   const run = spawnSync(process.execPath, args, { encoding: 'utf8' });
@@ -93,6 +94,11 @@ function main() {
     L.push('');
   }
   writeFileSync(join('var', 'txn', 'readiness.md'), L.join('\n'));
+  const known = existsSync(join('var', 'txn', 'readiness.json')) ? JSON.parse(readFileSync(join('var', 'txn', 'readiness.json'), 'utf8')) : {};
+  writeFileSync(join('var', 'txn', 'readiness.json'), JSON.stringify({ ...known, ...Object.fromEntries(rows.map((r) => [r.branch, {
+    status: r.status, ours: r.totals?.vouchers ?? '', smartPharma: r.totals?.smartPharmaVouchers ?? '', waiting: r.waiting ?? '',
+    problems: [r.error, ...(r.failed ?? []).map((c) => `${c.name}: ${c.detail}`)].filter(Boolean).join(' | '),
+  }])) }, null, 2));
   writeFileSync(join('var', 'txn', 'readiness.csv'), toCsv(
     ['branch', 'status', 'journals', 'receipts', 'payments', 'bills', 'failed_checks', 'waiting_documents', 'waiting_amount', 'missing_files'],
     rows.map((r) => [r.branch, r.status, r.kinds?.journal ?? 0, r.kinds?.receipt ?? 0, r.kinds?.payment ?? 0, r.kinds?.bill ?? 0,

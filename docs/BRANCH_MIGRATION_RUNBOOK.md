@@ -26,6 +26,10 @@ procedure for the live organisation. Every step reads or writes local files unde
 
 ## A. Plan (no Books calls)
 
+Branch files arrive through WorkDrive: `node scripts/workdrive-sync.js --every 60` pulls each new or
+changed branch folder, prepares it and updates `Migration Tracker.csv` in the WorkDrive root
+(`WORKDRIVE_INGESTION.md`).
+
 Many branches at once – each extract in `var/raw<br>/txn/`, planned into `var/txn/<br>`, summary in
 `var/txn/readiness.md` / `readiness.csv` (status READY, WAITING FOR OPENING or FIX):
 
