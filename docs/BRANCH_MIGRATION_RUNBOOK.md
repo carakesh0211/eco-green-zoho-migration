@@ -55,15 +55,19 @@ Rules built into the plan:
 
 ```
 node scripts/txn-post.js preflight --out var/txn/<br> --account-map var/txn/<br>/accounts_zoho.csv \
-  --opening var/opening/<br> --clearing-account-id <cash clearing account id>
+  --opening var/opening/<br> --clearing-account-id <cash clearing account id> \
+  --location <the branch's Books location id>
 ```
 
 Resolves every Zoho account, contact, journal party control and the clearing account; checks
 that **every contact carries its Eco Green group's receivable / payable account** (blank or wrong
 stops the run: `contact-controls.csv`); finds the documents payments are applied to by number –
 Smart Pharma's convention `<branch>/<yy>/<prefix>/<000000>`, the opening's own number, or
-`--doc-numbers` (`doc,party,books_number`). Opening documents not found stop the run
-(`documents-not-found.csv`) unless `--allow-missing-docs`. `preflight.md` must list no problems.
+`--doc-numbers` (`doc,party,books_number`), on the number or the reference# of the party's own
+documents. Opening documents not found stop the run (`documents-not-found.csv`; the party's open
+documents are listed in `document-candidates.csv` to name them) unless `--allow-missing-docs`.
+`--location` is required when the opening was resolved in another organisation (test → live);
+bill lines take the organisation's exemption named OPENING unless `--tax-exemption-id`. `preflight.md` must list no problems.
 Test organisation only: `--contact-controls skip`.
 
 ## C. Smoke test, then full post

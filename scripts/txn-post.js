@@ -6,6 +6,8 @@
 //     [--contact-controls skip]   (test organisation only: do not require contacts to carry their group's account)
 //     [--doc-numbers docs.csv]    ("doc,party,books_number" for documents not numbered by convention)
 //     [--allow-missing-docs]      (leave amounts for opening documents not in Books as advances)
+//     [--location <id>]           (the branch's Books location; required when the opening was made in another organisation)
+//     [--tax-exemption-id <id>]   (bill lines; otherwise the organisation's one exemption named OPENING)
 //   node scripts/txn-post.js post  --out var/txn/460 --confirm-org <organisation id> [--only bill,journal,receipt,payment,credit] [--per-kind 1]
 //   node scripts/txn-post.js apply --out var/txn/460 --confirm-org <organisation id> [--limit 1]
 //
@@ -124,12 +126,20 @@ async function cmdPreflight(o) {
   if (Object.keys(openingRes).length && !sameOrg) notes.push(`Opening resolution was made for organisation ${openingRes.organizationId ?? '?'}; its contacts are not reused here`);
   const reuse = sameOrg ? openingRes : {};
   const res = {
-    organizationId: config.organizationId, branch: plan.branch, locationId: opening.locationId,
+    organizationId: config.organizationId, branch: plan.branch,
+    // the opening plan's location belongs to the organisation its resolution was made for
+    locationId: o.location ?? (Object.keys(openingRes).length && !sameOrg ? null : opening.locationId),
     clearingAccountId: o['clearing-account-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? reuse.taxExemptionId ?? null,
     accountMap: readAccountMap(need(o, 'account-map')), accounts: {}, contacts: { ...(reuse.contacts ?? {}) },
     gstTreatment: { ...(reuse.gstTreatment ?? {}) }, controls: {}, docs: {},
   };
   progress(`preflight: organisation ${config.organizationId}, ${plan.postings.length} vouchers (about ${RATE_PER_MINUTE} calls a minute)`);
+  if (!res.locationId) problems.push(`pass --location: the opening's location ${opening.locationId} belongs to organisation ${openingRes.organizationId}`);
+  else {
+    const loc = (await books.listAll('/locations', 'locations')).find((l) => String(l.location_id) === String(res.locationId));
+    if (!loc) problems.push(`location ${res.locationId} not found in organisation ${config.organizationId} (--location)`);
+    else notes.push(`Location: ${loc.location_name} (${res.locationId})`);
+  }
 
   // Accounts: every mapped ledger, the party controls, the clearing account.
   const accountsWhere = async (query) => (await books.call('GET', '/chartofaccounts', { query: { filter_by: 'AccountType.All', ...query } })).chartofaccounts ?? [];
@@ -204,7 +214,15 @@ async function cmdPreflight(o) {
     problems.push(`${unresolved.length} parties have no single Books contact — fill contacts-to-map.csv into a --contacts JSON file ({"customer:H1": "<contact id>"})`);
     writeFileSync(join(out, 'contacts-to-map.csv'), toCsv(['Key', 'Eco Green name', 'Matches', 'Candidates'], unresolved));
   }
-  if (billVendors.size && !res.taxExemptionId) problems.push('bills need a tax exemption id (--tax-exemption-id or the opening resolution)');
+  if (billVendors.size && !res.taxExemptionId) {
+    // as the opening did: the organisation's one exemption named OPENING
+    const exemptions = (await books.call('GET', '/settings/taxexemptions')).tax_exemptions ?? [];
+    const hits = exemptions.filter((t) => /OPENING/i.test(`${t.tax_exemption_code} ${t.description ?? ''}`));
+    if (hits.length === 1) {
+      res.taxExemptionId = String(hits[0].tax_exemption_id);
+      notes.push(`Tax exemption on bill lines: ${hits[0].tax_exemption_code} (${res.taxExemptionId})`);
+    } else problems.push(`bills need a tax exemption id (--tax-exemption-id); available: ${exemptions.map((t) => `${t.tax_exemption_code} ${t.tax_exemption_id}`).join(', ') || 'none'}`);
+  }
 
   // Documents the payments are applied to: opening items and Smart Pharma's documents, found by
   // number (Smart Pharma's convention <branch>/<yy>/<prefix>/<000000>, the opening's own number,
@@ -248,22 +266,33 @@ async function cmdPreflight(o) {
       }
     }
   }
-  // not in the branch-prefixed lists (e.g. plain-numbered bills): exact number on the party's contact
+  // not in the branch-prefixed lists (e.g. plain-numbered bills, opening documents uploaded by hand):
+  // the party's own documents, matched on number or reference#. One listing per contact; the open
+  // ones of a party still unmatched go to document-candidates.csv to name them with --doc-numbers.
   const byKind = Object.fromEntries(DOC_MODULES.map((m) => [m.kind, m]));
   const outsidePrefix = (w) => w.numbers.filter((n) => !n.startsWith(`${plan.branch}/`));
-  const pending = [...wanted].filter(([k, w]) => !res.docs[k] && outsidePrefix(w).length);
-  if (pending.length) progress(`exact lookups for ${pending.length} documents…`);
+  const pending = [...wanted].filter(([k, w]) => !res.docs[k] && (w.source === 'opening' || outsidePrefix(w).length));
+  const contactDocs = new Map(); // "module|contact" -> rows
+  if (pending.length) progress(`party lookups for ${pending.length} documents…`);
+  const candidates = [];
   for (const [k, w] of pending) {
     const m = byKind[w.kind];
     const contact = res.contacts[`${w.side}:${k.split('|')[1]}`];
     if (!contact) continue;
     const contactField = w.side === 'vendor' ? 'vendor_id' : 'customer_id';
-    for (const n of outsidePrefix(w)) {
-      const rows = ((await books.call('GET', `/${m.path}`, { query: { [m.number]: n, [contactField]: contact } }))[m.list] ?? [])
-        .filter((r) => String(r[m.number]) === n && String(r[contactField] ?? contact) === contact);
-      if (rows.length === 1) { res.docs[k] = { module: m.path, id: String(rows[0][m.id]), number: n }; break; }
+    const ck = `${m.path}|${contact}`;
+    if (!contactDocs.has(ck)) contactDocs.set(ck, await books.listAll(`/${m.path}`, m.list, { [contactField]: contact }, m.id));
+    const rows = contactDocs.get(ck).filter((r) => String(r[contactField] ?? contact) === contact);
+    const same = (a, b) => String(a ?? '').trim().toUpperCase() === String(b).trim().toUpperCase();
+    for (const n of w.numbers) {
+      const hits = rows.filter((r) => same(r[m.number], n) || same(r.reference_number, n));
+      if (hits.length === 1) { res.docs[k] = { module: m.path, id: String(hits[0][m.id]), number: String(hits[0][m.number]) }; break; }
+    }
+    if (!res.docs[k] && w.source === 'opening') {
+      for (const r of rows.filter((x) => Number(x.balance ?? 0) > 0)) candidates.push([k.split('|')[0], k.split('|')[1], r[m.number], r.reference_number ?? '', r.date, r.total, r.balance]);
     }
   }
+  if (candidates.length) writeFileSync(join(out, 'document-candidates.csv'), toCsv(['doc', 'party', 'books_number', 'reference', 'date', 'total', 'balance'], candidates));
   const missing = [...wanted].filter(([k]) => !res.docs[k]);
   writeFileSync(join(out, 'documents-not-found.csv'), toCsv(['doc', 'party', 'source', 'numbers_tried'], missing.map(([k, w]) => [...k.split('|'), w.source, w.numbers.join(' ')])));
   const missingOpening = missing.filter(([, w]) => w.source === 'opening');

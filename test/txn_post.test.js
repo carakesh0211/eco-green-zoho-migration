@@ -101,7 +101,10 @@ function fakeBooks({ contactAccount = 'AR', spInvoice = false } = {}) {
         return send({ chartofaccounts: accounts.filter((a) => (code ? a.account_code === code : a.account_id === id)) });
       }
       if (p.startsWith('/contacts/')) return send({ contact: { contact_id: p.split('/')[2], gst_treatment: 'consumer', account_id: contactAccount, account_name: contactAccount === 'AR' ? 'Sundry Debtors' : 'Accounts Receivable' } });
+      if (p === '/locations') return send({ locations: [{ location_id: 'LOC', location_name: 'Branch 460' }, { location_id: 'LIVE-LOC', location_name: 'Branch 460 live' }], page_context: { has_more_page: false } });
       if (p === '/contacts') return send({ contacts: [{ contact_id: 'C1', contact_name: 'UPI TERMINAL', gst_treatment: 'consumer' }], page_context: { has_more_page: false } });
+      if (p === '/invoices' && url.searchParams.get('customer_id') && state.byReference) return send({ invoices: [{ invoice_id: 'INV-OB', invoice_number: 'INV-000001', reference_number: '460/25/S-900', customer_id: 'C1', balance: 15 }], page_context: { has_more_page: false } });
+      if (p === '/invoices' && state.byReference) return send({ invoices: [], page_context: { has_more_page: false } });
       if (p === '/invoices') return send({ invoices: [{ invoice_id: 'INV-900', invoice_number: '460/25/S-900' }, ...(state.spInvoice ? [{ invoice_id: 'INV-SP10', invoice_number: '460/26/S/000010', customer_id: 'C1' }] : [])], page_context: { has_more_page: false } });
       const one = /^\/(customerpayments|vendorpayments)\/(.+)$/.exec(p);
       if (one) {
@@ -235,11 +238,43 @@ test('txn-post preflight: an opening resolution made for another organisation is
   writeFileSync(join(opening, 'resolution.json'), JSON.stringify({ organizationId: '60000000001', contacts: { 'customer:H1': 'TEST-ORG-CONTACT' }, taxExemptionId: 'TEST-EX' }));
   const { server, base } = await fakeBooks();
   try {
-    const pre = await run(['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'], base);
+    const pre = await run(['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX', '--location', 'LIVE-LOC'], base);
     assert.equal(pre.code, 0, pre.text);
     const r = JSON.parse(readFileSync(join(out, 'resolution.json'), 'utf8'));
     assert.equal(r.contacts['customer:H1'], 'C1', 'found in this organisation, not taken from the other one');
     assert.match(pre.text, /made for organisation 60000000001; its contacts are not reused/);
+  } finally {
+    server.close();
+  }
+});
+
+test('txn-post preflight: the opening\'s location is not used in another organisation; --location is checked', async () => {
+  const { out, opening } = fixture();
+  writeFileSync(join(opening, 'resolution.json'), JSON.stringify({ organizationId: '60000000001', contacts: {} }));
+  const { server, base } = await fakeBooks();
+  try {
+    const args = ['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'];
+    const without = await run(args, base);
+    assert.equal(without.code, 1);
+    assert.match(without.text, /pass --location: the opening's location LOC belongs to organisation 60000000001/);
+    const wrong = await run([...args, '--location', 'NOPE'], base);
+    assert.match(wrong.text, /location NOPE not found/);
+    const ok = await run([...args, '--location', 'LIVE-LOC'], base);
+    assert.equal(ok.code, 0, ok.text);
+    assert.equal(JSON.parse(readFileSync(join(out, 'resolution.json'), 'utf8')).locationId, 'LIVE-LOC');
+  } finally {
+    server.close();
+  }
+});
+
+test('txn-post preflight: an opening document uploaded under another number is found by its reference#', async () => {
+  const { out, opening } = fixture();
+  const { server, state, base } = await fakeBooks();
+  state.byReference = true;
+  try {
+    const pre = await run(['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'], base);
+    assert.equal(pre.code, 0, pre.text);
+    assert.deepEqual(JSON.parse(readFileSync(join(out, 'resolution.json'), 'utf8')).docs['25/S/900|H1'], { module: 'invoices', id: 'INV-OB', number: 'INV-000001' });
   } finally {
     server.close();
   }
