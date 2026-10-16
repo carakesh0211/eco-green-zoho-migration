@@ -70,6 +70,13 @@ function readAccountMap(path) {
   return Object.fromEntries(rows.filter((r) => r[h.indexOf('zoho_code')]?.trim()).map((r) => [r[h.indexOf('account')].trim(), r[h.indexOf('zoho_code')].trim()]));
 }
 
+/** The opening's contact ids, only when its resolution was made for the same organisation. */
+function openingContacts(path, org) {
+  if (!existsSync(path)) return {};
+  const r = readJson(path);
+  return String(r.organizationId ?? '') === String(org ?? '') ? (r.contacts ?? {}) : {};
+}
+
 function cmdReport(o) {
   const out = need(o, 'out');
   const txn = need(o, 'txn');
@@ -82,7 +89,7 @@ function cmdReport(o) {
   const groupZoho = new Map(opening.documents.map((d) => [d.controlCode, d.controlZoho]));
   for (const [g, z] of Object.entries(o['control-map'] ? readJson(o['control-map']) : {})) groupZoho.set(g, z);
   const contacts = {
-    ...(existsSync(join(openingDir, 'resolution.json')) ? readJson(join(openingDir, 'resolution.json')).contacts : {}),
+    ...openingContacts(join(openingDir, 'resolution.json'), readJson(join(txn, 'resolution.json')).organizationId),
     ...readJson(join(txn, 'resolution.json')).contacts,
   };
   const posted = (o.posted ?? 'ours') === 'all' ? lines : lines.filter((l) => l.owner === 'ZOHO');

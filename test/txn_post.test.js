@@ -229,3 +229,18 @@ test('txn-post apply: a Smart Pharma invoice that reaches Books after the post i
     server.close();
   }
 });
+
+test('txn-post preflight: an opening resolution made for another organisation is not reused', async () => {
+  const { out, opening } = fixture();
+  writeFileSync(join(opening, 'resolution.json'), JSON.stringify({ organizationId: '60000000001', contacts: { 'customer:H1': 'TEST-ORG-CONTACT' }, taxExemptionId: 'TEST-EX' }));
+  const { server, base } = await fakeBooks();
+  try {
+    const pre = await run(['preflight', '--out', out, '--opening', opening, '--account-map', join(out, 'accounts_zoho.csv'), '--clearing-account-id', 'CLR', '--tax-exemption-id', 'EX'], base);
+    assert.equal(pre.code, 0, pre.text);
+    const r = JSON.parse(readFileSync(join(out, 'resolution.json'), 'utf8'));
+    assert.equal(r.contacts['customer:H1'], 'C1', 'found in this organisation, not taken from the other one');
+    assert.match(pre.text, /made for organisation 60000000001; its contacts are not reused/);
+  } finally {
+    server.close();
+  }
+});

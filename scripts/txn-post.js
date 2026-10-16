@@ -119,11 +119,15 @@ async function cmdPreflight(o) {
   const books = booksClient(config);
   const problems = [];
   const notes = [];
+  // the opening's contacts / tax exemption are reused only when made for this organisation
+  const sameOrg = String(openingRes.organizationId ?? '') === String(config.organizationId);
+  if (Object.keys(openingRes).length && !sameOrg) notes.push(`Opening resolution was made for organisation ${openingRes.organizationId ?? '?'}; its contacts are not reused here`);
+  const reuse = sameOrg ? openingRes : {};
   const res = {
     organizationId: config.organizationId, branch: plan.branch, locationId: opening.locationId,
-    clearingAccountId: o['clearing-account-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? openingRes.taxExemptionId ?? null,
-    accountMap: readAccountMap(need(o, 'account-map')), accounts: {}, contacts: { ...(openingRes.contacts ?? {}) },
-    gstTreatment: { ...(openingRes.gstTreatment ?? {}) }, controls: {}, docs: {},
+    clearingAccountId: o['clearing-account-id'] ?? null, taxExemptionId: o['tax-exemption-id'] ?? reuse.taxExemptionId ?? null,
+    accountMap: readAccountMap(need(o, 'account-map')), accounts: {}, contacts: { ...(reuse.contacts ?? {}) },
+    gstTreatment: { ...(reuse.gstTreatment ?? {}) }, controls: {}, docs: {},
   };
   progress(`preflight: organisation ${config.organizationId}, ${plan.postings.length} vouchers (about ${RATE_PER_MINUTE} calls a minute)`);
 
