@@ -3,11 +3,14 @@
 // into a refresh token and store it in .env.workdrive. The token is written, never printed.
 //
 //   node scripts/workdrive-token.js <grant code> [--env .env.workdrive]
+//   node scripts/workdrive-token.js <grant code> --appsail   (into var/appsail-env.local.json, the
+//                                    AppSail service's env file used by scripts/deploy-appsail.js)
 // Client id / secret: WORKDRIVE_CLIENT_ID / _SECRET, else BOOKS_CLIENT_ID / _SECRET (from the env
 // file named, then .env.opening). Accounts server: WORKDRIVE_ACCOUNTS_BASE (https://accounts.zoho.in).
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 const [code, flag, envArg] = process.argv.slice(2);
+const appsail = flag === '--appsail';
 const envPath = flag === '--env' && envArg ? envArg : '.env.workdrive';
 if (!code) { console.error('usage: workdrive-token.js <grant code> [--env .env.workdrive]'); process.exit(64); }
 const read = (p) => (existsSync(p) ? Object.fromEntries(readFileSync(p, 'utf8').split(/\r?\n/)
@@ -22,6 +25,14 @@ const res = await fetch(`${env.WORKDRIVE_ACCOUNTS_BASE ?? 'https://accounts.zoho
 });
 const json = await res.json().catch(() => ({}));
 if (!json.refresh_token) { console.error(`no refresh token returned: ${json.error ?? `http ${res.status}`} (grant codes expire within minutes and work once)`); process.exit(1); }
-const lines = existsSync(envPath) ? readFileSync(envPath, 'utf8').split(/\r?\n/).filter((l) => l && !/^WORKDRIVE_REFRESH_TOKEN=/.test(l)) : [];
-writeFileSync(envPath, [...lines, `WORKDRIVE_REFRESH_TOKEN=${json.refresh_token}`, ''].join('\n'));
-console.log(`refresh token stored in ${envPath} (scope: ${json.scope ?? 'as granted'})`);
+const KEY = 'WORKDRIVE_REFRESH_TOKEN';
+if (appsail) {
+  const file = 'var/appsail-env.local.json';
+  const vars = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).filter((e) => e.key !== KEY) : [];
+  writeFileSync(file, JSON.stringify([...vars, { key: KEY, value: json.refresh_token }], null, 2));
+  console.log(`refresh token stored in ${file} (scope: ${json.scope ?? 'as granted'}); deploy with scripts/deploy-appsail.js`);
+} else {
+  const lines = existsSync(envPath) ? readFileSync(envPath, 'utf8').split(/\r?\n/).filter((l) => l && !l.startsWith(`${KEY}=`)) : [];
+  writeFileSync(envPath, [...lines, KEY + '=' + json.refresh_token, ''].join('\n'));
+  console.log(`refresh token stored in ${envPath} (scope: ${json.scope ?? 'as granted'})`);
+}

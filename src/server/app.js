@@ -27,6 +27,8 @@ import { createArchiveHealth } from './archive_health.js';
 import { createRetransformJobs } from './retransform_jobs.js';
 import { createBulkMappingRouter } from './routes/bulk_mapping.js';
 import { createValidationRouter } from './routes/validation.js';
+import { createWorkdriveRouter } from './routes/workdrive.js';
+import { createWorkdriveService } from './workdrive_service.js';
 import { isPostingEnabled, postingBlockedReasons, loadBooksConfig } from '../books/guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +89,7 @@ export function createApp({
   booksConnection,
   sessionAuth,
   archiveHealth,
+  workdriveService,
 }) {
   const app = express();
   // Bearer tokens resolve against the config users first, then the app_users directory
@@ -211,6 +214,8 @@ export function createApp({
   app.use('/api', createBranchesRouter({ store, audit, auth }));
   app.use('/api', createAdminRouter({ store, audit, auth, users, deps: { branchSummary: branchSummaryHook } }));
   app.use('/api', createAdminBooksRouter({ connection: booksConnection, auth }));
+  // WorkDrive branch inbox: pulls branch extracts, prepares them, writes the tracker back.
+  app.use('/api', createWorkdriveRouter({ auth, service: workdriveService ?? createWorkdriveService({ runtime }) }));
   // Serves both /api/auth/* and the non-API /auth/login|logout redirects.
   app.use(createAuthRouter({ auth, sessionAuth, environment }));
 
