@@ -28,6 +28,8 @@ export class TxnPlanError extends Error {
 
 const fmt = (p) => formatMoney(p);
 const text = (v) => (v === null || v === undefined ? '' : String(v).trim());
+// Excel's text marker: some extracts keep it on codes ('V01833, '-CGSTR)
+const codeText = (v) => text(v).replace(/^'/, '');
 const abs = (p) => (p < 0n ? -p : p);
 const min = (a, b) => (a < b ? a : b);
 
@@ -70,7 +72,38 @@ export function accountKey(code, name, type) {
   const c = text(code);
   if (type === 3 || c === '0') return INTER_BRANCH;
   if (c.startsWith('#')) return `NAME:${text(name).toUpperCase()}`;
-  return c;
+  return /^\d+$/.test(c) ? String(Number(c)) : c; // 000939 and 939 are the same ledger
+}
+
+/**
+ * Eco Green code -> Zoho account code from a Books chart-of-accounts export whose custom field
+ * "Eco Green Account Code" tags each Zoho account with the Eco Green ledger(s) it stands for
+ * (several per cell: newline / comma separated). A code tagged on two Zoho accounts is ambiguous
+ * and left out, for the account map to decide.
+ */
+export function coaCrosswalk(csvText) {
+  const { header, rows } = parseCsv(csvText);
+  const h = header.map((x) => text(x).replace(/^\uFEFF/, '').toLowerCase());
+  const code = h.indexOf('account code');
+  const tag = h.findIndex((x) => /eco ?green/.test(x));
+  const status = h.indexOf('account status');
+  if (code < 0 || tag < 0) throw new TxnPlanError('chart of accounts: needs "Account Code" and an "Eco Green Account Code" column');
+  const seen = new Map();
+  for (const r of rows) {
+    const z = text(r[code]);
+    if (!z || (status >= 0 && /inactive/i.test(text(r[status])))) continue;
+    for (const t of text(r[tag]).split(/[\n,]+/)) {
+      const e = accountKey(codeText(t.replace(/^"|"$/g, '')), '', null);
+      if (e) seen.set(e, new Set([...(seen.get(e) ?? []), z]));
+    }
+  }
+  const map = new Map();
+  const ambiguous = [];
+  for (const [e, zs] of seen) {
+    if (zs.size === 1) map.set(e, [...zs][0]);
+    else ambiguous.push([e, [...zs]]);
+  }
+  return { map, ambiguous };
 }
 
 /** Sheet rows (header first) -> normalised ledger lines. */
@@ -88,13 +121,14 @@ export function readLedgerRows(rows, opts = {}) {
   };
   const out = [];
   for (const r of rows.slice(1)) {
-    if (r.every((x) => x === null || x === '')) continue;
+    if (r.every((x) => x === null || x === '') || codeText(r[c.code]) === '') continue; // blank / total rows
+    const code = codeText(r[c.code]);
     // parties kept as GL ledgers in Books (e.g. card / UPI terminal collection accounts)
-    const glParty = opts.glParties?.has(text(r[c.code]));
+    const glParty = opts.glParties?.has(code);
     const type = glParty ? 0 : Number(r[c.type]);
     out.push({
       year: text(r[c.year]), prefix: text(r[c.prefix]), no: text(r[c.no]),
-      code: text(r[c.code]), account: accountKey(r[c.code], r[c.name], type), name: text(r[c.name]),
+      code, account: accountKey(code, r[c.name], type), name: text(r[c.name]),
       type, party: PARTY_TYPES.get(type) ?? null, glParty: Boolean(glParty),
       // TB control (Sundry Debtors / Creditors group) = last 6 digits of the ledger group, e.g. 1002002022 -> 002022
       control: text(r[c.group]).slice(-6),

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ledgerDate, accountKey, readLedgerRows, groupVouchers, classifyVoucher, pairSettlement, refKey,
-  readSupplierAllocations, readCustomerSettlements, buildTxnPlan, planReport, INTER_BRANCH,
+  readSupplierAllocations, readCustomerSettlements, buildTxnPlan, planReport, INTER_BRANCH, coaCrosswalk,
 } from '../src/txn/plan.js';
 
 const HDR = ['c_br_code', 'c_year', 'c_prefix', 'n_tran_no', 'c_act_code', 'd_date', 'n_amount', 'c_opp_act_code', 'c_ref_br_code', 'n_pk', 'c_name', 'n_type', 'c_grp_no', 'c_remarks', 'cust_pay_ref_no', 'supp_pay_ref_no', 'To be pushed by '];
@@ -23,6 +23,29 @@ test('accountKey: "#NAME?" keyed by ledger name, code 0 / type 3 is inter-branch
   assert.equal(accountKey('#NAME?', 'Central GST Receivable', 0), 'NAME:CENTRAL GST RECEIVABLE');
   assert.equal(accountKey(0, 'FRANKROSS ADMIN', 3), INTER_BRANCH);
   assert.equal(accountKey('UR_REC', 'x', 0), 'UR_REC');
+});
+
+test('extract variations: text-marker codes, zero-padded codes, padded headers and blank rows read the same', () => {
+  const hdr = HDR.map((h) => (h === 'n_amount' ? ' n_amount ' : h.trim()));
+  const ls = readLedgerRows([hdr,
+    row('J', 1, "'000939", '01/05/26', 100, 'HDFC BANK', 1),
+    row('J', 1, "'V01833", '01/05/26', -100, 'VENDOR', 5),
+    [null, null, null, null, null, null, 0, null, null, null, null, null, null, null, null, null, null],
+  ]);
+  assert.deepEqual(ls.map((l) => [l.account, l.code, l.party]), [['939', '000939', null], ['V01833', 'V01833', 'vendor']]);
+  assert.equal(accountKey('939', 'x', 1), accountKey('000939', 'x', 1));
+});
+
+test('coaCrosswalk: Eco Green codes tagged on Zoho accounts; a code on two accounts is ambiguous', () => {
+  const csv = 'Account Name,Account Code,Account Type,Account Status,Currency,Parent Account,CF.Eco Green Account Code\n'
+    + 'Hdfc Bank,AL0060,Bank,Active,INR,,939\n'
+    + 'Central GST Receivable,AL0213,Other Current Liability,Active,INR,,\'-CGSTR\n'
+    + 'Postage & Courier,IE179,Expense,Active,INR,,"COURIE\nCOURIER"\n'
+    + 'Old,IE999,Expense,Inactive,INR,,IE021\n'
+    + 'A,IE001,Expense,Active,INR,,DUP\nB,IE002,Expense,Active,INR,,DUP\n';
+  const { map, ambiguous } = coaCrosswalk(csv);
+  assert.deepEqual(Object.fromEntries(map), { 939: 'AL0060', '-CGSTR': 'AL0213', COURIE: 'IE179', COURIER: 'IE179' });
+  assert.deepEqual(ambiguous, [['DUP', ['IE001', 'IE002']]]);
 });
 
 test('classifyVoucher: receipt (pass-through control nets out), payment, bill, journal', () => {
