@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
-import { fileKind, pickFiles, toPull, trackerRow, localName } from '../src/workdrive/sync.js';
+import { fileKind, pickFiles, toPull, trackerRow, localName, ledgerWindow } from '../src/workdrive/sync.js';
 
 const f = (id, name, modified = 1, size = 10) => ({ id, name, isFolder: false, modified, size });
 
@@ -38,6 +38,16 @@ test('trackerRow: missing files, and the plan status (opening received once its 
   assert.equal(row.missing_files, 'supplier; customer; closingTb');
   assert.equal(row.last_upload, '2026-10-16 08:00');
   assert.equal(trackerRow({ region: 'x', branch: '470', picked: {} }, null, {}, 'now').status, 'WAITING FOR FILES');
+});
+
+test('ledgerWindow: each branch migration window comes from its ledger name', () => {
+  assert.deepEqual(ledgerWindow('Ledger_01042026_to_05072026 V2.xlsx'), { from: '2026-04-01', to: '2026-07-05' }); // Tripura
+  assert.deepEqual(ledgerWindow('Ledger_01042026_to_05082026 V1 17-10-2026 23:33:32:181.xlsx'), { from: '2026-04-01', to: '2026-08-05' }); // Bengaluru
+  assert.equal(ledgerWindow('ledger_v2.xlsx'), null);
+  assert.equal(ledgerWindow('Ledger_05082026_to_01042026.xlsx'), null, 'reversed range ignored');
+  const row = trackerRow({ region: 'Bengaluru/karnataka', branch: '302', picked: { ledger: f('l', 'Ledger_01042026_to_05082026 V1.xlsx') } }, null, {}, 'now');
+  assert.equal(row.window, '2026-04-01 to 2026-08-05');
+  assert.equal(trackerRow({ region: 'x', branch: '470', picked: { ledger: f('l', 'Ledger V1.xlsx') } }, null, {}, 'now').window, '2026-04-01 to 2026-07-05', 'default window');
 });
 
 // a one-entry zip (deflate) holding a csv
@@ -113,8 +123,8 @@ test('workdrive-sync: pulls new branch files once (zip unpacked), prepares them,
     assert.equal(readFileSync(join(cwd, 'var/raw461/txn/invoice_receipt_det_act_461.csv'), 'utf8'), 'c_br_code\n0\n');
     assert.equal(uploads.length, 1);
     assert.deepEqual([uploads[0].query.filename, uploads[0].query.parent_id, uploads[0].query['override-name-exist']], ['Migration Tracker.csv', 'ROOT', 'true']);
-    assert.match(uploads[0].body, /tripura,461,Ledger_x V2\.xlsx,2,supplier; closingTb; openingItems/);
-    assert.match(uploads[0].body, /tripura,999,,0,.*WAITING FOR FILES/);
+    assert.match(uploads[0].body, /tripura,461,Ledger_x V2\.xlsx,2026-04-01 to 2026-07-05,2,supplier; closingTb; openingItems/);
+    assert.match(uploads[0].body, /tripura,999,,,0,.*WAITING FOR FILES/);
 
     const again = await sync([], base, cwd);
     assert.match(again.text, /2 branch folders; 0 files new or changed/);

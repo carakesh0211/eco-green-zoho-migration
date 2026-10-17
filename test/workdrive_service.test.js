@@ -152,3 +152,24 @@ test('publishToDashboard: WorkDrive branches appear on the dashboard with their 
     await store.close();
   }
 });
+
+test('runSync: each branch is planned on its own window (Tripura to 05-07-2026, Bengaluru to 05-08-2026)', async () => {
+  const blr = buildXlsx([{ name: 'ledger', rows: [HDR,
+    [302, 26, 'J', 1, "'IE223", '20/07/26', 100, '', 302, 1, 'SALES PROMOTION', 6, 4001000000, 'promo', null, null, 'ZOHO'],
+    [302, 26, 'J', 1, "'000903", '20/07/26', -100, '', 302, 1, 'INDUSIND BANK', 1, 1002003003, 'promo', null, null, 'ZOHO'],
+  ] }]);
+  const wd = fakeWd();
+  const file = (id, name, bytes) => ({ id, name, isFolder: false, modified: 1, size: bytes.length, bytes });
+  const tree = { ROOT: [{ id: 'BLR', name: 'Bengaluru', isFolder: true }], BLR: [{ id: 'B302', name: '302', isFolder: true }],
+    B302: [file('L2', 'Ledger_01042026_to_05082026 V1.xlsx', blr)] };
+  const inner = wd.list.bind(wd);
+  const all = Object.values(tree).flat();
+  wd.list = async (id) => tree[id] ?? inner(id);
+  const dl = wd.download.bind(wd);
+  wd.download = async (f) => all.find((x) => x.id === f.id)?.bytes ?? dl(f);
+  const s = await runSync({ wd, blobs: memoryBlobs(), rootFolderId: 'ROOT', configFolderId: 'CFG' });
+  const row = s.tracker.find((r) => r.branch === '302');
+  assert.equal(row.window, '2026-04-01 to 2026-08-05');
+  assert.doesNotMatch(row.problems, /dates inside the window/, '20-07-2026 is inside the Bengaluru window');
+  assert.equal(row.status, 'WAITING FOR OPENING');
+});

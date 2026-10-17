@@ -6,6 +6,9 @@
 //     [--account-map var/txn/accounts_master.csv] [--gl-parties H30066,H58907]
 //     [--from 2026-04-01] [--to 2026-07-05]
 //
+// Without --from/--to each branch's window is read from its ledger's name
+// (Ledger_01042026_to_05082026 V1.xlsx: 2026-04-01 to 2026-08-05), else 2026-04-01 to 2026-07-05.
+//
 // Per branch the extract folder holds (names as delivered; matched loosely):
 //   ledger_v2.xlsx                      the ledger table V2 (required)
 //   supplier_payment_details_act.csv    supplier allocations
@@ -14,9 +17,10 @@
 // and var/opening/<br>/plan.json once the opening is prepared. Each branch is planned into
 // var/txn/<br> (scripts/txn-plan.js); var/txn/readiness.md and readiness.csv summarise them all.
 import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { ledgerWindow, DEFAULT_WINDOW } from '../src/workdrive/sync.js';
 
 function parseArgs(argv) {
   const opts = {};
@@ -51,7 +55,10 @@ function prepare(b, o) {
   };
   const row = { branch: b, files, missing: Object.entries(files).filter(([, v]) => !v).map(([k]) => k) };
   if (!files.ledger) return { ...row, status: 'NO LEDGER' };
-  const args = [fileURLToPath(new URL('./txn-plan.js', import.meta.url)), '--branch', b, '--ledger', files.ledger, '--from', o.from, '--to', o.to, '--out', join('var', 'txn', b)];
+  const named = ledgerWindow(basename(files.ledger)) ?? DEFAULT_WINDOW;
+  const window = { from: o.from ?? named.from, to: o.to ?? named.to };
+  row.window = window;
+  const args = [fileURLToPath(new URL('./txn-plan.js', import.meta.url)), '--branch', b, '--ledger', files.ledger, '--from', window.from, '--to', window.to, '--out', join('var', 'txn', b)];
   for (const [flag, v] of [['supplier', files.supplier], ['customer', files.customer], ['closing-tb', files.closingTb], ['opening', files.opening],
     ['coa', o.coa], ['account-map', o['account-map']], ['gl-parties', o['gl-parties']]]) if (v) args.push(`--${flag}`, v);
   const run = spawnSync(process.execPath, args, { encoding: 'utf8' });
@@ -70,7 +77,7 @@ function prepare(b, o) {
 }
 
 function main() {
-  const o = { from: '2026-04-01', to: '2026-07-05', 'gl-parties': 'H30066,H58907', ...parseArgs(process.argv.slice(2)) };
+  const o = { 'gl-parties': 'H30066,H58907', ...parseArgs(process.argv.slice(2)) };
   if (!o.coa && existsSync('var/books-ref/coa.csv')) o.coa = 'var/books-ref/coa.csv';
   if (!o['account-map'] && existsSync('var/txn/accounts_master.csv')) o['account-map'] = 'var/txn/accounts_master.csv';
   const branches = o.branches ? o.branches.split(',').map((x) => x.trim()) : branchesFound('var');
@@ -79,12 +86,12 @@ function main() {
     return prepare(b, o);
   });
   const L = [`# Branch readiness (${new Date().toISOString().slice(0, 10)})`, '',
-    `Window ${o.from} to ${o.to}. Chart of accounts: ${o.coa ?? 'none'}. Account map: ${o['account-map'] ?? 'none'}. GL parties: ${o['gl-parties'] || 'none'}.`, '',
-    '| Branch | Status | Our vouchers | Receipts + payments | Applied exactly | Waiting for opening / Smart Pharma | Missing files |',
-    '|---|---|---|---|---|---|---|'];
+    `Window ${o.from || o.to ? `${o.from ?? 'ledger'} to ${o.to ?? 'ledger'}` : 'per branch, from its ledger name'}. Chart of accounts: ${o.coa ?? 'none'}. Account map: ${o['account-map'] ?? 'none'}. GL parties: ${o['gl-parties'] || 'none'}.`, '',
+    '| Branch | Window | Status | Our vouchers | Receipts + payments | Applied exactly | Waiting for opening / Smart Pharma | Missing files |',
+    '|---|---|---|---|---|---|---|---|'];
   for (const r of rows) {
     const ours = r.kinds ? Object.entries(r.kinds).map(([k, n]) => `${n} ${k}`).join(', ') : '';
-    L.push(`| ${r.branch} | ${r.status} | ${ours} | ${r.totals ? rs(Number(r.totals.paymentsAmount ?? 0)) : ''} | ${r.totals ? rs(Number(r.totals.exact ?? 0)) : ''} | ${r.waiting ?? ''}${r.waiting ? ` (${rs(r.waitingAmount)})` : ''} | ${r.missing.join(', ')} |`);
+    L.push(`| ${r.branch} | ${r.window ? `${r.window.from} to ${r.window.to}` : ''} | ${r.status} | ${ours} | ${r.totals ? rs(Number(r.totals.paymentsAmount ?? 0)) : ''} | ${r.totals ? rs(Number(r.totals.exact ?? 0)) : ''} | ${r.waiting ?? ''}${r.waiting ? ` (${rs(r.waitingAmount)})` : ''} | ${r.missing.join(', ')} |`);
   }
   L.push('');
   for (const r of rows.filter((x) => x.failed?.length || x.error)) {
@@ -96,7 +103,7 @@ function main() {
   writeFileSync(join('var', 'txn', 'readiness.md'), L.join('\n'));
   const known = existsSync(join('var', 'txn', 'readiness.json')) ? JSON.parse(readFileSync(join('var', 'txn', 'readiness.json'), 'utf8')) : {};
   writeFileSync(join('var', 'txn', 'readiness.json'), JSON.stringify({ ...known, ...Object.fromEntries(rows.map((r) => [r.branch, {
-    status: r.status, ours: r.totals?.vouchers ?? '', smartPharma: r.totals?.smartPharmaVouchers ?? '', waiting: r.waiting ?? '',
+    status: r.status, window: r.window ? `${r.window.from} to ${r.window.to}` : '', ours: r.totals?.vouchers ?? '', smartPharma: r.totals?.smartPharmaVouchers ?? '', waiting: r.waiting ?? '',
     problems: [r.error, ...(r.failed ?? []).map((c) => `${c.name}: ${c.detail}`)].filter(Boolean).join(' | '),
   }])) }, null, 2));
   writeFileSync(join('var', 'txn', 'readiness.csv'), toCsv(

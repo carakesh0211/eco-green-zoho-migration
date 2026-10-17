@@ -24,6 +24,12 @@ procedure for the live organisation. Every step reads or writes local files unde
 | opening plan `var/opening/<br>/plan.json` | the opening open items (customer traces, supplier working file, branch balances) |
 | `accounts_zoho.csv` | our ledgers → Zoho account codes (written by step A, filled once) |
 
+Migration window per region: **Tripura 01-04-2026 to 05-07-2026**, **Bengaluru 01-04-2026 to
+05-08-2026**. Each branch is planned on the window its ledger name carries
+(`Ledger_01042026_to_05082026 V1.xlsx` → 2026-04-01 to 2026-08-05; 2026-04-01 to 2026-07-05 when
+the name carries none); the tracker's `window` column shows the one used. `--from` / `--to` on
+`scripts/branch-ready.js` override it.
+
 ## A. Plan (no Books calls)
 
 Branch files arrive through WorkDrive: `node scripts/workdrive-sync.js --every 60` pulls each new or
