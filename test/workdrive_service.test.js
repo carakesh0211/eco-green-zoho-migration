@@ -115,3 +115,15 @@ test('runSync: a new app version prepares every pulled branch again, once', asyn
   assert.deepEqual((await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG', planVersion: 'v2' })).planned, ['461'], 'new version');
   assert.deepEqual((await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG', planVersion: 'v2' })).planned, []);
 });
+
+test('runSync: branches listed in branch_exclusions.csv are not pulled or prepared, and show as EXCLUDED', async () => {
+  const wd = fakeWd();
+  const cfg = await wd.list('CFG');
+  cfg.push({ id: 'X', name: 'branch_exclusions.csv', isFolder: false, modified: 1, size: 1, bytes: Buffer.from('branch,reason\n461,closed branch\n') });
+  const download = wd.download.bind(wd);
+  wd.download = async (f) => (f.id === 'X' ? Buffer.from('branch,reason\n461,closed branch\n') : download(f));
+  const blobs = memoryBlobs();
+  const s = await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG' });
+  assert.deepEqual([s.pulled, s.planned], [[], []]);
+  assert.deepEqual([s.tracker[0].status, s.tracker[0].problems], ['EXCLUDED', 'closed branch']);
+});

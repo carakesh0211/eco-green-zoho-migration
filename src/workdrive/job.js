@@ -52,7 +52,21 @@ export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, 
   const state = JSON.parse((await blobs.get(STATE))?.toString() ?? '{"files":{},"branches":{},"readiness":{}}');
   state.files ??= {}; state.branches ??= {}; state.readiness ??= {};
   log('listing WorkDrive branch folders…');
-  const branches = (await findBranches(wd, rootFolderId)).map((b) => ({ ...b, picked: pickFiles(b.files) }));
+  // branch_exclusions.csv in the config folder: "branch,reason" — those branches are neither
+  // pulled nor prepared, and show as EXCLUDED in the tracker
+  const excluded = new Map();
+  if (configFolderId) {
+    const f = (await wd.list(configFolderId)).find((x) => !x.isFolder && /^branch_exclusions\.csv$/i.test(x.name));
+    if (f) {
+      for (const line of (await wd.download(f)).toString('utf8').split(/\r?\n/)) {
+        const [b, ...why] = line.split(',');
+        if (BRANCH_FOLDER.test((b ?? '').trim())) excluded.set(b.trim(), why.join(',').trim());
+      }
+    }
+  }
+  if (excluded.size) log(`excluded: ${[...excluded.keys()].join(', ')}`);
+  const branches = (await findBranches(wd, rootFolderId))
+    .map((b) => ({ ...b, picked: excluded.has(b.branch) ? {} : pickFiles(b.files) }));
   const pulls = toPull(branches, state);
   log(`${branches.length} branch folders; ${pulls.length} files new or changed`);
   for (const p of pulls) log(`  ${dryRun ? 'would pull' : 'pull'} ${p.branch} ${p.kind}: ${p.file.name} (${(p.file.size / 1e6).toFixed(2)} MB)`);
@@ -126,7 +140,9 @@ export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, 
   await blobs.put(STATE, Buffer.from(JSON.stringify(state, null, 2)));
 
   const now = stamp();
-  summary.tracker = branches.sort((a, b) => a.branch.localeCompare(b.branch)).map((b) => trackerRow(b, state.readiness[b.branch], state, now));
+  summary.tracker = branches.sort((a, b) => a.branch.localeCompare(b.branch)).map((b) => (excluded.has(b.branch)
+    ? { ...trackerRow(b, null, state, now), status: 'EXCLUDED', missing_files: '', problems: excluded.get(b.branch) || 'excluded from the migration' }
+    : trackerRow(b, state.readiness[b.branch], state, now)));
   const csv = trackerCsv(summary.tracker);
   await blobs.put('var/workdrive/tracker.csv', Buffer.from(csv));
   if (upload) {
