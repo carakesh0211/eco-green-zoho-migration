@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { BRANCH_FOLDER, pickFiles, toPull, trackerRow, localName } from './sync.js';
+import { BRANCH_FOLDER, pickFiles, toPull, trackerRow, localName, ledgerWindow, DEFAULT_WINDOW } from './sync.js';
 import { unzip } from '../sources/ecogreen/xlsx.js';
 
 const STATE = 'var/workdrive/state.json';
@@ -120,8 +120,10 @@ export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, 
             if (bytes) { mkdirSync(dirname(join(dir, localName(b.branch, kind))), { recursive: true }); writeFileSync(join(dir, localName(b.branch, kind)), bytes); }
           }
         }
-        log(`preparing ${b.branch}…`);
-        const run = spawnSync(process.execPath, [BRANCH_READY, '--branches', b.branch], { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+        // the window comes from the ledger's own name (Tripura to 05-07-2026, Bengaluru to 05-08-2026)
+        const w = ledgerWindow(b.picked.ledger.name) ?? DEFAULT_WINDOW;
+        log(`preparing ${b.branch} (${w.from} to ${w.to})…`);
+        const run = spawnSync(process.execPath, [BRANCH_READY, '--branches', b.branch, '--from', w.from, '--to', w.to], { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
         const ready = existsSync(join(dir, 'var/txn/readiness.json')) ? JSON.parse(readFileSync(join(dir, 'var/txn/readiness.json'), 'utf8')) : {};
         state.readiness[b.branch] = ready[b.branch] ?? { status: 'PLAN ERROR', problems: (run.stderr || '').trim().split('\n').pop() ?? '' };
         const report = join(dir, 'var/txn', b.branch, 'report.md');

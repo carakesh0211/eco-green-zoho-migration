@@ -72,15 +72,31 @@ export function toPull(branches, state) {
 
 export const REQUIRED = ['ledger', 'supplier', 'customer', 'closingTb'];
 
+// The migration window when a branch's ledger name does not carry one (Tripura's cut-off).
+export const DEFAULT_WINDOW = { from: '2026-04-01', to: '2026-07-05' };
+
+/**
+ * The migration window a ledger covers, from its name as Eco Green delivers it
+ * ("Ledger_01042026_to_05082026 V1.xlsx": 2026-04-01 to 2026-08-05), or null. Branches cut over
+ * on different dates (Tripura 05-07-2026, Bengaluru 05-08-2026), so each is planned on its own.
+ */
+export function ledgerWindow(name) {
+  const m = /(\d{2})(\d{2})(\d{4})_to_(\d{2})(\d{2})(\d{4})/i.exec(String(name ?? ''));
+  if (!m) return null;
+  const from = `${m[3]}-${m[2]}-${m[1]}`, to = `${m[6]}-${m[5]}-${m[4]}`;
+  return from <= to ? { from, to } : null;
+}
+
 /** One tracker row per branch folder. */
 export function trackerRow(b, readiness, state, now) {
   const p = b.picked;
   const missing = [...REQUIRED, 'openingItems'].filter((k) => !p[k]);
   const r = readiness ?? {};
   const lastUpload = Math.max(0, ...Object.values(p).map((f) => f.modified));
+  const w = p.ledger ? ledgerWindow(p.ledger.name) ?? DEFAULT_WINDOW : null;
   return {
     region: b.region, branch: b.branch,
-    ledger: p.ledger?.name ?? '', files_received: Object.keys(p).length, missing_files: missing.join('; '),
+    ledger: p.ledger?.name ?? '', window: w ? `${w.from} to ${w.to}` : '', files_received: Object.keys(p).length, missing_files: missing.join('; '),
     last_upload: lastUpload ? new Date(lastUpload).toISOString().replace('T', ' ').slice(0, 16) : '',
     pulled_at: state.branches?.[b.branch]?.pulledAt ?? '',
     status: !p.ledger ? 'WAITING FOR FILES'
