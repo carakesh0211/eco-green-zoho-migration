@@ -163,7 +163,7 @@ describe('bot action ceiling with the real example config', () => {
   test('bot may reach only the documented allowlist (pause/resume/retry/assign) and nothing else', async () => {
     const t = await startApp();
     try {
-      assert.deepEqual([...BOT_ALLOWED_ACTIONS].sort(), ['assign_exception', 'pause_batch', 'resume_batch', 'retry_queue_item']);
+      assert.deepEqual([...BOT_ALLOWED_ACTIONS].sort(), ['assign_exception', 'pause_batch', 'resume_batch', 'retry_queue_item', 'workdrive_sync']);
       // Allowlisted actions must NOT be refused by the ceiling (they may still fail on
       // state, e.g. 409 for an illegal transition — anything but 403 proves the gate opened).
       await t.store.update('migration_batches', t.seeded.batch.id, { status: 'QUEUED' });

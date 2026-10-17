@@ -13,7 +13,7 @@ export class XlsxError extends Error {
 }
 
 /** Parse the ZIP container via its central directory. -> Map<name, Buffer> */
-function unzip(buf) {
+export function unzip(buf) {
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i -= 1) {
     if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }

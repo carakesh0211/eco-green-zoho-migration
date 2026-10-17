@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { openStore } from '../adapters/store/index.js';
 import { openInbox } from '../adapters/inbox/index.js';
+import { createWorkdriveService } from './workdrive_service.js';
 import { openArchive } from '../adapters/archive/index.js';
 import { createAudit } from '../core/audit.js';
 import { log } from '../core/log.js';
@@ -171,7 +172,12 @@ async function main() {
 
   const inbox = await openInbox({ adapter: inboxAdapter, root: inboxAdapter === 'local' ? process.env.INBOX_LOCAL_PATH : undefined });
 
+  // WorkDrive branch inbox (WORKDRIVE_* env); its schedule runs only in the served process.
+  const workdriveService = createWorkdriveService({ runtime: archiveAdapter === 'stratus' ? runtime : null, log });
+  if (workdriveService.schedule()) log('info', 'workdrive_sync_scheduled', { everyMin: Number(process.env.WORKDRIVE_SYNC_EVERY_MIN) });
+
   const app = createApp({
+    workdriveService,
     store,
     audit,
     users,

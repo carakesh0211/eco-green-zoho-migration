@@ -4,6 +4,9 @@
 //   node scripts/txn-plan.js --branch 460 --ledger <Ledger_..._V2.xlsx> --opening var/opening/460/plan.json \
 //     --supplier <supplier_payment_details_act.csv> --customer <invoice_receipt_det_act_460.csv> \
 //     --from 2026-04-01 --to 2026-07-05 --out var/txn/460 [--account-map accounts.csv] [--excel-dates asis]
+//     [--coa <Books chart of accounts export with the "Eco Green Account Code" field>]
+//                                    (maps every tagged ledger; --account-map rows override it)
+//     [--closing-tb <Closing_tb_report.xlsx>]   (checks the ledger against Eco Green's own TB movement: integrity.csv)
 //     [--gl-parties H30066,H58907]   (party codes kept as GL ledgers in Books: their lines post to the
 //                                     account map's code, and their opening is on that ledger)
 //
@@ -17,8 +20,9 @@ import { readXlsx } from '../src/sources/ecogreen/xlsx.js';
 import { parseCsv } from '../src/core/csv.js';
 import { formatMoney } from '../src/core/money.js';
 import {
-  readLedgerRows, readSupplierAllocations, readCustomerSettlements, buildTxnPlan, planReport,
+  readLedgerRows, readSupplierAllocations, coaCrosswalk, readCustomerSettlements, buildTxnPlan, planReport,
 } from '../src/txn/plan.js';
+import { readClosingTb, ecoIntegrity } from '../src/txn/recon.js';
 
 function parseArgs(argv) {
   const opts = {};
@@ -61,13 +65,26 @@ function main() {
   const openingDocs = (o.opening ? JSON.parse(readFileSync(o.opening, 'utf8')).documents : []).filter((d) => !isGl(d));
   const supplierAlloc = o.supplier ? readSupplierAllocations(readFileSync(o.supplier, 'utf8')) : [];
   const customerSettle = o.customer ? readCustomerSettlements(readFileSync(o.customer, 'utf8')) : [];
-  const accountMap = o['account-map'] ? readAccountMap(o['account-map']) : null;
+  const coa = o.coa ? coaCrosswalk(readFileSync(o.coa, 'utf8')) : null;
+  const explicit = o['account-map'] ? readAccountMap(o['account-map']) : new Map();
+  const accountMap = coa || o['account-map'] ? new Map([...(coa?.map ?? []), ...explicit]) : null;
+  const sourceOf = (a) => (explicit.has(a) ? 'account-map' : coa?.map.has(a) ? 'chart of accounts' : '');
 
   const plan = buildTxnPlan({
     branch: need(o, 'branch'), lines, supplierAlloc, customerSettle, openingDocs, from: need(o, 'from'), to: need(o, 'to'), accountMap,
   });
 
   mkdirSync(out, { recursive: true });
+  if (o['closing-tb']) {
+    // the extract is complete when every TB code's movement equals the ledger's lines (Smart Pharma's too)
+    const integrity = ecoIntegrity(lines, readClosingTb(readXlsx(readFileSync(o['closing-tb'])).sheets[0].rows));
+    const off = integrity.filter((r) => !r.ok);
+    plan.checks.push({
+      name: 'ledger ties to the Eco Green closing TB movement', ok: !off.length,
+      detail: off.length ? `${off.length} of ${integrity.length} TB codes differ (integrity.csv): ${off.slice(0, 5).map((r) => `${r.code} ${formatMoney(r.diff)}`).join('; ')}` : `${integrity.length} TB codes`,
+    });
+    writeFileSync(join(out, 'integrity.csv'), toCsv(['tb_code', 'account', 'tb_movement', 'ledger', 'difference', 'ok'], integrity.map((r) => [r.code, r.name, formatMoney(r.tb), formatMoney(r.ledger), formatMoney(r.diff), r.ok])));
+  }
   writeFileSync(join(out, 'plan.json'), toJson(plan));
   writeFileSync(join(out, 'report.md'), planReport(plan));
   writeFileSync(join(out, 'applications.csv'), toCsv(
@@ -82,8 +99,8 @@ function main() {
     ],
   ));
   writeFileSync(join(out, 'accounts.csv'), toCsv(
-    ['account', 'eco_code', 'name', 'lines', 'zoho_code'],
-    plan.accounts.map((a) => [a.account, a.code, a.name, a.lines, accountMap?.get(a.account) ?? '']),
+    ['account', 'eco_code', 'name', 'lines', 'zoho_code', 'source'],
+    plan.accounts.map((a) => [a.account, a.code, a.name, a.lines, accountMap?.get(a.account) ?? '', sourceOf(a.account)]),
   ));
   const all = new Map();
   for (const l of lines.filter((x) => !x.party)) {
@@ -96,6 +113,7 @@ function main() {
     [...all.values()].sort((a, b) => a.account.localeCompare(b.account)).map((a) => [a.account, a.code, a.name, a.ours, a.smartPharma, accountMap?.get(a.account) ?? '']),
   ));
   process.stdout.write(planReport(plan));
+  if (coa?.ambiguous.length) process.stdout.write(`\nEco Green codes tagged on more than one Zoho account (decide in --account-map): ${coa.ambiguous.map(([e, z]) => `${e} -> ${z.join('/')}`).join('; ')}\n`);
   if (plan.checks.some((c) => !c.ok)) process.exitCode = 2;
 }
 

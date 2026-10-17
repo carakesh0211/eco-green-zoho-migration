@@ -26,14 +26,35 @@ procedure for the live organisation. Every step reads or writes local files unde
 
 ## A. Plan (no Books calls)
 
+Branch files arrive through WorkDrive: `node scripts/workdrive-sync.js --every 60` pulls each new or
+changed branch folder, prepares it and updates `Migration Tracker.csv` in the WorkDrive root
+(`WORKDRIVE_INGESTION.md`).
+
+Many branches at once – each extract in `var/raw<br>/txn/`, planned into `var/txn/<br>`, summary in
+`var/txn/readiness.md` / `readiness.csv` (status READY, WAITING FOR OPENING or FIX):
+
+```
+node scripts/branch-ready.js [--branches 460,461]
+```
+
+One branch:
+
 ```
 node scripts/txn-plan.js --branch <br> --ledger <ledger V2.xlsx> --opening var/opening/<br>/plan.json \
   --supplier <supplier csv> --customer <customer csv> --from <opening date + 1> --to <cut-off> \
-  --out var/txn/<br> --account-map var/txn/<br>/accounts_zoho.csv
+  --out var/txn/<br> --coa var/books-ref/coa.csv --account-map var/txn/accounts_master.csv \
+  --gl-parties H30066,H58907 --closing-tb <Closing_tb_report.xlsx>
 ```
 
+Ledger → Zoho account: the chart of accounts export's "Eco Green Account Code" field maps every
+tagged ledger (`--coa`); `var/txn/accounts_master.csv` (one file for all branches) overrides it and
+holds what the chart cannot say (INTERBRANCH → FRP0026G, the `#NAME?` GST ledgers, AL1235 →
+FRP0039G, the card / UPI terminals → AL0232 / AL0233). Codes are read the same whatever the
+extract's formatting (`'V01833`, `000939` = `939`).
+
 All checks must read OK: dates inside the window, every voucher balanced, one date per voucher,
-every ledger mapped. Outputs: `report.md`, `applications.csv` (each receipt / payment → document),
+every ledger mapped, and the ledger tying to the Eco Green closing TB movement per TB code
+(`integrity.csv`; proves the extract is complete before anything is posted). Outputs: `report.md`, `applications.csv` (each receipt / payment → document),
 `exceptions.csv`, `accounts.csv` (our ledgers to map), `accounts-all.csv` (every ledger, for the
 reconciliation once Smart Pharma's side is in Books).
 

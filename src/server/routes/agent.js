@@ -15,7 +15,7 @@ export { isBotUser };
  * calls botGate(actionName) with an actionName NOT in this set, so a bot is refused
  * with 403 even when its role would otherwise satisfy the route's requireRole check.
  */
-export const BOT_ALLOWED_ACTIONS = new Set(['pause_batch', 'resume_batch', 'retry_queue_item', 'assign_exception']);
+export const BOT_ALLOWED_ACTIONS = new Set(['pause_batch', 'resume_batch', 'retry_queue_item', 'assign_exception', 'workdrive_sync']);
 
 export function botMayPerform(actionName) {
   return BOT_ALLOWED_ACTIONS.has(actionName);
