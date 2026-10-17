@@ -3,7 +3,7 @@
 //
 //   node scripts/txn-plan.js --branch 460 --ledger <Ledger_..._V2.xlsx> --opening var/opening/460/plan.json \
 //     --supplier <supplier_payment_details_act.csv> --customer <invoice_receipt_det_act_460.csv> \
-//     --from 2026-04-01 --to 2026-07-05 --out var/txn/460 [--account-map accounts.csv] [--excel-dates asis]
+//     --from 2026-04-01 --to 2026-07-05 --out var/txn/460 [--account-map accounts.csv] [--excel-dates auto|swapped|asis]
 //     [--coa <Books chart of accounts export with the "Eco Green Account Code" field>]
 //                                    (maps every tagged ledger; --account-map rows override it)
 //     [--closing-tb <Closing_tb_report.xlsx>]   (checks the ledger against Eco Green's own TB movement: integrity.csv)
@@ -59,7 +59,7 @@ function main() {
   const out = need(o, 'out');
   const wb = readXlsx(readFileSync(need(o, 'ledger')));
   const glParties = new Set((o['gl-parties'] ?? '').split(',').map((x) => x.trim()).filter(Boolean));
-  const lines = readLedgerRows(wb.sheets[0].rows, { excelDates: o['excel-dates'] ?? 'swapped', glParties });
+  const lines = readLedgerRows(wb.sheets[0].rows, { excelDates: o['excel-dates'] ?? 'auto', glParties });
   // their opening balance is on the GL ledger, not an open item of a customer / vendor
   const isGl = (d) => glParties.has(d.partyCode);
   const openingDocs = (o.opening ? JSON.parse(readFileSync(o.opening, 'utf8')).documents : []).filter((d) => !isGl(d));
