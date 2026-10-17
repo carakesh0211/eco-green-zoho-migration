@@ -12,7 +12,7 @@ Every entry in the users config carries an explicit `principal_type`:
 | principal_type | allowed roles | minimal/redacted responses | mutating actions |
 |---|---|---|---|
 | `human` | viewer, operator, approver, admin | opt-in via `?minimal=1` | per role |
-| `bot` | viewer, operator (ceiling) | **always**, `?minimal=0` is ignored | only `pause_batch`, `resume_batch`, `retry_queue_item`, `assign_exception` |
+| `bot` | viewer, operator (ceiling) | **always**, `?minimal=0` is ignored | only `pause_batch`, `resume_batch`, `retry_queue_item`, `assign_exception`, `workdrive_sync` (pull branch files from WorkDrive; no Books access) |
 
 `src/server/auth.js#normalizeUsers` runs when the config is loaded and again inside `createAuth`; it fails closed (the server refuses to start) if a bot is declared with `approver`/`admin`, or if a `bot:*` id / role `bot` contradicts `principal_type: 'human'`. The shipped example bot is `bot:hermes` (`config/users.example.json`). Regression: `test/bot_principal.test.js` loads that real file and proves the ceiling and the always-minimal rule.
 

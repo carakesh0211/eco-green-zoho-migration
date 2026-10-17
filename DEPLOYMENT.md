@@ -62,6 +62,29 @@ repository. The Catalyst CLI **cannot deploy to Production** — promotion from
 Development to Production is always a separate, manual, documented step performed by
 whoever owns the Catalyst project, never an automated script action here.
 
+## 3a. WorkDrive branch inbox on AppSail
+
+The console service pulls branch extracts from WorkDrive by itself (`src/server/workdrive_service.js`,
+`WORKDRIVE_INGESTION.md`): every `WORKDRIVE_SYNC_EVERY_MIN` minutes, and on
+`POST /api/workdrive/sync` (operators, admins, and the Hermes bot token). Pulled files and the sync
+state are kept in the Stratus bucket under `workdrive/`; plans run in a temporary folder; the
+tracker (`Migration Tracker.csv`) and each branch's `Migration Report <br>.md` are written back to
+WorkDrive. Nothing posts to Books.
+
+On AppSail the Catalyst SDK initialises only from a request, so a sync runs inside the app of the
+request that started it; the in-app schedule reuses the most recent API request's app (within two
+hours) and otherwise waits for the next call. Keep an hourly caller — Hermes's
+`POST /api/workdrive/sync` at minute 5 — so the sync never stalls.
+
+| Variable | Purpose |
+|---|---|
+| `WORKDRIVE_FOLDER_ID` | root watched (branch folders named by branch code at any depth) |
+| `WORKDRIVE_CONFIG_FOLDER_ID` | folder with `Chart_of_Accounts*.csv`, `accounts_master.csv` and optionally `branch_exclusions.csv` (`branch,reason`: neither pulled nor prepared, EXCLUDED in the tracker) |
+| `WORKDRIVE_REFRESH_TOKEN` | scopes `WorkDrive.files.READ,WorkDrive.files.CREATE` (`scripts/workdrive-token.js <code> --appsail`) |
+| `WORKDRIVE_CLIENT_ID` / `_SECRET` | default `BOOKS_CLIENT_ID` / `BOOKS_CLIENT_SECRET` |
+| `WORKDRIVE_SYNC_EVERY_MIN` | schedule; empty = only on request |
+| `STRATUS_BUCKET` | (existing) where pulled files and state are kept |
+
 ## 4. Environment matrix
 
 | Environment | Store | Inbox | Archive | Books driver | Org allowlist | Posting |

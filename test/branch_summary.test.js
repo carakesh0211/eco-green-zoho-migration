@@ -79,6 +79,55 @@ test('computeBranchSummary: receipt_status VALIDATION_FAILED from the latest run
   await store.close();
 });
 
+test('computeBranchSummary: a newer re-upload of files already held does not replace the run that holds them', async () => {
+  const store = await openStore();
+  await makeBranch(store);
+  const now = nowIso();
+  await store.insert('extraction_runs', {
+    id: 'run-good', branch_code: 'PILOT01', query_id: 'Q', query_version: 'v1',
+    from_date: '2026-04-01', to_date: '2026-04-30', manifest_json: '{}', manifest_sha256: 'sha-good',
+    status: 'TRANSFORMED', created_at: '2026-04-01T00:00:00.000Z', updated_at: now,
+  });
+  await store.insert('source_files', {
+    run_id: 'run-good', file_name: 'f.csv', file_role: 'TRANSACTIONS', sha256: 'sha-f1',
+    size_bytes: 1, encoding: 'utf-8', delimiter: ',', status: 'ARCHIVED', created_at: now, updated_at: now,
+  });
+  // Recorded before ingest set error_code: recognised by no source_files + a DUPLICATE_FILE exception.
+  await store.insert('extraction_runs', {
+    id: 'run-dup-legacy', branch_code: 'PILOT01', query_id: 'Q', query_version: 'v1',
+    from_date: '2026-04-01', to_date: '2026-04-30', manifest_json: '{}', manifest_sha256: 'sha-dup-1',
+    status: 'VALIDATION_FAILED', created_at: '2026-05-01T00:00:00.000Z', updated_at: now,
+  });
+  await store.insert('exceptions', {
+    category: 'DUPLICATE_FILE', severity: 'P2', branch_code: 'PILOT01', run_id: 'run-dup-legacy', financial_impact: '0.00',
+    status: 'OPEN', message: 'Duplicate file content', dedupe_key: 'dupfile:run-dup-legacy:f.csv:sha-f1', created_at: now, updated_at: now,
+  });
+  // Recorded by the current ingest.
+  await store.insert('extraction_runs', {
+    id: 'run-dup', branch_code: 'PILOT01', query_id: 'Q', query_version: 'v1',
+    from_date: '2026-04-01', to_date: '2026-04-30', manifest_json: '{}', manifest_sha256: 'sha-dup-2',
+    status: 'VALIDATION_FAILED', error_code: 'DUPLICATE_FILE', created_at: '2026-06-01T00:00:00.000Z', updated_at: now,
+  });
+
+  const row = await computeBranchSummary(store, 'PILOT01', { now: NOW });
+  assert.equal(row.receipt_status, 'RECEIVED', 'the run that holds the files is still the current one');
+  await store.close();
+});
+
+test('computeBranchSummary: when every run is a duplicate-only re-upload the newest one is reported', async () => {
+  const store = await openStore();
+  await makeBranch(store);
+  const now = nowIso();
+  await store.insert('extraction_runs', {
+    id: 'run-dup', branch_code: 'PILOT01', query_id: 'Q', query_version: 'v1',
+    from_date: '2026-04-01', to_date: '2026-04-30', manifest_json: '{}', manifest_sha256: 'sha-dup',
+    status: 'VALIDATION_FAILED', error_code: 'DUPLICATE_FILE', created_at: now, updated_at: now,
+  });
+  const row = await computeBranchSummary(store, 'PILOT01', { now: NOW });
+  assert.equal(row.receipt_status, 'VALIDATION_FAILED');
+  await store.close();
+});
+
 test('computeBranchSummary: receipt_status RECEIVED once the latest run has an ARCHIVED file', async () => {
   const store = await openStore();
   await makeBranch(store);

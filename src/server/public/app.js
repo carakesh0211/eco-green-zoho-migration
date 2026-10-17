@@ -101,6 +101,13 @@ async function downloadWithAuth(path, suggestedName) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+// Text for a non-node child: numbers and booleans as written, and a server value wrapped as
+// { value, untrusted } (free text from uploads) as its value.
+function textOf(c) {
+  if (c !== null && typeof c === 'object' && 'value' in c && 'untrusted' in c) return String(c.value ?? '');
+  return String(c);
+}
+
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -110,7 +117,7 @@ function el(tag, attrs = {}, children = []) {
   }
   for (const c of [].concat(children)) {
     if (c === null || c === undefined) continue;
-    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    node.appendChild(c instanceof Node ? c : document.createTextNode(textOf(c)));
   }
   return node;
 }

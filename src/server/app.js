@@ -24,10 +24,18 @@ import { currentApp as runtimeCurrentApp } from './catalyst_runtime.js';
 import { refreshBranchSummary } from '../core/branch_summary.js';
 import { createBooksConnection } from '../books/connection.js';
 import { createArchiveHealth } from './archive_health.js';
+import { createRetransformJobs } from './retransform_jobs.js';
+import { createBulkMappingRouter } from './routes/bulk_mapping.js';
+import { createValidationRouter } from './routes/validation.js';
+import { createWorkdriveRouter } from './routes/workdrive.js';
+import { createWorkdriveService } from './workdrive_service.js';
 import { isPostingEnabled, postingBlockedReasons, loadBooksConfig } from '../books/guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
+// Largest JSON request body. Uploads travel base64 inside JSON; big exports are gzipped by
+// the browser first (src/server/public/views/bulk-mapping.js).
+const JSON_BODY_LIMIT = '12mb';
 
 let cachedVersion = '0.0.0';
 try {
@@ -43,7 +51,7 @@ try {
  * @param {import('../adapters/store/sqlite.js').Store} opts.store
  * @param {ReturnType<typeof import('../core/audit.js').createAudit>} opts.audit
  * @param {Array<{id:string, role:string, branches:string[], token_sha256:string}>} [opts.users]
- * @param {object} [opts.deps] - { recon_a, cutover, mapping, batch, worker, recon_c, books }
+ * @param {object} [opts.deps] - { recon_a, cutover, mapping, batch, worker, recon_c, balance_bridge, books }
  *   Concurrently-developed core modules, injected so tests can stub them and so a
  *   partial build (some modules not yet landed) degrades to 501 instead of crashing.
  * @param {object} [opts.devDeps] - { inbox, archive, client } for POST /api/dev/seed
@@ -81,6 +89,7 @@ export function createApp({
   booksConnection,
   sessionAuth,
   archiveHealth,
+  workdriveService,
 }) {
   const app = express();
   // Bearer tokens resolve against the config users first, then the app_users directory
@@ -140,7 +149,7 @@ export function createApp({
 
   // 12mb: POST /api/import/runs carries a whole normalised branch run (base64 CSVs);
   // every other route is small. The import router re-checks a 10 MB decoded cap.
-  app.use(express.json({ limit: '12mb' }));
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   // No-op unless a Catalyst-backed adapter is configured (see catalyst_runtime.js):
   // initializes this request's Catalyst app and makes it available to every downstream
@@ -166,7 +175,7 @@ export function createApp({
     } catch {
       postingEnabled = false;
     }
-    const postingBlockedBy = postingBlockedReasons(deps.books?.config, { store });
+    const postingBlockedBy = postingBlockedReasons(deps.books?.config, { store, workerMode });
     res.json({
       ok: true,
       environment,
@@ -194,13 +203,19 @@ export function createApp({
 
   app.use('/api', createAgentRouter({ auth }));
   app.use('/api', createReadRouter({ store, deps, auth }));
-  app.use('/api', createMutateRouter({ store, audit, deps, auth }));
+  const retransformJobs = deps.transform ? createRetransformJobs({ store, transform: deps.transform, runtime }) : null;
+  app.locals.retransformJobs = retransformJobs; // tests await detached work through this
+  app.use('/api', createMutateRouter({ store, audit, deps, auth, retransformJobs }));
   app.use('/api', createDevRouter({ store, audit, auth, deps: devDeps, environment, devSeedEnabled, runtime }));
+  app.use('/api', createBulkMappingRouter({ store, audit, auth, archive: devDeps.archive ?? null }));
+  app.use('/api', createValidationRouter({ store, audit, auth, archive: devDeps.archive ?? null }));
   app.use('/api', createImportRouter({ store, audit, auth, deps: { archive: devDeps.archive }, environment, importEnabled, runtime }));
   // Increment 2 (team-operable console): dashboard, team & assignments, Books connection.
   app.use('/api', createBranchesRouter({ store, audit, auth }));
   app.use('/api', createAdminRouter({ store, audit, auth, users, deps: { branchSummary: branchSummaryHook } }));
   app.use('/api', createAdminBooksRouter({ connection: booksConnection, auth }));
+  // WorkDrive branch inbox: pulls branch extracts, prepares them, writes the tracker back.
+  app.use('/api', createWorkdriveRouter({ auth, service: workdriveService ?? createWorkdriveService({ runtime }) }));
   // Serves both /api/auth/* and the non-API /auth/login|logout redirects.
   app.use(createAuthRouter({ auth, sessionAuth, environment }));
 
@@ -212,6 +227,9 @@ export function createApp({
   app.use((err, req, res, next) => {
     if (err instanceof SyntaxError && 'body' in err) {
       return res.status(400).json({ error: 'BAD_JSON', message: err.message });
+    }
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE', message: `The upload is larger than the ${JSON_BODY_LIMIT} limit. Upload one file at a time, or a smaller export.` });
     }
     const code = err?.code;
     if (code === 'ILLEGAL_TRANSITION') return res.status(409).json({ error: code, message: err.message });

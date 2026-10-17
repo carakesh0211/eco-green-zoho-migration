@@ -370,8 +370,8 @@
 
     async function approveOne(rule) {
       try {
-        await api('/api/mappings/approve', { method: 'POST', body: { ids: [rule.id] } });
-        toast('Rule approved.', 'success');
+        const out = await api('/api/mappings/approve', { method: 'POST', body: { ids: [rule.id] } });
+        toast(out?.reapplyScheduled ? 'Rule approved. The mapping is being re-applied to blocked runs in the background.' : 'Rule approved.', 'success');
         reloadAll();
       } catch (err) {
         toast(err.status === 403 ? 'Your role is not allowed to approve mapping rules.' : err.message, 'error');
@@ -403,7 +403,7 @@
           if (reason.value.trim()) body.reason = reason.value.trim();
           try {
             const out = await api('/api/mappings/approve', { method: 'POST', body });
-            toast(`${out?.approved ?? n} ${(out?.approved ?? n) === 1 ? 'rule' : 'rules'} approved.`, 'success');
+            toast(`${out?.approved ?? n} ${(out?.approved ?? n) === 1 ? 'rule' : 'rules'} approved.${out?.reapplyScheduled ? ' The mapping is being re-applied to blocked runs in the background.' : ''}`, 'success');
             close();
             reloadAll();
           } catch (err) {

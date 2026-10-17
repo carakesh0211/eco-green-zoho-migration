@@ -18,10 +18,61 @@ function now(ctx) {
  * mock driver has its own internal write guard (config.mockWritesEnabled); this choke
  * point only ever needs to fire for the live driver, but it fires unconditionally
  * before every live create() as defence in depth even though live.js#create() also
- * asserts it internally. */
-function assertClientPostingAllowed(client) {
+ * asserts it internally. The store and worker mode are passed so a BEST_EFFORT-claim store
+ * is refused here unless the test-organisation waiver holds (guard.js condition 6). */
+function assertClientPostingAllowed(client, ctx) {
   if (client.driver !== 'live') return;
-  assertPostingAllowed(client.config);
+  assertPostingAllowed(client.config, { store: ctx.store, workerMode: ctx.workerMode });
+}
+
+const MIGRATION_HASH_FIELD = 'cf_migration_source_hash';
+
+/** The migration tag on a Books record, wherever the response shape puts it; null if untagged. */
+function migrationHashOf(record) {
+  if (!record) return null;
+  if (record[MIGRATION_HASH_FIELD]) return record[MIGRATION_HASH_FIELD];
+  if (record.custom_field_hash?.[MIGRATION_HASH_FIELD]) return record.custom_field_hash[MIGRATION_HASH_FIELD];
+  const cf = record.custom_fields;
+  if (Array.isArray(cf)) {
+    const entry = cf.find((f) => f?.api_name === MIGRATION_HASH_FIELD || f?.placeholder === MIGRATION_HASH_FIELD);
+    if (entry?.value) return entry.value;
+  } else if (cf?.[MIGRATION_HASH_FIELD]) {
+    return cf[MIGRATION_HASH_FIELD];
+  }
+  return null;
+}
+
+/** Pre-send duplicate check for live posting: `ours` carry this item's migration tag;
+ * `suspects` are untagged records with the same reference number (e.g. keyed in by hand). */
+async function lookupBeforeSend(client, module, sourceHash, referenceNumber) {
+  const records = (await client.searchByMigrationTag({ module, sourceHash })) ?? [];
+  const ours = records.filter((r) => migrationHashOf(r) === sourceHash);
+  const suspects = referenceNumber
+    ? records.filter((r) => migrationHashOf(r) === null && r?.reference_number === referenceNumber)
+    : [];
+  return { ours, suspects };
+}
+
+// Id keys Books uses per module, in its create responses ({ code, message, journal: {...} })
+// and list rows. The mock client returns a plain { id }.
+const RECORD_ID_KEYS = ['id', 'journal_id', 'bill_id', 'payment_id', 'vendorpayment_id', 'creditnote_id', 'vendor_credit_id', 'expense_id', 'transaction_id', 'invoice_id'];
+
+/** The Books record id in a create response or a list row, wherever Books puts it; null if none. */
+export function recordIdOf(record) {
+  if (!record || typeof record !== 'object') return null;
+  const own = (r) => {
+    for (const k of RECORD_ID_KEYS) if (r[k] !== undefined && r[k] !== null && r[k] !== '') return String(r[k]);
+    return null;
+  };
+  const direct = own(record);
+  if (direct) return direct;
+  for (const v of Object.values(record)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const nested = own(v);
+      if (nested) return nested;
+    }
+  }
+  return null;
 }
 
 /** Local full-jitter exponential backoff (limiter.js#fullJitterBackoff is not exported
@@ -98,6 +149,15 @@ async function processItem(ctx, { client, item, batchId, batchRow }) {
   const nowTs = now(ctx);
   const voucher = await store.get('vouchers', item.voucher_id);
 
+  // Posting permission first, before the voucher or an attempt row is touched: a refusal puts
+  // the item straight back in the queue instead of leaving it claimed and IN_FLIGHT.
+  try {
+    assertClientPostingAllowed(client, ctx);
+  } catch (err) {
+    await store.releaseClaim('queue_items', item.id, { workerId: item.claimed_by, newStatus: 'QUEUED' });
+    throw err;
+  }
+
   let module;
   let payload;
   let payloadRow;
@@ -135,17 +195,49 @@ async function processItem(ctx, { client, item, batchId, batchRow }) {
     created_at: nowTs,
   });
 
-  assertClientPostingAllowed(client);
+  // Checked again right before sending (defence in depth; nothing has been sent yet).
+  assertClientPostingAllowed(client, ctx);
 
   let classification;
   let value;
   let thrown;
-  try {
-    value = await client.create(module, payload, { idempotencyKey: item.idempotency_key });
-    classification = { class: 'SUCCESS' };
-  } catch (err) {
-    thrown = err;
-    classification = err.classification ?? { class: 'UNKNOWN', reason: err.message };
+  let send = true;
+  if (client.driver === 'live') {
+    // Duplicate check before every live send: a record already carrying our tag means an
+    // earlier attempt landed; anything ambiguous is a P1, never a second post.
+    let found;
+    try {
+      found = await lookupBeforeSend(client, module, item.idempotency_key, payload?.reference_number);
+    } catch (err) {
+      thrown = err;
+      classification = { class: 'RETRYABLE', reason: 'PRESEND_LOOKUP_FAILED' };
+      send = false;
+    }
+    if (found) {
+      if (found.ours.length === 1 && found.suspects.length === 0) {
+        value = { id: recordIdOf(found.ours[0]) };
+        classification = { class: 'SUCCESS', reason: 'ALREADY_IN_BOOKS' };
+        send = false;
+      } else if (found.ours.length > 1 || found.suspects.length > 0) {
+        thrown = new Error(
+          `Not sent: Books already has ${found.ours.length} record(s) tagged with this voucher's migration hash ` +
+            `and ${found.suspects.length} untagged record(s) with reference number "${payload?.reference_number ?? ''}". ` +
+            'Check Books by hand before re-queuing.'
+        );
+        classification = { class: 'NON_RETRYABLE', reason: 'ALREADY_IN_BOOKS_AMBIGUOUS' };
+        send = false;
+      }
+    }
+  }
+  if (send) {
+    try {
+      const created = await client.create(module, payload, { idempotencyKey: item.idempotency_key });
+      value = { id: recordIdOf(created) };
+      classification = { class: 'SUCCESS' };
+    } catch (err) {
+      thrown = err;
+      classification = err.classification ?? { class: 'UNKNOWN', reason: err.message };
+    }
   }
 
   const finishedAt = now(ctx);
@@ -168,7 +260,13 @@ async function processItem(ctx, { client, item, batchId, batchRow }) {
       migration_status: 'POSTED', zoho_record_id: value?.id ?? null,
       attempt_count: attempts, updated_at: finishedAt,
     });
-    await auditItem(ctx, 'QUEUE.POSTED', { entityId: item.id, after: { zohoRecordId: value?.id }, branchCode: voucher.branch_code, batchId });
+    const alreadyInBooks = classification.reason === 'ALREADY_IN_BOOKS';
+    await auditItem(ctx, 'QUEUE.POSTED', {
+      entityId: item.id,
+      after: alreadyInBooks ? { zohoRecordId: value?.id, note: 'ALREADY_IN_BOOKS' } : { zohoRecordId: value?.id },
+      reason: alreadyInBooks ? 'ALREADY_IN_BOOKS: found in Books by the pre-send lookup; not sent again' : undefined,
+      branchCode: voucher.branch_code, batchId,
+    });
     return { circuitBreak: false, posted: true };
   }
 
@@ -342,8 +440,8 @@ export async function resolveUnknownOutcomes(ctx, { client, batchId }) {
     if (matches.length === 1) {
       assertTransition(QUEUE_TRANSITIONS, 'queue_item', 'UNKNOWN_OUTCOME', 'POSTED');
       await store.update('queue_items', item.id, { status: 'POSTED', updated_at: nowTs });
-      await store.update('vouchers', voucher.id, { migration_status: 'POSTED', zoho_record_id: matches[0].id, updated_at: nowTs });
-      await auditItem(ctx, 'QUEUE.UNKNOWN_RESOLVED_POSTED', { entityId: item.id, after: { zohoRecordId: matches[0].id }, branchCode: voucher.branch_code, batchId });
+      await store.update('vouchers', voucher.id, { migration_status: 'POSTED', zoho_record_id: recordIdOf(matches[0]), updated_at: nowTs });
+      await auditItem(ctx, 'QUEUE.UNKNOWN_RESOLVED_POSTED', { entityId: item.id, after: { zohoRecordId: recordIdOf(matches[0]) }, branchCode: voucher.branch_code, batchId });
       resolvedPosted += 1;
       continue;
     }
@@ -365,7 +463,7 @@ export async function resolveUnknownOutcomes(ctx, { client, batchId }) {
       category: 'TARGET_MISMATCH', severity: 'P1',
       message: `${matches.length} Books records match migration tag for queue item ${item.id}; ambiguous`,
       dedupeKey: `exec:${item.id}:TARGET_MISMATCH`, branchCode: voucher.branch_code, batchId, voucherId: voucher.id,
-      evidence: { matches: matches.map((m) => m.id) },
+      evidence: { matches: matches.map((m) => recordIdOf(m)) },
     });
     await auditItem(ctx, 'QUEUE.UNKNOWN_RESOLVED_TARGET_MISMATCH', { entityId: item.id, branchCode: voucher.branch_code, batchId });
     resolvedDeadLettered += 1;

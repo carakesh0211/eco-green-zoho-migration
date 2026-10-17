@@ -79,7 +79,7 @@ export function isoToSerial(iso) {
 
 /**
  * High-level workbook: sheets = [{ name, rows }] where a cell is a string (shared string),
- * a number, a boolean, null (omitted), or { date: 'YYYY-MM-DD' } / { serial } (a number
+ * a number (or a bigint, for ids longer than a double holds), a boolean, null (omitted), or { date: 'YYYY-MM-DD' } / { serial } (a number
  * carrying the date style). Options: deflate (compress every entry), quote ("'" for the
  * single-quoted attributes Zoho's report writer emits).
  */
@@ -94,7 +94,7 @@ export function buildXlsx(sheets, { deflate = false, quote = '"' } = {}) {
         const ref = `${colName(ci)}${ri + 1}`;
         if (typeof v === 'string') return `<c r=${q}${ref}${q} t=${q}s${q}><v>${sst(v)}</v></c>`;
         if (typeof v === 'boolean') return `<c r=${q}${ref}${q} t=${q}b${q}><v>${v ? 1 : 0}</v></c>`;
-        if (typeof v === 'number') return `<c r=${q}${ref}${q}><v>${v}</v></c>`;
+        if (typeof v === 'number' || typeof v === 'bigint') return `<c r=${q}${ref}${q}><v>${v}</v></c>`;
         const serial = v.serial ?? isoToSerial(v.date);
         return `<c r=${q}${ref}${q} s=${q}${STYLE_DATE}${q}><v>${serial}</v></c>`;
       }).join('');

@@ -118,3 +118,133 @@ concern:
 5. Document the incident, root cause, and remediation in the exception/audit trail
    before closing — closing an exception must never erase its history
    (`PROJECT_CONTEXT.md`).
+
+## 11. Importing a ledger-table delivery from a cloud session
+
+Where the branch files are (Zoho WorkDrive, team "Upsourced Consultancy Services Pvt Ltd",
+workspace "Prospecting - Client SOW"):
+
+- `FRANKROSS / TRANSACTIONAL DATA MIGRATION / branch-extract_data / tripura / <branch>`:
+  `Ledger_01042026_to_05072026.xlsx`, `Closing_tb_report_05072026.xlsx`,
+  `opening_tb_report_31032026.xlsx` (branches 460 to 469; 460 and 461 verified on 2026-10-09).
+- `FRANKROSS / TRANSACTIONAL DATA MIGRATION / ECOGREEN_TABLE DATA / <branch>`: the older raw
+  table dumps (`jv_det.csv`, `set_det.csv`, ...), plus `Transaction_Prefix_Mapping.xlsx` and the
+  Rule Book for the ledger-table format.
+
+Steps (real data stays under `var/`, which is gitignored):
+
+1. Download the three ledger-table files through the WorkDrive connector into
+   `var/raw<branch>/run-in/` as `ledger.xlsx`, `closing_tb.xlsx`, `opening_tb.xlsx`. A 4-column
+   opening file (`Act Code, Description, Op.Debit, Op.Credit`) is not the report format and must be
+   left out of the folder; the normaliser then skips the 31 March check.
+2. Write `var/profiles/<branch>-ledger-table.json` from
+   `config/source-profiles/ecogreen-ledger-table.example.json`: `branch_code`, window
+   `2026-04-01` to `2026-07-05`, `prefix_types` from the branch's prefix sheet (Zoho-pushed
+   prefixes so far: `J` JOURNAL, `Q` PAYMENT, `211` RECEIPT, `213` PAYMENT, `F` CONTRA).
+   Leave `credit_sign` and `date_typed_cells` on `auto`; the report says what was detected.
+3. `node scripts/normalise-ecogreen.js --in var/raw<branch>/run-in --profile var/profiles/<branch>-ledger-table.json --out var/inbox-real`.
+   Expect `unbalanced_vouchers` empty, `trial_balance_ties.all` true and `bridge.ties` true before
+   going further. Branch 460 (749 vouchers) and 461 (589 vouchers) both meet this.
+4. Import into the hosted console. In a cloud session the bearer token is a network secret that
+   the egress proxy injects on requests to the console host, so the process never holds it:
+   `node scripts/import-run.js --dir var/inbox-real/<branch>/<run-id> --url https://<console-host> --proxy-auth --branch-name "Branch <branch>"`.
+   The job reports INGEST, LAYER_A and CLASSIFY_TRANSFORM; vouchers come out BLOCKED until mapping
+   rules are approved. The import endpoint cannot post to Zoho Books.
+5. For a run whose mapping is already approved, `POST /api/runs/:id/retransform` applies the rules.
+   This needs a human operator or admin token. The proxy-injected console token is a bot
+   principal, and bots may only pause/resume batches, retry queue items and assign exceptions
+   (`src/server/routes/agent.js`), so a cloud session gets `403 BOT_CEILING:retransform`. Ask the
+   owner to click "Re-apply mapping to the latest run" (branch page, step 3) instead.
+   Re-transform releases vouchers blocked at transform (`UNMAPPED_ENTITY`) and vouchers blocked
+   at classification for a missing voucher-type route (`UNMAPPED_MODULE`) once that route is
+   approved; the rest are re-checked and stay blocked with their exception open.
+   Re-transform runs as a background job (`202` + `jobId`; progress at
+   `GET /api/runs/retransform-jobs/:jobId`, latest job of a run at `GET /api/runs/:id/retransform-job`),
+   because a real run takes minutes against the Data Store and AppSail cuts requests at 30 s.
+   Approving mapping rules (bulk or single) starts the same job automatically for every
+   re-transformable run in the approver's branches that still has vouchers blocked for a missing
+   rule (audit `TRANSFORM.AUTO_REAPPLY`), so the manual button is only needed after other changes.
+6. Map a branch's remaining ledgers and parties in bulk on **Bulk mapping** (branch page, step 3;
+   `#/branches/:code/bulk-mapping`):
+   - Upload the Zoho Books exports once (Chart of Accounts required; Vendors and Customers
+     optional, CSV or XLSX). They are stored in the archive and shared by every branch; a later
+     partial upload replaces only the lists it contains. To load or refresh the full masters from
+     the command line (all contacts in one file, typed by its "Contact Type" column):
+     `node scripts/upload-books-reference.js --url <console> --proxy-auth --org <books org id>
+     --accounts <coa.csv> --contacts <contacts.csv>`. Refresh after the client adds accounts or
+     contacts in Books, then re-run **Create rules for all confident matches** on each branch.
+   - Matching is by code first: a source ledger goes to the Books account whose
+     "CF.Eco Green Account Code" lists it, and a party goes to the contact with that Vendor or
+     Customer Number (else to an account tagged with it). Names are used only for the rest.
+   - **Create rules for all confident matches** makes DRAFT rules for code matches, exact and
+     close name matches, and parties that are Books accounts.
+   - Client overrides go in the sheet's `books_code` column (Books Account Code, Eco Green code or
+     Vendor/Customer Number, with `books_kind`). Upload the sheet after the confident matches so its
+     rows replace those drafts, then approve.
+   - Books exports must keep their 19-digit IDs: export as CSV from Books and upload without
+     opening in Excel. Files with rounded IDs (`3.37019E+18`) are refused.
+   - **Download mapping sheet**, fill `books_name` (Books names, not ids) for the rest, and
+     upload it. Each row reports RULE, BLANK, NOT_FOUND, AMBIGUOUS, UNKNOWN_SOURCE,
+     ALREADY_APPROVED, BAD_TYPE or DUPLICATE_ROW. Codes that lost leading zeros in Excel still match.
+   - An approver approves the created rules on the same page, which starts the re-apply job (step 5).
+   Bot tokens can read these pages but cannot upload lists or create rules.
+7. Before approving and posting a batch, check **Ledger push summary** (branch page, steps 3-6;
+   `GET /api/branches/:code/ledger-summary`): per source ledger, the debit and credit that will be
+   sent to Zoho Books, what is held back and why, and whether the amounts to push balance. Use
+   **Download CSV** to keep the confirmed figures with the batch approval.
+
+Re-importing a branch whose normalised `transactions.csv` / `trial_balance.csv` are byte-identical
+to an earlier run is refused at INGEST (`DUPLICATE_FILE`, file sha256 already registered). That
+attempt leaves a `VALIDATION_FAILED` run row with no vouchers, marked `error_code =
+DUPLICATE_FILE`. The branch summary and branch page skip such a row (`src/core/runs.js`), so the
+earlier run stays the current one; act on that run. Compare `sha256sum` of the two CSVs with the
+existing run before uploading to avoid the extra row.
+
+**Linked vouchers** (Ledger push summary page, `GET /api/branches/:code/voucher-links`, read-only):
+- every negative-numbered UR_PAY / UR_REC voucher must clear its positive partner from the
+  control ledger to the bank;
+- each petty-cash expense journal (Petty Cash Vendor) must have one Head Office reimbursement
+  journal that carries no expense.
+
+Problems are listed by voucher. The check does not change how vouchers are posted.
+
+## 12. Data validation (Opening TB + transactions = Closing TB)
+
+Branch page → **Data validation** (steps 2 and 7; `#/branches/:code/validation`). An operator,
+approver or admin uploads the Opening TB, Closing TB and ledger (XLSX or CSV, up to 8 MB each).
+Each account is reconciled on `opening + (debit - credit) = calculated closing`, which is then
+compared with the Closing TB within the chosen tolerance. A run never changes migration data.
+
+- **Matching:** accounts are matched across the files by code. All-digit codes are compared
+  without leading zeros, and Excel's leading apostrophe is ignored. Where codes are missing,
+  accounts are matched by name. Confirmed mappings take precedence over both.
+- **Party lines:** in the Eco Green ledger, a party line whose code is not a TB account goes to
+  the control ledger named in `Status`.
+- **Opening balances** come from one of:
+  - the Opening TB file, **balance sheet items only** (default when the report has its
+    ASSETS / LIABILITIES / INCOME / EXPENDITURE section headings). P&L balances do not carry
+    forward, so the app applies the year-end close itself: every income and expense account
+    opens at zero; Opening Stock opens at last year's closing stock (read from the Closing
+    TB's Op. column of the same account); the year's result goes to Reserve & Surplus, found
+    by name (or named with `reserve_code`). The report shows each step and whether the
+    Reserve & Surplus figure agrees with the Closing TB opening. Branch 461: 84 P&L accounts
+    closed, profit ₹16,37,618.22 to Reserve & Surplus (agrees), 152 of 152 accounts reconcile;
+  - the Opening TB file, all accounts (P&L included). Income and expense accounts then
+    differ by the year-end close and are flagged `OPENING_MISMATCH`;
+  - the Opening TB file's Op. columns;
+  - the Closing TB's own Op. columns.
+- **Exception views:**
+  - missing from Opening TB or Closing TB
+  - not in the ledger (marked when the balance moved without transactions)
+  - unmapped (seen in one file only, with name suggestions)
+  - name differs
+  - duplicate mappings
+  - debit/credit and balance inconsistencies (both sides filled, negative debit, TB or ledger
+    not balancing, unbalanced vouchers)
+
+  Every view downloads as CSV, and clicking an account shows its ledger lines.
+- **Manual mappings** are made in the Unmapped view. They are global, apply to all branches
+  (audit `VALIDATION.MAPPINGS`) and take effect on the next run or **Re-run with saved
+  mappings**.
+- **Storage:** uploaded files and results are kept in the archive and found through audit
+  `VALIDATION.RUN`. No table is added.

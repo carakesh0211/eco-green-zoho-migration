@@ -52,13 +52,12 @@ const okTransform = {
 };
 
 function throwingTransform(code) {
-  return {
-    retransformRun: async () => {
-      const err = new Error(`fake ${code}`);
-      err.code = code;
-      throw err;
-    },
+  const fail = async () => {
+    const err = new Error(`fake ${code}`);
+    err.code = code;
+    throw err;
   };
+  return { checkRetransformable: fail, retransformRun: fail };
 }
 
 async function startApp({ transform = okTransform, withTransform = true } = {}) {
@@ -73,6 +72,7 @@ async function startApp({ transform = okTransform, withTransform = true } = {}) 
   await new Promise((resolve) => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   return {
+    app,
     store,
     base,
     async close() {
@@ -287,7 +287,7 @@ test('POST /mappings/approve: by ids as approver; operator forbidden; already-AP
 
     const first = await post(t.base, '/mappings/approve', 'approver', { ids: [a, 99999] });
     assert.equal(first.res.status, 200);
-    assert.deepEqual(first.body, { approved: 1, ids: [a] });
+    assert.deepEqual(first.body, { approved: 1, ids: [a], reapplyScheduled: true });
     const rowA = await t.store.get('mapping_rules', a);
     assert.equal(rowA.status, 'APPROVED');
     assert.equal(rowA.approved_by, 'u_approver');
@@ -296,7 +296,7 @@ test('POST /mappings/approve: by ids as approver; operator forbidden; already-AP
 
     // a is already APPROVED, so only b is approved now and a is untouched.
     const second = await post(t.base, '/mappings/approve', 'admin', { ids: [a, b] });
-    assert.deepEqual(second.body, { approved: 1, ids: [b] });
+    assert.deepEqual(second.body, { approved: 1, ids: [b], reapplyScheduled: true });
     const rowA2 = await t.store.get('mapping_rules', a);
     assert.equal(rowA2.approved_by, 'u_approver');
     assert.equal(rowA2.approved_at, approvedAt);
@@ -329,7 +329,7 @@ test('POST /mappings/approve: by filter as admin, DRAFT rows only', async () => 
     assert.deepEqual(statuses, { A: 'APPROVED', B: 'APPROVED', GST: 'RETIRED' });
 
     const none = await post(t.base, '/mappings/approve', 'admin', { filter: { source_key: 'NOPE' } });
-    assert.deepEqual(none.body, { approved: 0, ids: [] });
+    assert.deepEqual(none.body, { approved: 0, ids: [], reapplyScheduled: false });
   } finally {
     await t.close();
   }
@@ -376,14 +376,54 @@ test('POST /mappings/:id/retire: DRAFT and APPROVED retire once; second retire i
   }
 });
 
-test('POST /runs/:id/retransform: 200 with the fake transform result', async () => {
+/** Poll GET /runs/retransform-jobs/:jobId until the job leaves QUEUED/RUNNING. */
+async function waitJob(base, jobId, role = 'operator') {
+  for (let i = 0; i < 100; i += 1) {
+    const { res, body } = await get(base, `/runs/retransform-jobs/${jobId}`, role);
+    assert.equal(res.status, 200);
+    if (body.stage === 'DONE' || body.stage === 'FAILED') return body;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error('job did not finish');
+}
+
+test('POST /runs/:id/retransform: 202 + job; the job carries the transform result', async () => {
   const t = await startApp();
   try {
     const { res, body } = await post(t.base, '/runs/run-in/retransform', 'operator', {});
-    assert.equal(res.status, 200);
-    assert.deepEqual(body, { runId: 'run-in', status: 'TRANSFORMED', reset: 1, stillBlocked: 0 });
-    assert.equal((await post(t.base, '/runs/run-in/retransform', 'admin', {})).res.status, 200);
+    assert.equal(res.status, 202);
+    assert.equal(body.runId, 'run-in');
+    assert.ok(body.jobId);
+    const job = await waitJob(t.base, body.jobId);
+    assert.equal(job.stage, 'DONE');
+    assert.equal(job.trigger, 'manual');
+    assert.equal(job.requestedBy, 'u_operator');
+    assert.deepEqual(job.result, { runId: 'run-in', status: 'TRANSFORMED', reset: 1, stillBlocked: 0 });
+    // the run's latest job is readable for a page that reloads while it runs
+    const latest = await get(t.base, '/runs/run-in/retransform-job', 'viewer');
+    assert.equal(latest.body.job.jobId, body.jobId);
+    assert.equal((await post(t.base, '/runs/run-in/retransform', 'admin', {})).res.status, 202);
   } finally {
+    await t.close();
+  }
+});
+
+test('POST /runs/:id/retransform: a second request while a job runs joins it', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const t = await startApp({
+    transform: { retransformRun: async (ctx, { runId }) => { await gate; return { runId, reset: 0, stillBlocked: 0 }; } },
+  });
+  try {
+    const first = await post(t.base, '/runs/run-in/retransform', 'operator', {});
+    const second = await post(t.base, '/runs/run-in/retransform', 'operator', {});
+    assert.equal(second.res.status, 202);
+    assert.equal(second.body.jobId, first.body.jobId);
+    assert.equal(second.body.joined, true);
+    release();
+    assert.equal((await waitJob(t.base, first.body.jobId)).stage, 'DONE');
+  } finally {
+    release();
     await t.close();
   }
 });
@@ -396,15 +436,18 @@ test('POST /runs/:id/retransform: role, scope, missing run', async () => {
     // operator is scoped to PILOT01 only
     const out = await post(t.base, '/runs/run-out/retransform', 'operator', {});
     assert.equal(out.res.status, 403);
-    // admin ('*') may cross branches
-    assert.equal((await post(t.base, '/runs/run-out/retransform', 'admin', {})).res.status, 200);
+    // admin ('*') may cross branches; the operator may not read that branch's job
+    const cross = await post(t.base, '/runs/run-out/retransform', 'admin', {});
+    assert.equal(cross.res.status, 202);
+    assert.equal((await get(t.base, `/runs/retransform-jobs/${cross.body.jobId}`, 'operator')).res.status, 403);
     assert.equal((await post(t.base, '/runs/nope/retransform', 'operator', {})).res.status, 404);
+    assert.equal((await get(t.base, '/runs/retransform-jobs/nope', 'operator')).res.status, 404);
   } finally {
     await t.close();
   }
 });
 
-test('POST /runs/:id/retransform: maps module error codes', async () => {
+test('POST /runs/:id/retransform: precondition errors are refused before any job starts', async () => {
   for (const [code, status] of [
     ['BATCH_IN_PROGRESS', 409],
     ['INVALID_RUN_STATE', 409],
@@ -416,23 +459,76 @@ test('POST /runs/:id/retransform: maps module error codes', async () => {
       assert.equal(res.status, status, code);
       assert.equal(body.error, code);
       assert.match(body.message, new RegExp(code));
+      assert.equal((await get(t.base, '/runs/run-in/retransform-job', 'operator')).body.job, null);
     } finally {
       await t.close();
     }
   }
 });
 
-test('POST /runs/:id/retransform: unexpected errors are not swallowed as 409/404', async () => {
+test('POST /runs/:id/retransform: an unexpected precondition error is a 500; a failing job is FAILED', async () => {
+  const boom = async () => { throw new Error('boom'); };
+  let t = await startApp({ transform: { checkRetransformable: boom, retransformRun: boom } });
+  try {
+    assert.equal((await post(t.base, '/runs/run-in/retransform', 'operator', {})).res.status, 500);
+  } finally {
+    await t.close();
+  }
+  t = await startApp({ transform: { retransformRun: boom } });
+  try {
+    const { res, body } = await post(t.base, '/runs/run-in/retransform', 'operator', {});
+    assert.equal(res.status, 202);
+    const job = await waitJob(t.base, body.jobId);
+    assert.equal(job.stage, 'FAILED');
+    assert.equal(job.error.message, 'boom');
+  } finally {
+    await t.close();
+  }
+});
+
+test('approving mapping rules re-applies the mapping to runs with vouchers blocked for a missing rule', async () => {
+  const calls = [];
   const t = await startApp({
-    transform: {
-      retransformRun: async () => {
-        throw new Error('boom');
-      },
-    },
+    transform: { retransformRun: async (ctx, { runId }) => { calls.push({ runId, actor: ctx.actor }); return { runId, reset: 1, stillBlocked: 0 }; } },
   });
   try {
-    const { res } = await post(t.base, '/runs/run-in/retransform', 'operator', {});
-    assert.equal(res.status, 500);
+    const now = nowIso();
+    // run-in: TRANSFORMED with a voucher blocked at classification -> re-applied
+    await t.store.update('extraction_runs', 'run-in', { status: 'TRANSFORMED' });
+    // run-ok: TRANSFORMED, nothing blocked -> left alone
+    await seedRun(t.store, 'run-ok', 'PILOT01');
+    await t.store.update('extraction_runs', 'run-ok', { status: 'TRANSFORMED' });
+    // run-staged: blocked voucher but not in a re-transformable state -> left alone
+    await seedRun(t.store, 'run-staged', 'PILOT01');
+    // run-out: other branch, outside the approver's scope -> left alone
+    await t.store.update('extraction_runs', 'run-out', { status: 'TRANSFORMED' });
+    let n = 0;
+    for (const [runId, branch, reason] of [['run-in', 'PILOT01', 'UNMAPPED_MODULE'], ['run-staged', 'PILOT01', 'UNMAPPED_ENTITY'], ['run-out', 'PILOT02', 'UNMAPPED_ENTITY']]) {
+      n += 1;
+      const file = await t.store.insert('source_files', {
+        run_id: runId, file_name: 'transactions.csv', file_role: 'TRANSACTIONS', sha256: `fsha-${n}`, size_bytes: 1,
+        encoding: 'utf-8', delimiter: ',', status: 'VALIDATED', created_at: now, updated_at: now,
+      });
+      await t.store.insert('vouchers', {
+        source_query_id: 'Q', source_query_version: 'v1', extraction_run_id: runId, source_file_id: file.id, source_file_hash: 'h',
+        source_record_id: `V${n}`, branch_code: branch, financial_year: '2026-27', period: '2026-04', transaction_date: '2026-04-05',
+        source_transaction_type: 'JOURNAL', source_transaction_hash: `hash-${n}`, debit_total: '1.00', credit_total: '1.00',
+        line_count: 2, is_balanced: 1, disposition: 'BLOCKED', disposition_reason: reason, created_at: now, updated_at: now,
+      });
+    }
+    const up = await post(t.base, '/mappings', 'operator', { rows: [rule()] });
+    const approved = await post(t.base, '/mappings/approve', 'approver', { ids: [up.body.mappings[0].id] });
+    assert.equal(approved.res.status, 200);
+    assert.equal(approved.body.reapplyScheduled, true);
+    await t.app.locals.retransformJobs.settled();
+    const job = t.app.locals.retransformJobs.latestForRun('run-in');
+    assert.ok(job, 'run-in was re-applied');
+    assert.equal(job.trigger, 'mapping_approval');
+    await waitJob(t.base, job.jobId, 'approver');
+    assert.deepEqual(calls, [{ runId: 'run-in', actor: 'u_approver' }]);
+    for (const other of ['run-ok', 'run-staged', 'run-out']) assert.equal(t.app.locals.retransformJobs.latestForRun(other), null, other);
+    const audits = await t.store.find('audit_events', { action: 'TRANSFORM.AUTO_REAPPLY' });
+    assert.equal(audits.length, 1);
   } finally {
     await t.close();
   }

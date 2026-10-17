@@ -386,12 +386,19 @@ function codedError(code, message) {
  * still-unmapped voucher is re-blocked by transformRun, and exceptions.raise() reopens the
  * RESOLVED exception on the same dedupeKey), the run is stepped back to CLASSIFIED and
  * transformRun is executed again. Refused while any batch of the run is past DRAFT.
+ *
+ * Vouchers BLOCKED for UNMAPPED_MODULE were stopped by classification (src/core/overlap.js)
+ * after passing the overlap gate, because no MODULE_ROUTE was approved for their voucher
+ * type at the time. They are released the same way once that route is APPROVED; while it
+ * is still missing they keep their UNMAPPED_MODULE block and open exception untouched.
  */
-export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v1' }) {
-  const { store, audit } = ctx;
-  const now = ctx.now ? ctx.now() : nowIso();
-  const { resolve: resolveException } = await import('./exceptions.js');
-
+/**
+ * The preconditions of retransformRun, without changing anything: resolves to the run, or
+ * throws NOT_FOUND / INVALID_RUN_STATE / BATCH_IN_PROGRESS. Lets a caller refuse a request
+ * before starting the (long) re-transform as a background job.
+ */
+export async function checkRetransformable(ctx, { runId }) {
+  const { store } = ctx;
   const run = await store.get('extraction_runs', runId);
   if (!run) throw codedError('NOT_FOUND', `Run not found: ${runId}`);
   if (!RETRANSFORM_RUN_STATES.has(run.status)) {
@@ -402,16 +409,31 @@ export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v
   if (busy) {
     throw codedError('BATCH_IN_PROGRESS', `Batch ${busy.id} is ${busy.status}; re-transform needs every batch DRAFT, REJECTED or APPROVAL_INVALIDATED`);
   }
+  return run;
+}
 
-  const blocked = await store.find('vouchers', {
+export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v1' }) {
+  const { store, audit } = ctx;
+  const now = ctx.now ? ctx.now() : nowIso();
+  const { resolve: resolveException } = await import('./exceptions.js');
+
+  const run = await checkRetransformable(ctx, { runId });
+
+  const routedTypes = new Set((await store.find('mapping_rules', { rule_type: 'MODULE_ROUTE', status: 'APPROVED' }))
+    .map(r => r.source_key));
+  const blockedEntity = await store.find('vouchers', {
     extraction_run_id: runId, disposition: 'BLOCKED', disposition_reason: 'UNMAPPED_ENTITY',
   });
+  const blockedModule = (await store.find('vouchers', {
+    extraction_run_id: runId, disposition: 'BLOCKED', disposition_reason: 'UNMAPPED_MODULE',
+  })).filter(v => routedTypes.has(v.source_transaction_type));
+  const blocked = [...blockedEntity, ...blockedModule];
   for (const voucher of blocked) {
     await store.update('vouchers', voucher.id, {
       disposition: 'MIGRATE', disposition_reason: null, disposition_by: ctx.actor ?? 'worker',
       disposition_at: now, target_module: null, target_payload_hash: null,
     });
-    const excs = await store.find('exceptions', { voucher_id: voucher.id, category: 'UNMAPPED_ENTITY' });
+    const excs = await store.find('exceptions', { voucher_id: voucher.id, category: voucher.disposition_reason });
     for (const exc of excs) {
       if (exc.status !== 'OPEN' && exc.status !== 'ASSIGNED') continue;
       await resolveException(ctx, {
@@ -426,12 +448,15 @@ export async function retransformRun(ctx, { runId, transformationVersion = 'tx_v
   }
   await audit.emit({
     actor: ctx.actor ?? 'worker', action: 'TRANSFORM.RERUN', entityType: 'extraction_run', entityId: runId,
-    after: { reset: blocked.length }, correlationId: ctx.correlationId, branchCode: run.branch_code,
+    after: { reset: blocked.length, resetUnmappedModule: blockedModule.length },
+    correlationId: ctx.correlationId, branchCode: run.branch_code,
   });
 
   const result = await transformRun(ctx, { runId, transformationVersion });
-  const stillBlocked = (await store.find('vouchers', {
-    extraction_run_id: runId, disposition: 'BLOCKED', disposition_reason: 'UNMAPPED_ENTITY',
+  const countBlocked = async reason => (await store.find('vouchers', {
+    extraction_run_id: runId, disposition: 'BLOCKED', disposition_reason: reason,
   })).length;
-  return { ...result, reset: blocked.length, stillBlocked };
+  const stillUnmappedModule = await countBlocked('UNMAPPED_MODULE');
+  const stillBlocked = (await countBlocked('UNMAPPED_ENTITY')) + stillUnmappedModule;
+  return { ...result, reset: blocked.length, stillBlocked, stillUnmappedModule };
 }

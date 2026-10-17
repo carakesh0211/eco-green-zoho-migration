@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { openStore } from '../adapters/store/index.js';
 import { openInbox } from '../adapters/inbox/index.js';
+import { createWorkdriveService } from './workdrive_service.js';
 import { openArchive } from '../adapters/archive/index.js';
 import { createAudit } from '../core/audit.js';
 import { log } from '../core/log.js';
@@ -111,7 +112,7 @@ async function tryImport(specifier) {
 }
 
 export async function buildDeps({ store, audit }) {
-  const [recon_a, cutover, mapping, batch, worker, recon_c, transform] = await Promise.all([
+  const [recon_a, cutover, mapping, batch, worker, recon_c, transform, balance_bridge] = await Promise.all([
     tryImport('../core/recon_a.js'),
     tryImport('../core/cutover.js'),
     tryImport('../core/mapping.js'),
@@ -119,6 +120,7 @@ export async function buildDeps({ store, audit }) {
     tryImport('../worker/index.js'),
     tryImport('../core/recon_c.js'),
     tryImport('../core/transform.js'),
+    tryImport('../core/balance_bridge.js'),
   ]);
 
   const booksConfig = loadBooksConfig();
@@ -129,7 +131,7 @@ export async function buildDeps({ store, audit }) {
     log('error', 'books_client_init_failed', { error: String(err?.message ?? err) });
   }
 
-  return { recon_a, cutover, mapping, batch, worker, recon_c, transform, books };
+  return { recon_a, cutover, mapping, batch, worker, recon_c, transform, balance_bridge, books };
 }
 
 async function main() {
@@ -170,7 +172,12 @@ async function main() {
 
   const inbox = await openInbox({ adapter: inboxAdapter, root: inboxAdapter === 'local' ? process.env.INBOX_LOCAL_PATH : undefined });
 
+  // WorkDrive branch inbox (WORKDRIVE_* env); its schedule runs only in the served process.
+  const workdriveService = createWorkdriveService({ runtime: archiveAdapter === 'stratus' ? runtime : null, store, log });
+  if (workdriveService.schedule()) log('info', 'workdrive_sync_scheduled', { everyMin: Number(process.env.WORKDRIVE_SYNC_EVERY_MIN) });
+
   const app = createApp({
+    workdriveService,
     store,
     audit,
     users,

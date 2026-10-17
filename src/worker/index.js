@@ -307,7 +307,7 @@ export async function main() {
   log('info', 'worker.main starting', { workerId, pollIntervalMs, workerMode, driver: booksConfig.driver });
 
   for (;;) {
-    const ctx = { store, audit, correlationId: newCorrelationId(), actor: workerId, actorRole: 'operator' };
+    const ctx = { store, audit, correlationId: newCorrelationId(), actor: workerId, actorRole: 'operator', workerMode };
     try {
       const result = await runOnce(ctx, { inbox, archive, client, workerId });
       log('info', 'worker.runOnce complete', { workerId, outcome: result.lastOutcome, counts: result.counts });
