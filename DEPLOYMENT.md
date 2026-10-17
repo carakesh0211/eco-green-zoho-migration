@@ -79,7 +79,7 @@ hours) and otherwise waits for the next call. Keep an hourly caller — Hermes's
 | Variable | Purpose |
 |---|---|
 | `WORKDRIVE_FOLDER_ID` | root watched (branch folders named by branch code at any depth) |
-| `WORKDRIVE_CONFIG_FOLDER_ID` | folder with `Chart_of_Accounts*.csv` and `accounts_master.csv` |
+| `WORKDRIVE_CONFIG_FOLDER_ID` | folder with `Chart_of_Accounts*.csv`, `accounts_master.csv` and optionally `branch_exclusions.csv` (`branch,reason`: neither pulled nor prepared, EXCLUDED in the tracker) |
 | `WORKDRIVE_REFRESH_TOKEN` | scopes `WorkDrive.files.READ,WorkDrive.files.CREATE` (`scripts/workdrive-token.js <code> --appsail`) |
 | `WORKDRIVE_CLIENT_ID` / `_SECRET` | default `BOOKS_CLIENT_ID` / `BOOKS_CLIENT_SECRET` |
 | `WORKDRIVE_SYNC_EVERY_MIN` | schedule; empty = only on request |
