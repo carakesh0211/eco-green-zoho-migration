@@ -106,3 +106,12 @@ test('hosted service: a scheduled run waits for a request context, then runs ins
   assert.equal(job.stage, 'DONE', job.error);
   assert.deepEqual(entered, ['request-app']);
 });
+
+test('runSync: a new app version prepares every pulled branch again, once', async () => {
+  const wd = fakeWd();
+  const blobs = memoryBlobs();
+  assert.deepEqual((await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG', planVersion: 'v1' })).planned, ['461']);
+  assert.deepEqual((await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG', planVersion: 'v1' })).planned, [], 'same version, no changes');
+  assert.deepEqual((await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG', planVersion: 'v2' })).planned, ['461'], 'new version');
+  assert.deepEqual((await runSync({ wd, blobs, rootFolderId: 'ROOT', configFolderId: 'CFG', planVersion: 'v2' })).planned, []);
+});

@@ -48,7 +48,7 @@ export async function findBranches(wd, folderId, region = '', depth = 0) {
  * @param o.upload         write the tracker / reports back to WorkDrive (default true)
  * @param o.log            (message) => void
  */
-export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, workDir = null, dryRun = false, upload = true, log = () => {} }) {
+export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, workDir = null, dryRun = false, upload = true, planVersion = null, log = () => {} }) {
   const state = JSON.parse((await blobs.get(STATE))?.toString() ?? '{"files":{},"branches":{},"readiness":{}}');
   state.files ??= {}; state.branches ??= {}; state.readiness ??= {};
   log('listing WorkDrive branch folders…');
@@ -84,7 +84,10 @@ export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, 
     summary.pulled.push(`${p.branch} ${p.kind}`);
   }
 
-  const plannable = branches.filter((b) => changed.has(b.branch) && b.picked.ledger);
+  // a new app version re-prepares every branch once (its rules may have changed), not only changed ones
+  const replanAll = Boolean(planVersion) && state.planVersion !== planVersion;
+  if (replanAll) log(`new app version ${planVersion}: preparing every branch again`);
+  const plannable = branches.filter((b) => (replanAll || changed.has(b.branch)) && b.picked.ledger && state.branches[b.branch]);
   if (plannable.length) {
     const dir = workDir ?? mkdtempSync(join(tmpdir(), 'wd-plan-'));
     try {
@@ -118,8 +121,9 @@ export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, 
     } finally {
       if (!workDir) rmSync(dir, { recursive: true, force: true });
     }
-    await blobs.put(STATE, Buffer.from(JSON.stringify(state, null, 2)));
   }
+  if (planVersion) state.planVersion = planVersion;
+  await blobs.put(STATE, Buffer.from(JSON.stringify(state, null, 2)));
 
   const now = stamp();
   summary.tracker = branches.sort((a, b) => a.branch.localeCompare(b.branch)).map((b) => trackerRow(b, state.readiness[b.branch], state, now));
