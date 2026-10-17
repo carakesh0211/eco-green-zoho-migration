@@ -173,7 +173,7 @@ async function main() {
   const inbox = await openInbox({ adapter: inboxAdapter, root: inboxAdapter === 'local' ? process.env.INBOX_LOCAL_PATH : undefined });
 
   // WorkDrive branch inbox (WORKDRIVE_* env); its schedule runs only in the served process.
-  const workdriveService = createWorkdriveService({ runtime: archiveAdapter === 'stratus' ? runtime : null, log });
+  const workdriveService = createWorkdriveService({ runtime: archiveAdapter === 'stratus' ? runtime : null, store, log });
   if (workdriveService.schedule()) log('info', 'workdrive_sync_scheduled', { everyMin: Number(process.env.WORKDRIVE_SYNC_EVERY_MIN) });
 
   const app = createApp({

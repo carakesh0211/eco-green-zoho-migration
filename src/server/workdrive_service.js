@@ -7,10 +7,11 @@ import { newId, nowIso } from '../core/ids.js';
 import { workdriveConfig, workdriveClient } from '../workdrive/client.js';
 import { localBlobs, stratusBlobs } from '../workdrive/blobs.js';
 import { runSync } from '../workdrive/job.js';
+import { publishToDashboard } from '../workdrive/publish.js';
 
 const KEEP_LOG = 200;
 
-export function createWorkdriveService({ env = process.env, runtime = null, log = () => {}, deps = {} } = {}) {
+export function createWorkdriveService({ env = process.env, runtime = null, store = null, log = () => {}, deps = {} } = {}) {
   let config = null;
   let configError = null;
   try { config = workdriveConfig(env); } catch (err) { configError = err.message; }
@@ -53,6 +54,9 @@ export function createWorkdriveService({ env = process.env, runtime = null, log 
       try {
         const s = await runSync({ wd, blobs, rootFolderId: deps.rootFolderId ?? config.rootFolderId, configFolderId: env.WORKDRIVE_CONFIG_FOLDER_ID || null, upload: env.WORKDRIVE_UPLOAD !== 'false', planVersion: env.BUILD_SHA || null, log: note });
         job.summary = { branches: s.branches, pulled: s.pulled, failed: s.failed ?? [], planned: s.planned, tracker: s.tracker };
+        if (store) {
+          try { await publishToDashboard(store, s.tracker, { log: note }); } catch (err) { note(`dashboard update failed: ${err.message}`); }
+        }
         job.stage = 'DONE';
       } catch (err) {
         job.stage = 'FAILED';
