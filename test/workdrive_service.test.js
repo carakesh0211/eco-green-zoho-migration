@@ -137,6 +137,7 @@ test('publishToDashboard: WorkDrive branches appear on the dashboard with their 
       row('461', 'WAITING FOR OPENING', 'openingItems', 589),
       row('463', 'FIX', 'openingItems', 491, 'ledger ties to the Eco Green closing TB movement: 2 of 65 TB codes differ'),
       row('464', 'WAITING FOR FILES', 'ledger; openingItems', ''),
+      row('469', 'EXCLUDED', '', ''),
     ]);
     const b = await store.get('branches', '461');
     assert.equal(b.branch_name, 'Tripura 461');
@@ -144,6 +145,7 @@ test('publishToDashboard: WorkDrive branches appear on the dashboard with their 
     assert.deepEqual(await pick('461'), ['RECEIVED', 'PASS', 589, 'IN_PROGRESS']);
     assert.deepEqual(await pick('463'), ['RECEIVED', 'FAIL', 491, 'BLOCKED']);
     assert.deepEqual(await pick('464'), ['PARTIAL', 'NOT_RUN', 0, 'NOT_STARTED']);
+    assert.deepEqual(await pick('469'), ['NOT_RECEIVED', 'NOT_RUN', 0, 'NOT_STARTED']);
     await publishToDashboard(store, [row('461', 'WAITING FOR OPENING', 'openingItems', 600)]);
     assert.deepEqual(await pick('461'), ['RECEIVED', 'PASS', 600, 'IN_PROGRESS'], 'updated, not duplicated');
   } finally {
