@@ -122,3 +122,19 @@ test('workdrive-sync: pulls new branch files once (zip unpacked), prepares them,
     server.close();
   }
 });
+
+test('workdrive client: download falls back to the next address on 401, and reports the status', async () => {
+  const { workdriveClient } = await import('../src/workdrive/client.js');
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const u = String(url);
+    calls.push(new URL(u).host);
+    if (u.includes('/oauth/v2/token')) return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }));
+    if (u.startsWith('https://api.example/download/')) return new Response('{"errors":[{"title":"Invalid OAuth"}]}', { status: 401 });
+    if (u.startsWith('https://dl.example/')) return new Response('bytes');
+    return new Response('{}', { status: 500 });
+  };
+  const wd = workdriveClient({ apiBase: 'https://api.example', downloadBase: 'https://dl.example', accountsBase: 'https://acc.example', clientId: 'c', clientSecret: 's', refreshToken: 'r', organizationId: 'wd-test', requestTimeoutMs: 5000 }, { fetchImpl });
+  assert.equal((await wd.download({ id: 'F1', downloadUrl: 'https://accl.example/F1' })).toString(), 'bytes');
+  assert.deepEqual(calls.filter((h) => h !== 'acc.example'), ['api.example', 'dl.example']);
+});

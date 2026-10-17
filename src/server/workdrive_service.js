@@ -52,7 +52,7 @@ export function createWorkdriveService({ env = process.env, runtime = null, log 
     const run = async () => {
       try {
         const s = await runSync({ wd, blobs, rootFolderId: deps.rootFolderId ?? config.rootFolderId, configFolderId: env.WORKDRIVE_CONFIG_FOLDER_ID || null, upload: env.WORKDRIVE_UPLOAD !== 'false', log: note });
-        job.summary = { branches: s.branches, pulled: s.pulled, planned: s.planned, tracker: s.tracker };
+        job.summary = { branches: s.branches, pulled: s.pulled, failed: s.failed ?? [], planned: s.planned, tracker: s.tracker };
         job.stage = 'DONE';
       } catch (err) {
         job.stage = 'FAILED';

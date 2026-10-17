@@ -15,6 +15,7 @@ export function workdriveConfig(env = process.env) {
     clientSecret: need('WORKDRIVE_CLIENT_SECRET', 'BOOKS_CLIENT_SECRET'),
     refreshToken: need('WORKDRIVE_REFRESH_TOKEN'),
     rootFolderId: need('WORKDRIVE_FOLDER_ID'),
+    downloadBase: env.WORKDRIVE_DOWNLOAD_BASE ?? 'https://download.zoho.in/v1/workdrive/download',
     organizationId: 'workdrive', // token cache key only
     requestTimeoutMs: Number(env.WORKDRIVE_REQUEST_TIMEOUT_MS ?? 120_000),
   };
@@ -35,9 +36,11 @@ export function workdriveClient(config, { fetchImpl = fetch } = {}) {
         continue;
       }
       if (!res.ok) {
-        let msg = `http ${res.status}`;
-        try { msg = (await res.json())?.errors?.[0]?.title ?? msg; } catch { /* not json */ }
-        throw new Error(`WorkDrive ${init.method ?? 'GET'} ${new URL(url).pathname}: ${msg}`);
+        let detail = '';
+        try { detail = (await res.json())?.errors?.[0]?.title ?? ''; } catch { /* not json */ }
+        const err = new Error(`WorkDrive ${init.method ?? 'GET'} ${new URL(url).host}${new URL(url).pathname}: http ${res.status}${detail ? ` (${detail})` : ''}`);
+        err.status = res.status;
+        throw err;
       }
       return binary ? Buffer.from(await res.arrayBuffer()) : res.json();
     }
@@ -62,8 +65,20 @@ export function workdriveClient(config, { fetchImpl = fetch } = {}) {
         if (page.length < 50) return out;
       }
     },
+    /** File bytes. The API's download route first, then the download server, then the file's own
+     * download_url (some of these answer 401 for an API token depending on the data centre). */
     async download(file) {
-      return request(file.downloadUrl ?? `${config.apiBase}/download/${file.id}`, {}, { binary: true });
+      const urls = [...new Set([`${config.apiBase}/download/${file.id}`, config.downloadBase && `${config.downloadBase}/${file.id}`, file.downloadUrl].filter(Boolean))];
+      let lastErr;
+      for (const url of urls) {
+        try {
+          return await request(url, { headers: { Accept: '*/*' } }, { binary: true });
+        } catch (err) {
+          lastErr = err;
+          if (![401, 403, 404].includes(err.status)) throw err;
+        }
+      }
+      throw lastErr;
     },
     /** Upload (replacing a file of the same name) into a folder. */
     async upload(folderId, filename, content) {

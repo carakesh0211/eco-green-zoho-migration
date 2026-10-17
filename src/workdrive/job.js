@@ -60,8 +60,17 @@ export async function runSync({ wd, blobs, rootFolderId, configFolderId = null, 
   if (dryRun) return summary;
 
   const changed = new Set();
+  summary.failed = [];
   for (const p of pulls) {
-    let bytes = await wd.download(p.file);
+    let bytes;
+    try {
+      bytes = await wd.download(p.file);
+    } catch (err) {
+      // one file failing does not stop the others; it is retried on the next run
+      log(`  ${p.branch} ${p.kind}: download failed (${err.message}); retried next run`);
+      summary.failed.push(`${p.branch} ${p.kind}`);
+      continue;
+    }
     if (/\.zip$/i.test(p.file.name)) {
       const csv = [...unzip(bytes)].filter(([n]) => /\.csv$/i.test(n)).sort((a, b) => b[1].length - a[1].length)[0];
       if (!csv) { log(`  ${p.branch}: ${p.file.name} holds no .csv; skipped`); continue; }
