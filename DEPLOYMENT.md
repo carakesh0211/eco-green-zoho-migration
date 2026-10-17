@@ -71,6 +71,11 @@ state are kept in the Stratus bucket under `workdrive/`; plans run in a temporar
 tracker (`Migration Tracker.csv`) and each branch's `Migration Report <br>.md` are written back to
 WorkDrive. Nothing posts to Books.
 
+On AppSail the Catalyst SDK initialises only from a request, so a sync runs inside the app of the
+request that started it; the in-app schedule reuses the most recent API request's app (within two
+hours) and otherwise waits for the next call. Keep an hourly caller — Hermes's
+`POST /api/workdrive/sync` at minute 5 — so the sync never stalls.
+
 | Variable | Purpose |
 |---|---|
 | `WORKDRIVE_FOLDER_ID` | root watched (branch folders named by branch code at any depth) |
