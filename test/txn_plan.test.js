@@ -185,3 +185,10 @@ test('glParties: a party code kept as a GL ledger posts as a ledger (receipt bec
   assert.deepEqual([ls[0].party, ls[0].account, ls[0].glParty], [null, 'H1', true]);
   assert.equal(classifyVoucher(groupVouchers(ls).get('26/211/1')).kind, 'journal');
 });
+
+test('readLedgerRows: Excel date cells are swapped back only when the file shows the swap', () => {
+  const swapped = lines([row('J', 1, 'H1', { date: '2026-05-06' }, 100, 'X', 4), row('J', 1, 903, '29/05/26', -100, 'BANK', 1)]);
+  assert.deepEqual(swapped.map((l) => l.date), ['2026-06-05', '2026-05-29'], 'V2: day <= 12 became a swapped date cell');
+  const genuine = lines([row('J', 1, 'H1', { date: '2026-05-06' }, 100, 'X', 4), row('J', 1, 903, { date: '2026-05-29' }, -100, 'BANK', 1)]);
+  assert.deepEqual(genuine.map((l) => l.date), ['2026-05-06', '2026-05-29'], 'V1: a date cell past the 12th means genuine dates');
+});

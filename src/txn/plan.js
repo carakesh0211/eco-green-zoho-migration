@@ -119,6 +119,12 @@ export function readLedgerRows(rows, opts = {}) {
     name: col('c_name'), type: col('n_type'), remarks: col('c_remarks'), custRef: col('cust_pay_ref_no'),
     suppRef: col('supp_pay_ref_no'), owner: col('to be pushed by'), year: col('c_year'), group: col('c_grp_no'),
   };
+  // Date cells: Excel turns a dd/mm/yy text into a date only when the day reads as a month
+  // (<= 12), swapping them; a file with a date cell past the 12th holds genuine dates.
+  if (!opts.excelDates || opts.excelDates === 'auto') {
+    const genuine = rows.slice(1).some((r) => r[c.date] && typeof r[c.date] === 'object' && Number(String(r[c.date].date).slice(8, 10)) > 12);
+    opts = { ...opts, excelDates: genuine ? 'asis' : 'swapped' };
+  }
   const out = [];
   for (const r of rows.slice(1)) {
     if (r.every((x) => x === null || x === '') || codeText(r[c.code]) === '') continue; // blank / total rows
