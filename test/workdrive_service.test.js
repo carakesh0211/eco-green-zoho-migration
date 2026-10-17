@@ -90,3 +90,19 @@ test('/api/workdrive/sync: Hermes (bot) and operators start a sync; viewers only
     await store.close();
   }
 });
+
+test('hosted service: a scheduled run waits for a request context, then runs inside the captured app', async () => {
+  const entered = [];
+  const runtime = {
+    currentApp: async () => ({ id: 'request-app' }),
+    runWithApp: (app, fn) => { entered.push(app.id); return fn(); },
+  };
+  const wd = fakeWd();
+  const service = createWorkdriveService({ env: {}, runtime, deps: { wd, blobs: memoryBlobs(), rootFolderId: 'ROOT' } });
+  assert.equal(service.start('schedule').error, 'NO_APP_CONTEXT', 'no request seen yet');
+  await service.capture();
+  const { job } = service.start('schedule');
+  await job.done;
+  assert.equal(job.stage, 'DONE', job.error);
+  assert.deepEqual(entered, ['request-app']);
+});
