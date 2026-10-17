@@ -51,7 +51,7 @@ export function createWorkdriveService({ env = process.env, runtime = null, log 
     const note = (m) => { job.log.push(`${nowIso().slice(11, 19)} ${m}`); if (job.log.length > KEEP_LOG) job.log.shift(); log('info', 'workdrive_sync', { jobId: job.jobId, message: m }); };
     const run = async () => {
       try {
-        const s = await runSync({ wd, blobs, rootFolderId: deps.rootFolderId ?? config.rootFolderId, configFolderId: env.WORKDRIVE_CONFIG_FOLDER_ID || null, upload: env.WORKDRIVE_UPLOAD !== 'false', log: note });
+        const s = await runSync({ wd, blobs, rootFolderId: deps.rootFolderId ?? config.rootFolderId, configFolderId: env.WORKDRIVE_CONFIG_FOLDER_ID || null, upload: env.WORKDRIVE_UPLOAD !== 'false', planVersion: env.BUILD_SHA || null, log: note });
         job.summary = { branches: s.branches, pulled: s.pulled, failed: s.failed ?? [], planned: s.planned, tracker: s.tracker };
         job.stage = 'DONE';
       } catch (err) {
